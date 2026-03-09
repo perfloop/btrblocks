@@ -19,7 +19,7 @@ func floatCodecRegistry[T Float]() map[TypeFloatCodec]floatCodecBuilder[T] {
 	return map[TypeFloatCodec]floatCodecBuilder[T]{
 		TypeFloatCodecRaw:   func(data []T) (Codec[T], error) { return NewRawCodec(data), nil },
 		TypeFloatCodecDict:  func(data []T) (Codec[T], error) { return NewDictCodec(data), nil },
-		TypeFloatCodecConst: func(data []T) (Codec[T], error) { return NewConstCodec(data) },
+		TypeFloatCodecConst: func(data []T) (Codec[T], error) { return NewConstFloatCodec(data) },
 	}
 }
 
