@@ -38,7 +38,7 @@ func newRunendCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T], depth 
 			runs = append(runs, val)
 		}
 	}
-	runsCodec := Compress(runs, depth-1)
+	runsCodec := compress(runs, depth-1)
 	endsCodec := CompressInteger(ends, depth-1)
 	return &RunendCodec[T]{length: uint64(len(data)), runs: runsCodec, ends: endsCodec}, nil
 }

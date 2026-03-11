@@ -1,6 +1,8 @@
 package btrblocks
 
-func Compress[T Integer | Float | String](data []T, depth int) Codec[T] {
+const defaultDepth = 3
+
+func compress[T Integer | Float | String](data []T, depth int) Codec[T] {
 	var zero T
 	switch any(zero).(type) {
 	case int8:
@@ -39,4 +41,12 @@ func Compress[T Integer | Float | String](data []T, depth int) Codec[T] {
 	default:
 		return nil
 	}
+}
+
+func Compress[T Integer | Float | String](data []T) Codec[T] {
+	return compress(data, defaultDepth)
+}
+
+func CompressWithDepth[T Integer | Float | String](data []T, depth int) Codec[T] {
+	return compress(data, depth)
 }

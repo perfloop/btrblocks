@@ -41,7 +41,7 @@ func newDictCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T], depth in
 		indices[i] = idx
 	}
 
-	valuesCodec := Compress(values, depth-1)
+	valuesCodec := compress(values, depth-1)
 	indicesCodec := CompressInteger(indices, depth-1)
 
 	return &DictCodec[T]{values: valuesCodec, indices: indicesCodec}, nil
@@ -79,5 +79,5 @@ func (d *DictCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
 
 func (d *DictCodec[T]) Children() []Scheme { return []Scheme{d.values.(Scheme), d.indices.(Scheme)} }
 func (d *DictCodec[T]) BinarySize() uint64 { return d.values.BinarySize() + d.indices.BinarySize() }
-func (d *DictCodec[T]) Length() uint64     { return d.values.Length() + d.indices.Length() }
+func (d *DictCodec[T]) Length() uint64     { return d.indices.Length() }
 func (d *DictCodec[T]) PType() PType       { return pTypeForType[T]() }

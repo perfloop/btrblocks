@@ -35,6 +35,8 @@ const (
 func pTypeForType[T Integer | Float | String]() PType {
 	var t T
 	switch any(t).(type) {
+	case int:
+		return PTypeInteger
 	case int8:
 		return PTypeInteger
 	case int16:
@@ -43,6 +45,8 @@ func pTypeForType[T Integer | Float | String]() PType {
 		return PTypeInteger
 	case int64:
 		return PTypeInteger
+	case uint:
+		return PTypeUnsignedInteger
 	case uint8:
 		return PTypeUnsignedInteger
 	case uint16:
@@ -75,6 +79,8 @@ func cmpFloats[T Float](a, b T) bool {
 
 func cmpIntegers[T Integer](a, b T) bool {
 	switch av := any(a).(type) {
+	case int:
+		return av == any(b).(int)
 	case int8:
 		return av == any(b).(int8)
 	case int16:
@@ -83,6 +89,16 @@ func cmpIntegers[T Integer](a, b T) bool {
 		return av == any(b).(int32)
 	case int64:
 		return av == any(b).(int64)
+	case uint:
+		return av == any(b).(uint)
+	case uint8:
+		return av == any(b).(uint8)
+	case uint16:
+		return av == any(b).(uint16)
+	case uint32:
+		return av == any(b).(uint32)
+	case uint64:
+		return av == any(b).(uint64)
 	default:
 		return false
 	}
