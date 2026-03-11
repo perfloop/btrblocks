@@ -25,6 +25,9 @@ type DictCodec[T Integer | Float | String] struct {
 }
 
 func newDictCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T], depth int) (*DictCodec[T], error) {
+	if depth <= 0 {
+		return nil, errDepthExhausted
+	}
 	var (
 		dict    = make(map[T]uint64)
 		indices = make([]uint64, len(data))

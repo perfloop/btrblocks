@@ -6,7 +6,6 @@ import (
 )
 
 var errValueNotConstant = errors.New("not constant")
-var errDataEmpty = errors.New("data is empty")
 
 // compile-time type assertions
 var (
@@ -56,7 +55,7 @@ func NewConstFloatCodec[T Float](data []T) (*ConstCodec[T], error) {
 func (c *ConstCodec[T]) ValueAt(offset uint64) (T, error) {
 	if offset >= c.length {
 		var zero T
-		return zero, ErrOffsetOutOfRange
+		return zero, errOffsetOutOfRange
 	}
 	return c.value, nil
 }

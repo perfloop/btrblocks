@@ -32,7 +32,7 @@ func (r *RawCodec[T]) Children() []Scheme {
 func (r *RawCodec[T]) ValueAt(offset uint64) (T, error) {
 	var zero T
 	if offset >= uint64(len(r.data)) {
-		return zero, ErrOffsetOutOfRange
+		return zero, errOffsetOutOfRange
 	}
 	return r.data[offset], nil
 }

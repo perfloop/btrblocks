@@ -5,7 +5,11 @@ import (
 	"io"
 )
 
-var ErrOffsetOutOfRange = errors.New("offset out of range")
+var (
+	errOffsetOutOfRange = errors.New("offset out of range")
+	errDepthExhausted   = errors.New("depth exhausted")
+	errDataEmpty        = errors.New("data is empty")
+)
 
 // Scheme is a untyped structural interface
 type Scheme interface {

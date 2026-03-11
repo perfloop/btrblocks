@@ -26,6 +26,9 @@ func newRunendCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T], depth 
 	if len(data) == 0 {
 		return nil, errDataEmpty
 	}
+	if depth <= 0 {
+		return nil, errDepthExhausted
+	}
 	runs := make([]T, 0, len(data))
 	ends := make([]uint64, 0, len(data))
 	for i, val := range data {
@@ -60,7 +63,7 @@ func (r *RunendCodec[T]) Children() []Scheme { return []Scheme{r.runs.(Scheme), 
 func (r *RunendCodec[T]) ValueAt(offset uint64) (T, error) {
 	var zero T
 	if offset >= r.length {
-		return zero, ErrOffsetOutOfRange
+		return zero, errOffsetOutOfRange
 	}
 
 	lo, hi := uint64(0), r.ends.Length()
