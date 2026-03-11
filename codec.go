@@ -22,4 +22,4 @@ type Codec[T Integer | Float | String] interface {
 	PType() PType
 }
 
-type codecBuilder[T Integer | Float | String] func([]T) (Codec[T], error)
+type codecBuilder[T Integer | Float | String] func([]T, int) (Codec[T], error)

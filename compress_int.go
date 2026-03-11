@@ -21,20 +21,20 @@ const (
 
 func intCodecRegistry[T Integer]() map[TypeIntCodec]codecBuilder[T] {
 	return map[TypeIntCodec]codecBuilder[T]{
-		TypeIntCodecRaw:   func(data []T) (Codec[T], error) { return NewRawCodec(data), nil },
-		TypeIntCodecDict:  func(data []T) (Codec[T], error) { return NewDictIntegerCodec(data) },
-		TypeIntCodecConst: func(data []T) (Codec[T], error) { return NewConstIntegerCodec(data) },
+		TypeIntCodecRaw:   func(data []T, _ int) (Codec[T], error) { return NewRawCodec(data), nil },
+		TypeIntCodecDict:  func(data []T, depth int) (Codec[T], error) { return NewDictIntegerCodec(data, depth) },
+		TypeIntCodecConst: func(data []T, _ int) (Codec[T], error) { return NewConstIntegerCodec(data) },
 	}
 }
 
-func CompressInteger[T Integer](data []T) Codec[T] {
+func CompressInteger[T Integer](data []T, depth int) Codec[T] {
 	registry := intCodecRegistry[T]()
 	var (
 		bestCodec Codec[T]
 		bestSize  uint64
 	)
 	for _, builder := range registry {
-		if codec, err := builder(data); err == nil {
+		if codec, err := builder(data, depth); err == nil {
 			// if codec is better than best codec, update best codec and best size
 			if bestCodec == nil || codec.BinarySize() < bestSize {
 				bestCodec = codec

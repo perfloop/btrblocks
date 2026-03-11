@@ -22,7 +22,7 @@ type RunendCodec[T Integer | Float | String] struct {
 	ends   Codec[uint64]
 }
 
-func newRunendCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T]) (*RunendCodec[T], error) {
+func newRunendCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T], depth int) (*RunendCodec[T], error) {
 	if len(data) == 0 {
 		return nil, errDataEmpty
 	}
@@ -38,21 +38,21 @@ func newRunendCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T]) (*Rune
 			runs = append(runs, val)
 		}
 	}
-	runsCodec := Compress(runs)
-	endsCodec := CompressInteger(ends)
+	runsCodec := Compress(runs, depth-1)
+	endsCodec := CompressInteger(ends, depth-1)
 	return &RunendCodec[T]{length: uint64(len(data)), runs: runsCodec, ends: endsCodec}, nil
 }
 
-func NewRunendIntegerCodec[T Integer](data []T) (*RunendCodec[T], error) {
-	return newRunendCodec(data, cmpIntegers[T])
+func NewRunendIntegerCodec[T Integer](data []T, depth int) (*RunendCodec[T], error) {
+	return newRunendCodec(data, cmpIntegers[T], depth)
 }
 
-func NewRunendStringCodec[T String](data []T) (*RunendCodec[T], error) {
-	return newRunendCodec(data, cmpStrings[T])
+func NewRunendStringCodec[T String](data []T, depth int) (*RunendCodec[T], error) {
+	return newRunendCodec(data, cmpStrings[T], depth)
 }
 
-func NewRunendFloatCodec[T Float](data []T) (*RunendCodec[T], error) {
-	return newRunendCodec(data, cmpFloats[T])
+func NewRunendFloatCodec[T Float](data []T, depth int) (*RunendCodec[T], error) {
+	return newRunendCodec(data, cmpFloats[T], depth)
 }
 
 func (r *RunendCodec[T]) Children() []Scheme { return []Scheme{r.runs.(Scheme), r.ends.(Scheme)} }

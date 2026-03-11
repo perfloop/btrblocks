@@ -15,20 +15,20 @@ const (
 
 func floatCodecRegistry[T Float]() map[TypeFloatCodec]codecBuilder[T] {
 	return map[TypeFloatCodec]codecBuilder[T]{
-		TypeFloatCodecRaw:   func(data []T) (Codec[T], error) { return NewRawCodec(data), nil },
-		TypeFloatCodecDict:  func(data []T) (Codec[T], error) { return NewDictFloatCodec(data) },
-		TypeFloatCodecConst: func(data []T) (Codec[T], error) { return NewConstFloatCodec(data) },
+		TypeFloatCodecRaw:   func(data []T, _ int) (Codec[T], error) { return NewRawCodec(data), nil },
+		TypeFloatCodecDict:  func(data []T, depth int) (Codec[T], error) { return NewDictFloatCodec(data, depth) },
+		TypeFloatCodecConst: func(data []T, _ int) (Codec[T], error) { return NewConstFloatCodec(data) },
 	}
 }
 
-func CompressFloat[T Float](data []T) Codec[T] {
+func CompressFloat[T Float](data []T, depth int) Codec[T] {
 	registry := floatCodecRegistry[T]()
 	var (
 		bestCodec Codec[T]
 		bestSize  uint64
 	)
 	for _, builder := range registry {
-		if codec, err := builder(data); err == nil {
+		if codec, err := builder(data, depth); err == nil {
 			// if codec is better than best codec, update best codec and best size
 			if bestCodec == nil || codec.BinarySize() < bestSize {
 				bestCodec = codec

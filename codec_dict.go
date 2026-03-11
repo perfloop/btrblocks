@@ -24,7 +24,7 @@ type DictCodec[T Integer | Float | String] struct {
 	indices Codec[uint64]
 }
 
-func newDictCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T]) (*DictCodec[T], error) {
+func newDictCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T], depth int) (*DictCodec[T], error) {
 	var (
 		dict    = make(map[T]uint64)
 		indices = make([]uint64, len(data))
@@ -41,22 +41,22 @@ func newDictCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T]) (*DictCo
 		indices[i] = idx
 	}
 
-	valuesCodec := NewRawCodec(values)
-	indicesCodec := NewRawCodec(indices)
+	valuesCodec := Compress(values, depth-1)
+	indicesCodec := CompressInteger(indices, depth-1)
 
 	return &DictCodec[T]{values: valuesCodec, indices: indicesCodec}, nil
 }
 
-func NewDictFloatCodec[T Float](data []T) (*DictCodec[T], error) {
-	return newDictCodec(data, cmpFloats[T])
+func NewDictFloatCodec[T Float](data []T, depth int) (*DictCodec[T], error) {
+	return newDictCodec(data, cmpFloats[T], depth)
 }
 
-func NewDictIntegerCodec[T Integer](data []T) (*DictCodec[T], error) {
-	return newDictCodec(data, cmpIntegers[T])
+func NewDictIntegerCodec[T Integer](data []T, depth int) (*DictCodec[T], error) {
+	return newDictCodec(data, cmpIntegers[T], depth)
 }
 
-func NewDictStringCodec[T String](data []T) (*DictCodec[T], error) {
-	return newDictCodec(data, cmpStrings[T])
+func NewDictStringCodec[T String](data []T, depth int) (*DictCodec[T], error) {
+	return newDictCodec(data, cmpStrings[T], depth)
 }
 
 func (d *DictCodec[T]) ValueAt(offset uint64) (T, error) {
