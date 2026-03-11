@@ -29,11 +29,13 @@ func intCodecRegistry[T Integer]() map[TypeIntCodec]codecBuilder[T] {
 
 func CompressInteger[T Integer](data []T, depth int) Codec[T] {
 	registry := intCodecRegistry[T]()
+	ordered := []TypeIntCodec{TypeIntCodecConst, TypeIntCodecDict, TypeIntCodecRaw}
 	var (
 		bestCodec Codec[T]
 		bestSize  uint64
 	)
-	for _, builder := range registry {
+	for _, typ := range ordered {
+		builder := registry[typ]
 		if codec, err := builder(data, depth); err == nil {
 			// if codec is better than best codec, update best codec and best size
 			if bestCodec == nil || codec.BinarySize() < bestSize {

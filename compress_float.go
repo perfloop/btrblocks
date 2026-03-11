@@ -23,11 +23,13 @@ func floatCodecRegistry[T Float]() map[TypeFloatCodec]codecBuilder[T] {
 
 func CompressFloat[T Float](data []T, depth int) Codec[T] {
 	registry := floatCodecRegistry[T]()
+	ordered := []TypeFloatCodec{TypeFloatCodecConst, TypeFloatCodecDict, TypeFloatCodecRaw}
 	var (
 		bestCodec Codec[T]
 		bestSize  uint64
 	)
-	for _, builder := range registry {
+	for _, typ := range ordered {
+		builder := registry[typ]
 		if codec, err := builder(data, depth); err == nil {
 			// if codec is better than best codec, update best codec and best size
 			if bestCodec == nil || codec.BinarySize() < bestSize {
