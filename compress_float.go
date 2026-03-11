@@ -13,22 +13,16 @@ const (
 	TypeFloatCodecConst
 )
 
-type floatCodecBuilder[T Float] func([]T) (Codec[T], error)
-
-func floatCodecRegistry[T Float]() map[TypeFloatCodec]floatCodecBuilder[T] {
-	return map[TypeFloatCodec]floatCodecBuilder[T]{
+func floatCodecRegistry[T Float]() map[TypeFloatCodec]codecBuilder[T] {
+	return map[TypeFloatCodec]codecBuilder[T]{
 		TypeFloatCodecRaw:   func(data []T) (Codec[T], error) { return NewRawCodec(data), nil },
-		TypeFloatCodecDict:  func(data []T) (Codec[T], error) { return NewDictCodec(data), nil },
+		TypeFloatCodecDict:  func(data []T) (Codec[T], error) { return NewDictFloatCodec(data) },
 		TypeFloatCodecConst: func(data []T) (Codec[T], error) { return NewConstFloatCodec(data) },
 	}
 }
 
-func CompressFloat[T Float](data []T, exclude []TypeFloatCodec) Codec[T] {
+func CompressFloat[T Float](data []T) Codec[T] {
 	registry := floatCodecRegistry[T]()
-	for _, codec := range exclude {
-		delete(registry, codec)
-	}
-
 	var (
 		bestCodec Codec[T]
 		bestSize  uint64

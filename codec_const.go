@@ -3,7 +3,6 @@ package btrblocks
 import (
 	"errors"
 	"io"
-	"math"
 )
 
 var errValueNotConstant = errors.New("not constant")
@@ -29,41 +28,29 @@ type ConstCodec[T Integer | Float | String] struct {
 	value  T
 }
 
-func NewConstCodec[T Integer | String](data []T) (*ConstCodec[T], error) {
+func newConstCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T]) (*ConstCodec[T], error) {
 	if len(data) == 0 {
 		return nil, errDataEmpty
 	}
 	base := data[0]
 	for _, value := range data[1:] {
-		if value != base {
+		if !cmpFn(base, value) {
 			return nil, errValueNotConstant
 		}
 	}
 	return &ConstCodec[T]{length: uint64(len(data)), value: base}, nil
+}
+
+func NewConstIntegerCodec[T Integer](data []T) (*ConstCodec[T], error) {
+	return newConstCodec(data, cmpIntegers[T])
+}
+
+func NewConstStringCodec[T String](data []T) (*ConstCodec[T], error) {
+	return newConstCodec(data, cmpStrings[T])
 }
 
 func NewConstFloatCodec[T Float](data []T) (*ConstCodec[T], error) {
-	if len(data) == 0 {
-		return nil, errDataEmpty
-	}
-	base := data[0]
-	for _, value := range data[1:] {
-		if !sameFloatBits(base, value) {
-			return nil, errValueNotConstant
-		}
-	}
-	return &ConstCodec[T]{length: uint64(len(data)), value: base}, nil
-}
-
-func sameFloatBits[T Float](a, b T) bool {
-	switch av := any(a).(type) {
-	case float32:
-		return math.Float32bits(av) == math.Float32bits(any(b).(float32))
-	case float64:
-		return math.Float64bits(av) == math.Float64bits(any(b).(float64))
-	default:
-		return false
-	}
+	return newConstCodec(data, cmpFloats[T])
 }
 
 func (c *ConstCodec[T]) ValueAt(offset uint64) (T, error) {

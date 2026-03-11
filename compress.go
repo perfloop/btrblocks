@@ -1,30 +1,41 @@
 package btrblocks
 
-func Compress[T Integer | Float | String](data []T, exclude []TypeIntCodec | []TypeFloatCodec | []TypeStringCodec) Codec[T] {
+func Compress[T Integer | Float | String](data []T) Codec[T] {
 	var zero T
 	switch any(zero).(type) {
 	case int8:
-		return CompressInteger[int8](data, exclude)
+		v := any(data).([]int8)
+		return any(CompressInteger(v)).(Codec[T])
 	case int16:
-		return CompressInteger[int16](data, exclude)
+		v := any(data).([]int16)
+		return any(CompressInteger(v)).(Codec[T])
 	case int32:
-		return CompressInteger[int32](data, exclude)
+		v := any(data).([]int32)
+		return any(CompressInteger(v)).(Codec[T])
 	case int64:
-		return CompressInteger[int64](data, exclude)
+		v := any(data).([]int64)
+		return any(CompressInteger(v)).(Codec[T])
 	case uint8:
-		return CompressInteger[uint8](data, exclude)
+		v := any(data).([]uint8)
+		return any(CompressInteger(v)).(Codec[T])
 	case uint16:
-		return CompressInteger[uint16](data, exclude)
+		v := any(data).([]uint16)
+		return any(CompressInteger(v)).(Codec[T])
 	case uint32:
-		return CompressInteger[uint32](data, exclude)
+		v := any(data).([]uint32)
+		return any(CompressInteger(v)).(Codec[T])
 	case uint64:
-		return CompressInteger[uint64](data, exclude)
+		v := any(data).([]uint64)
+		return any(CompressInteger(v)).(Codec[T])
 	case float32:
-		return CompressFloat[float32](data, exclude)
+		v := any(data).([]float32)
+		return any(CompressFloat(v)).(Codec[T])
 	case float64:
-		return CompressFloat[float64](data, exclude)
+		v := any(data).([]float64)
+		return any(CompressFloat(v)).(Codec[T])
 	case string:
-		return CompressString[string](data, exclude)
+		v := any(data).([]string)
+		return any(CompressString(v)).(Codec[T])
 	default:
 		return nil
 	}

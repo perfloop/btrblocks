@@ -21,3 +21,5 @@ type Codec[T Integer | Float | String] interface {
 	Length() uint64
 	PType() PType
 }
+
+type codecBuilder[T Integer | Float | String] func([]T) (Codec[T], error)

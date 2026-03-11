@@ -19,21 +19,16 @@ const (
 	TypeIntCodecConst
 )
 
-type intCodecBuilder[T Integer] func([]T) (Codec[T], error)
-
-func intCodecRegistry[T Integer]() map[TypeIntCodec]intCodecBuilder[T] {
-	return map[TypeIntCodec]intCodecBuilder[T]{
+func intCodecRegistry[T Integer]() map[TypeIntCodec]codecBuilder[T] {
+	return map[TypeIntCodec]codecBuilder[T]{
 		TypeIntCodecRaw:   func(data []T) (Codec[T], error) { return NewRawCodec(data), nil },
-		TypeIntCodecDict:  func(data []T) (Codec[T], error) { return NewDictCodec(data), nil },
-		TypeIntCodecConst: func(data []T) (Codec[T], error) { return NewConstCodec(data) },
+		TypeIntCodecDict:  func(data []T) (Codec[T], error) { return NewDictIntegerCodec(data) },
+		TypeIntCodecConst: func(data []T) (Codec[T], error) { return NewConstIntegerCodec(data) },
 	}
 }
 
-func CompressInteger[T Integer](data []T, exclude []TypeIntCodec) Codec[T] {
+func CompressInteger[T Integer](data []T) Codec[T] {
 	registry := intCodecRegistry[T]()
-	for _, codec := range exclude {
-		delete(registry, codec)
-	}
 	var (
 		bestCodec Codec[T]
 		bestSize  uint64

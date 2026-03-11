@@ -24,7 +24,7 @@ type DictCodec[T Integer | Float | String] struct {
 	indices Codec[uint64]
 }
 
-func NewDictCodec[T Integer | Float | String](data []T) *DictCodec[T] {
+func newDictCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T]) (*DictCodec[T], error) {
 	var (
 		dict    = make(map[T]uint64)
 		indices = make([]uint64, len(data))
@@ -44,7 +44,19 @@ func NewDictCodec[T Integer | Float | String](data []T) *DictCodec[T] {
 	valuesCodec := NewRawCodec(values)
 	indicesCodec := NewRawCodec(indices)
 
-	return &DictCodec[T]{values: valuesCodec, indices: indicesCodec}
+	return &DictCodec[T]{values: valuesCodec, indices: indicesCodec}, nil
+}
+
+func NewDictFloatCodec[T Float](data []T) (*DictCodec[T], error) {
+	return newDictCodec(data, cmpFloats[T])
+}
+
+func NewDictIntegerCodec[T Integer](data []T) (*DictCodec[T], error) {
+	return newDictCodec(data, cmpIntegers[T])
+}
+
+func NewDictStringCodec[T String](data []T) (*DictCodec[T], error) {
+	return newDictCodec(data, cmpStrings[T])
 }
 
 func (d *DictCodec[T]) ValueAt(offset uint64) (T, error) {

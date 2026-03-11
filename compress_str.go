@@ -12,21 +12,16 @@ const (
 	TypeStringCodecConst
 )
 
-type stringCodecBuilder[T String] func([]T) (Codec[T], error)
-
-func stringCodecRegistry[T String]() map[TypeStringCodec]stringCodecBuilder[T] {
-	return map[TypeStringCodec]stringCodecBuilder[T]{
+func stringCodecRegistry[T String]() map[TypeStringCodec]codecBuilder[T] {
+	return map[TypeStringCodec]codecBuilder[T]{
 		TypeStringCodecRaw:   func(data []T) (Codec[T], error) { return NewRawCodec(data), nil },
-		TypeStringCodecDict:  func(data []T) (Codec[T], error) { return NewDictCodec(data), nil },
-		TypeStringCodecConst: func(data []T) (Codec[T], error) { return NewConstCodec(data) },
+		TypeStringCodecDict:  func(data []T) (Codec[T], error) { return NewDictStringCodec(data) },
+		TypeStringCodecConst: func(data []T) (Codec[T], error) { return NewConstStringCodec(data) },
 	}
 }
 
-func CompressString[T String](data []T, exclude []TypeStringCodec) Codec[T] {
+func CompressString[T String](data []T) Codec[T] {
 	registry := stringCodecRegistry[T]()
-	for _, codec := range exclude {
-		delete(registry, codec)
-	}
 	var (
 		bestCodec Codec[T]
 		bestSize  uint64
