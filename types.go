@@ -1,26 +1,19 @@
 package btrblocks
 
-import "math"
+import (
+	"math"
 
-type SignedInteger interface {
-	~int | ~int8 | ~int16 | ~int32 | ~int64
-}
+	"github.com/axiomhq/btrblocks/array"
+)
 
-type UnsignedInteger interface {
-	~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
-}
-
-type Float interface {
-	~float32 | ~float64
-}
-
-type Integer interface {
-	SignedInteger | UnsignedInteger
-}
-
-type String interface {
-	~string
-}
+type (
+	Integer         = array.Integer
+	SignedInteger   = array.SignedInteger
+	UnsignedInteger = array.UnsignedInteger
+	Float           = array.Float
+	String          = array.String
+	PrimitiveType   = array.PrimitiveType
+)
 
 type PType uint8
 

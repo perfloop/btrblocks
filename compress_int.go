@@ -1,5 +1,7 @@
 package btrblocks
 
+import "github.com/axiomhq/btrblocks/array"
+
 var (
 	_ Codec[int8]   = (*RawCodec[int8])(nil)
 	_ Codec[int16]  = (*RawCodec[int16])(nil)
@@ -21,13 +23,13 @@ const (
 
 func intCodecRegistry[T Integer]() map[TypeIntCodec]codecBuilder[T] {
 	return map[TypeIntCodec]codecBuilder[T]{
-		TypeIntCodecRaw:   func(data []T, _ int) (Codec[T], error) { return NewRawCodec(data), nil },
-		TypeIntCodecDict:  func(data []T, depth int) (Codec[T], error) { return NewDictIntegerCodec(data, depth) },
-		TypeIntCodecConst: func(data []T, _ int) (Codec[T], error) { return NewConstIntegerCodec(data) },
+		TypeIntCodecRaw:   func(arr array.Array[T], _ int) (Codec[T], error) { return NewRawCodec(arr), nil },
+		TypeIntCodecDict:  func(arr array.Array[T], depth int) (Codec[T], error) { return NewDictIntegerCodec(arr, depth) },
+		TypeIntCodecConst: func(arr array.Array[T], _ int) (Codec[T], error) { return NewConstIntegerCodec(arr) },
 	}
 }
 
-func CompressInteger[T Integer](data []T, depth int) Codec[T] {
+func CompressInteger[T Integer](arr array.Array[T], depth int) Codec[T] {
 	registry := intCodecRegistry[T]()
 	ordered := []TypeIntCodec{TypeIntCodecConst, TypeIntCodecDict, TypeIntCodecRaw}
 	var (
@@ -36,7 +38,7 @@ func CompressInteger[T Integer](data []T, depth int) Codec[T] {
 	)
 	for _, typ := range ordered {
 		builder := registry[typ]
-		if codec, err := builder(data, depth); err == nil {
+		if codec, err := builder(arr, depth); err == nil {
 			// if codec is better than best codec, update best codec and best size
 			if bestCodec == nil || codec.BinarySize() < bestSize {
 				bestCodec = codec

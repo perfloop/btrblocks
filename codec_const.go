@@ -3,6 +3,8 @@ package btrblocks
 import (
 	"errors"
 	"io"
+
+	"github.com/axiomhq/btrblocks/array"
 )
 
 var errValueNotConstant = errors.New("not constant")
@@ -27,29 +29,30 @@ type ConstCodec[T Integer | Float | String] struct {
 	value  T
 }
 
-func newConstCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T]) (*ConstCodec[T], error) {
-	if len(data) == 0 {
+func newConstCodec[T Integer | Float | String](arr array.Array[T], cmpFn cmpFn[T]) (*ConstCodec[T], error) {
+	if arr.Length() == 0 {
 		return nil, errDataEmpty
 	}
-	base := data[0]
-	for _, value := range data[1:] {
+	base := arr.ValueAt(0)
+	for i := uint64(1); i < arr.Length(); i++ {
+		value := arr.ValueAt(i)
 		if !cmpFn(base, value) {
 			return nil, errValueNotConstant
 		}
 	}
-	return &ConstCodec[T]{length: uint64(len(data)), value: base}, nil
+	return &ConstCodec[T]{length: arr.Length(), value: base}, nil
 }
 
-func NewConstIntegerCodec[T Integer](data []T) (*ConstCodec[T], error) {
-	return newConstCodec(data, cmpIntegers[T])
+func NewConstIntegerCodec[T Integer](arr array.Array[T]) (*ConstCodec[T], error) {
+	return newConstCodec(arr, cmpIntegers[T])
 }
 
-func NewConstStringCodec[T String](data []T) (*ConstCodec[T], error) {
-	return newConstCodec(data, cmpStrings[T])
+func NewConstStringCodec[T String](arr array.Array[T]) (*ConstCodec[T], error) {
+	return newConstCodec(arr, cmpStrings[T])
 }
 
-func NewConstFloatCodec[T Float](data []T) (*ConstCodec[T], error) {
-	return newConstCodec(data, cmpFloats[T])
+func NewConstFloatCodec[T Float](arr array.Array[T]) (*ConstCodec[T], error) {
+	return newConstCodec(arr, cmpFloats[T])
 }
 
 func (c *ConstCodec[T]) ValueAt(offset uint64) (T, error) {

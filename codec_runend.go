@@ -1,6 +1,10 @@
 package btrblocks
 
-import "io"
+import (
+	"io"
+
+	"github.com/axiomhq/btrblocks/array"
+)
 
 var (
 	_ Codec[int8]    = (*RunendCodec[int8])(nil)
@@ -42,7 +46,7 @@ func newRunendCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T], depth 
 		}
 	}
 	runsCodec := compress(runs, depth-1)
-	endsCodec := CompressInteger(ends, depth-1)
+	endsCodec := CompressInteger(array.NewPrimitivesUnsafe[uint64](ends), depth-1)
 	return &RunendCodec[T]{length: uint64(len(data)), runs: runsCodec, ends: endsCodec}, nil
 }
 

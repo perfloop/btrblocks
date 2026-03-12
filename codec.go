@@ -3,6 +3,8 @@ package btrblocks
 import (
 	"errors"
 	"io"
+
+	"github.com/axiomhq/btrblocks/array"
 )
 
 var (
@@ -26,4 +28,4 @@ type Codec[T Integer | Float | String] interface {
 	PType() PType
 }
 
-type codecBuilder[T Integer | Float | String] func([]T, int) (Codec[T], error)
+type codecBuilder[T Integer | Float | String] func(array.Array[T], int) (Codec[T], error)

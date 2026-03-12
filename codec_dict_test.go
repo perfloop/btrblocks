@@ -1,11 +1,15 @@
 package btrblocks
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/axiomhq/btrblocks/array"
+)
 
 func TestDictCodecStringRoundTrip(t *testing.T) {
 	data := []string{"east", "west", "east", "north", "west", "east", "south", "north"}
 
-	codec, err := NewDictStringCodec(data, defaultDepth)
+	codec, err := NewDictStringCodec(array.NewStrings(data), defaultDepth)
 	if err != nil {
 		t.Fatalf("NewDictStringCodec() returned error: %v", err)
 	}
@@ -24,7 +28,7 @@ func TestDictCodecStringRoundTrip(t *testing.T) {
 func TestDictCodecLargeCorpus(t *testing.T) {
 	data := makeLowCardinalityUint64Corpus(largeCorpusSize, 16)
 
-	codec, err := NewDictIntegerCodec(data, defaultDepth)
+	codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe[uint64](data), defaultDepth)
 	if err != nil {
 		t.Fatalf("NewDictIntegerCodec() returned error: %v", err)
 	}
@@ -54,7 +58,7 @@ func FuzzDictCodecRoundTrip(f *testing.F) {
 			values[i] = uint64((int(b) + i) % 32)
 		}
 
-		codec, err := NewDictIntegerCodec(values, defaultDepth)
+		codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe[uint64](values), defaultDepth)
 		if err != nil {
 			t.Fatalf("NewDictIntegerCodec() returned error: %v", err)
 		}
@@ -67,13 +71,13 @@ func FuzzDictCodecRoundTrip(f *testing.F) {
 func BenchmarkDictCodecBuildLarge(b *testing.B) {
 	data := makeLowCardinalityUint64Corpus(largeCorpusSize, 16)
 	benchmarkBuildLoop(b, "dict", func(values []uint64) (Codec[uint64], error) {
-		return NewDictIntegerCodec(values, defaultDepth)
+		return NewDictIntegerCodec(array.NewPrimitivesUnsafe[uint64](values), defaultDepth)
 	}, data)
 }
 
 func BenchmarkDictCodecValueAtLarge(b *testing.B) {
 	data := makeLowCardinalityUint64Corpus(largeCorpusSize, 16)
-	codec, err := NewDictIntegerCodec(data, defaultDepth)
+	codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe[uint64](data), defaultDepth)
 	if err != nil {
 		b.Fatalf("NewDictIntegerCodec() returned error: %v", err)
 	}

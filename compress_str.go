@@ -1,5 +1,7 @@
 package btrblocks
 
+import "github.com/axiomhq/btrblocks/array"
+
 var (
 	_ Codec[string] = (*RawCodec[string])(nil)
 )
@@ -12,24 +14,24 @@ const (
 	TypeStringCodecConst
 )
 
-func stringCodecRegistry[T String]() map[TypeStringCodec]codecBuilder[T] {
-	return map[TypeStringCodec]codecBuilder[T]{
-		TypeStringCodecRaw:   func(data []T, _ int) (Codec[T], error) { return NewRawCodec(data), nil },
-		TypeStringCodecDict:  func(data []T, depth int) (Codec[T], error) { return NewDictStringCodec(data, depth) },
-		TypeStringCodecConst: func(data []T, _ int) (Codec[T], error) { return NewConstStringCodec(data) },
+func stringCodecRegistry() map[TypeStringCodec]codecBuilder[string] {
+	return map[TypeStringCodec]codecBuilder[string]{
+		TypeStringCodecRaw:   func(arr array.Array[string], _ int) (Codec[string], error) { return NewRawCodec(arr), nil },
+		TypeStringCodecDict:  func(arr array.Array[string], depth int) (Codec[string], error) { return NewDictStringCodec(arr, depth) },
+		TypeStringCodecConst: func(arr array.Array[string], _ int) (Codec[string], error) { return NewConstStringCodec(arr) },
 	}
 }
 
-func CompressString[T String](data []T, depth int) Codec[T] {
-	registry := stringCodecRegistry[T]()
+func CompressString(arr array.Array[string], depth int) Codec[string] {
+	registry := stringCodecRegistry()
 	ordered := []TypeStringCodec{TypeStringCodecConst, TypeStringCodecDict, TypeStringCodecRaw}
 	var (
-		bestCodec Codec[T]
+		bestCodec Codec[string]
 		bestSize  uint64
 	)
 	for _, typ := range ordered {
 		builder := registry[typ]
-		if codec, err := builder(data, depth); err == nil {
+		if codec, err := builder(arr, depth); err == nil {
 			// if codec is better than best codec, update best codec and best size
 			if bestCodec == nil || codec.BinarySize() < bestSize {
 				bestCodec = codec

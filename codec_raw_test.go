@@ -1,10 +1,14 @@
 package btrblocks
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/axiomhq/btrblocks/array"
+)
 
 func TestRawCodecStringRoundTrip(t *testing.T) {
 	data := []string{"alpha", "beta", "", "delta", "beta"}
-	codec := NewRawCodec(data)
+	codec := NewRawCodec(array.NewStrings(data))
 
 	assertCodecMetadata(t, codec, len(data), PTypeString, 0)
 	assertCodecRoundTrip(t, codec, data)
@@ -12,7 +16,7 @@ func TestRawCodecStringRoundTrip(t *testing.T) {
 
 func TestRawCodecLargeCorpus(t *testing.T) {
 	data := makeRampInt64Corpus(largeCorpusSize)
-	codec := NewRawCodec(data)
+	codec := NewRawCodec(array.NewPrimitivesUnsafe[int64](data))
 
 	assertCodecMetadata(t, codec, len(data), PTypeInteger, 0)
 	assertCodecRoundTrip(t, codec, data)
@@ -28,7 +32,7 @@ func FuzzRawCodecRoundTrip(f *testing.F) {
 			values[i] = uint16(b) | uint16(i&7)<<8
 		}
 
-		codec := NewRawCodec(values)
+		codec := NewRawCodec(array.NewPrimitivesUnsafe[uint16](values))
 		assertCodecMetadata(t, codec, len(values), PTypeUnsignedInteger, 0)
 		assertCodecRoundTrip(t, codec, values)
 	})
@@ -37,12 +41,12 @@ func FuzzRawCodecRoundTrip(f *testing.F) {
 func BenchmarkRawCodecBuildLarge(b *testing.B) {
 	data := makeRampInt64Corpus(largeCorpusSize)
 	benchmarkBuildLoop(b, "raw", func(values []int64) (Codec[int64], error) {
-		return NewRawCodec(values), nil
+		return NewRawCodec(array.NewPrimitivesUnsafe[int64](values)), nil
 	}, data)
 }
 
 func BenchmarkRawCodecValueAtLarge(b *testing.B) {
 	data := makeRampInt64Corpus(largeCorpusSize)
-	codec := NewRawCodec(data)
+	codec := NewRawCodec(array.NewPrimitivesUnsafe[int64](data))
 	benchmarkValueAtLoop(b, codec, len(data))
 }

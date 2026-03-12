@@ -2,6 +2,8 @@ package btrblocks
 
 import (
 	"io"
+
+	"github.com/axiomhq/btrblocks/array"
 )
 
 // compile-time type assertions
@@ -24,17 +26,18 @@ type DictCodec[T Integer | Float | String] struct {
 	indices Codec[uint64]
 }
 
-func newDictCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T], depth int) (*DictCodec[T], error) {
+func newDictCodec[T Integer | Float | String](arr array.Array[T], cmpFn cmpFn[T], depth int) (*DictCodec[T], error) {
 	if depth <= 0 {
 		return nil, errDepthExhausted
 	}
 	var (
 		dict    = make(map[T]uint64)
-		indices = make([]uint64, len(data))
-		values  = make([]T, 0, len(data))
+		indices = make([]uint64, arr.Length())
+		values  = make([]T, 0, arr.Length())
 	)
 
-	for i, val := range data {
+	for i := uint64(0); i < arr.Length(); i++ {
+		val := arr.ValueAt(i)
 		idx, ok := dict[val]
 		if !ok {
 			idx = uint64(len(values))
@@ -45,21 +48,21 @@ func newDictCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T], depth in
 	}
 
 	valuesCodec := compress(values, depth-1)
-	indicesCodec := CompressInteger(indices, depth-1)
+	indicesCodec := CompressInteger(array.NewPrimitivesUnsafe[uint64](indices), depth-1)
 
 	return &DictCodec[T]{values: valuesCodec, indices: indicesCodec}, nil
 }
 
-func NewDictFloatCodec[T Float](data []T, depth int) (*DictCodec[T], error) {
-	return newDictCodec(data, cmpFloats[T], depth)
+func NewDictFloatCodec[T Float](arr array.Array[T], depth int) (*DictCodec[T], error) {
+	return newDictCodec(arr, cmpFloats[T], depth)
 }
 
-func NewDictIntegerCodec[T Integer](data []T, depth int) (*DictCodec[T], error) {
-	return newDictCodec(data, cmpIntegers[T], depth)
+func NewDictIntegerCodec[T Integer](arr array.Array[T], depth int) (*DictCodec[T], error) {
+	return newDictCodec(arr, cmpIntegers[T], depth)
 }
 
-func NewDictStringCodec[T String](data []T, depth int) (*DictCodec[T], error) {
-	return newDictCodec(data, cmpStrings[T], depth)
+func NewDictStringCodec[T String](arr array.Array[T], depth int) (*DictCodec[T], error) {
+	return newDictCodec(arr, cmpStrings[T], depth)
 }
 
 func (d *DictCodec[T]) ValueAt(offset uint64) (T, error) {

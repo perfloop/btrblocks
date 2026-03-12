@@ -1,6 +1,10 @@
 package btrblocks
 
-import "io"
+import (
+	"io"
+
+	"github.com/axiomhq/btrblocks/array"
+)
 
 // compile-time type assertions
 var (
@@ -18,11 +22,11 @@ var (
 )
 
 type RawCodec[T Integer | Float | String] struct {
-	data []T
+	arr array.Array[T]
 }
 
-func NewRawCodec[T Integer | Float | String](data []T) *RawCodec[T] {
-	return &RawCodec[T]{data: data}
+func NewRawCodec[T Integer | Float | String](arr array.Array[T]) *RawCodec[T] {
+	return &RawCodec[T]{arr: arr}
 }
 
 func (r *RawCodec[T]) Children() []Scheme {
@@ -31,22 +35,22 @@ func (r *RawCodec[T]) Children() []Scheme {
 
 func (r *RawCodec[T]) ValueAt(offset uint64) (T, error) {
 	var zero T
-	if offset >= uint64(len(r.data)) {
+	if offset >= r.arr.Length() {
 		return zero, errOffsetOutOfRange
 	}
-	return r.data[offset], nil
+	return r.arr.ValueAt(offset), nil
 }
 
 func (r *RawCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
-	return int64(len(r.data)), nil
+	return r.arr.WriteTo(w)
 }
 
 func (r *RawCodec[T]) BinarySize() uint64 {
-	return uint64(len(r.data))
+	return r.arr.BinarySize()
 }
 
 func (r *RawCodec[T]) Length() uint64 {
-	return uint64(len(r.data))
+	return r.arr.Length()
 }
 
 func (r *RawCodec[T]) PType() PType {
