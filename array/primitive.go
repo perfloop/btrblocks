@@ -3,6 +3,7 @@ package array
 import (
 	"fmt"
 	"io"
+	"unsafe"
 )
 
 var (
@@ -34,11 +35,35 @@ func NewPrimitivesUnsafe[T PrimitiveType](data []T) *Primitives[T] {
 	return &Primitives[T]{pType: pType, data: data}
 }
 
-func (c *Primitives[T]) ValueAt(offset uint64) T            { return c.data[offset] }
-func (c *Primitives[T]) WriteTo(w io.Writer) (int64, error) { return int64(len(c.data)), nil }
-func (c *Primitives[T]) BinarySize() uint64                 { return uint64(len(c.data)) * uint64(c.width()) }
-func (c *Primitives[T]) Length() uint64                     { return uint64(len(c.data)) }
-func (c *Primitives[T]) PType() PType                       { return c.pType }
+func (c *Primitives[T]) ValueAt(offset uint64) T { return c.data[offset] }
+func (c *Primitives[T]) BinarySize() uint64      { return uint64(len(c.data)) * uint64(c.width()) }
+func (c *Primitives[T]) Length() uint64          { return uint64(len(c.data)) }
+func (c *Primitives[T]) PType() PType            { return c.pType }
+
+func (c *Primitives[T]) writeBody(w io.Writer) (int64, error) {
+	if len(c.data) == 0 {
+		return 0, nil
+	}
+	width := c.width()
+	byteLen := len(c.data) * width
+	b := unsafe.Slice((*byte)(unsafe.Pointer(&c.data[0])), byteLen)
+	n, err := w.Write(b)
+	return int64(n), err
+}
+
+func (c *Primitives[T]) WriteTo(w io.Writer) (int64, error) {
+	hn, err := Header{
+		Version:  1,
+		PType:    c.pType,
+		Length:   c.Length(),
+		BodySize: c.BinarySize(),
+	}.WriteTo(w)
+	if err != nil {
+		return hn, err
+	}
+	bn, err := c.writeBody(w)
+	return hn + bn, err
+}
 
 func (c *Primitives[T]) width() int {
 	switch c.pType {
@@ -46,9 +71,9 @@ func (c *Primitives[T]) width() int {
 		return 1
 	case PTypeInt16, PTypeUint16:
 		return 2
-	case PTypeInt32, PTypeUint32:
+	case PTypeInt32, PTypeUint32, PTypeFloat32:
 		return 4
-	case PTypeInt64, PTypeUint64:
+	case PTypeInt64, PTypeUint64, PTypeFloat64:
 		return 8
 	}
 	panic(fmt.Sprintf("unknown primitive type: %v", c.pType))

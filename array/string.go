@@ -1,6 +1,7 @@
 package array
 
 import (
+	"encoding/binary"
 	"io"
 	"math"
 	"unsafe"
@@ -59,6 +60,52 @@ func (c *Strings[T]) BinarySize() uint64 {
 	return uint64(len(c.buf)) + uint64(len(c.offsets))*uint64(unsafe.Sizeof(T(0)))
 }
 
-func (c *Strings[T]) WriteTo(w io.Writer) (int64, error) { return int64(len(c.buf)), nil }
-func (c *Strings[T]) Length() uint64                     { return uint64(len(c.offsets)) }
-func (c *Strings[T]) PType() PType                       { return PTypeString }
+func (c *Strings[T]) Length() uint64 { return uint64(len(c.offsets) - 1) }
+func (c *Strings[T]) PType() PType   { return PTypeString }
+
+func (c *Strings[T]) header() Header {
+	return Header{
+		Version:  1,
+		PType:    PTypeString,
+		Length:   c.Length(),
+		BodySize: 4 + c.BinarySize(),
+	}
+}
+
+func (c *Strings[T]) writeBody(w io.Writer) (int64, error) {
+	if err := binary.Write(w, binary.LittleEndian, uint32(len(c.buf))); err != nil {
+		return 0, err
+	}
+	n := int64(4)
+
+	var buf [8]byte
+	width := int(unsafe.Sizeof(T(0)))
+	for _, o := range c.offsets {
+		switch v := any(o).(type) {
+		case uint8:
+			buf[0] = v
+		case uint16:
+			binary.LittleEndian.PutUint16(buf[:2], v)
+		case uint32:
+			binary.LittleEndian.PutUint32(buf[:4], v)
+		case uint64:
+			binary.LittleEndian.PutUint64(buf[:8], v)
+		}
+		wn, err := w.Write(buf[:width])
+		if err != nil {
+			return n + int64(wn), err
+		}
+		n += int64(wn)
+	}
+	wn, err := w.Write(c.buf)
+	return n + int64(wn), err
+}
+
+func (c *Strings[T]) WriteTo(w io.Writer) (int64, error) {
+	hn, err := c.header().WriteTo(w)
+	if err != nil {
+		return hn, err
+	}
+	bn, err := c.writeBody(w)
+	return hn + bn, err
+}
