@@ -6,6 +6,9 @@ import (
 	"math"
 	"strconv"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const largeCorpusSize = 1 << 20
@@ -13,18 +16,10 @@ const largeCorpusSize = 1 << 20
 func assertCodecMetadata[T Integer | Float | String](t *testing.T, codec Codec[T], wantLen int, wantPType PType, wantChildren int) {
 	t.Helper()
 
-	if codec == nil {
-		t.Fatal("codec is nil")
-	}
-	if got := codec.Length(); got != uint64(wantLen) {
-		t.Fatalf("Length() = %d, want %d", got, wantLen)
-	}
-	if got := codec.PType(); got != wantPType {
-		t.Fatalf("PType() = %v, want %v", got, wantPType)
-	}
-	if got := len(codec.Children()); got != wantChildren {
-		t.Fatalf("len(Children()) = %d, want %d", got, wantChildren)
-	}
+	require.NotNil(t, codec)
+	require.Equal(t, uint64(wantLen), codec.Length())
+	require.Equal(t, wantPType, codec.PType())
+	require.Len(t, codec.Children(), wantChildren)
 }
 
 func assertCodecRoundTrip[T Integer | Float | String](t *testing.T, codec Codec[T], data []T) {
@@ -32,23 +27,16 @@ func assertCodecRoundTrip[T Integer | Float | String](t *testing.T, codec Codec[
 
 	for i, want := range data {
 		got, err := codec.ValueAt(uint64(i))
-		if err != nil {
-			t.Fatalf("ValueAt(%d) returned error: %v", i, err)
-		}
+		require.NoError(t, err, "ValueAt(%d)", i)
 		assertValueEqual(t, got, want, i)
 	}
 
-	if _, err := codec.ValueAt(codec.Length()); err != errOffsetOutOfRange {
-		t.Fatalf("ValueAt(%d) error = %v, want %v", codec.Length(), err, errOffsetOutOfRange)
-	}
+	_, err := codec.ValueAt(codec.Length())
+	require.ErrorIs(t, err, errOffsetOutOfRange)
 
 	n, err := codec.WriteTo(io.Discard)
-	if err != nil {
-		t.Fatalf("WriteTo() returned error: %v", err)
-	}
-	if want := int64(codec.BinarySize()); n != want {
-		t.Fatalf("WriteTo() bytes = %d, want %d", n, want)
-	}
+	require.NoError(t, err)
+	require.Equal(t, int64(codec.BinarySize()), n)
 }
 
 func assertValueEqual[T Integer | Float | String](t *testing.T, got, want T, offset int) {
@@ -56,17 +44,11 @@ func assertValueEqual[T Integer | Float | String](t *testing.T, got, want T, off
 
 	switch w := any(want).(type) {
 	case float32:
-		if math.Float32bits(any(got).(float32)) != math.Float32bits(w) {
-			t.Fatalf("ValueAt(%d) = %v, want %v", offset, got, want)
-		}
+		assert.Equal(t, math.Float32bits(w), math.Float32bits(any(got).(float32)), "ValueAt(%d)", offset)
 	case float64:
-		if math.Float64bits(any(got).(float64)) != math.Float64bits(w) {
-			t.Fatalf("ValueAt(%d) = %v, want %v", offset, got, want)
-		}
+		assert.Equal(t, math.Float64bits(w), math.Float64bits(any(got).(float64)), "ValueAt(%d)", offset)
 	default:
-		if got != want {
-			t.Fatalf("ValueAt(%d) = %v, want %v", offset, got, want)
-		}
+		assert.Equal(t, want, got, "ValueAt(%d)", offset)
 	}
 }
 

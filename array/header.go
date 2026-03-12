@@ -5,18 +5,41 @@ import (
 	"io"
 )
 
+// headerSize is the fixed size of the binary header (20 bytes). Layout: Version(1) + PType(1) + Flags(2) + Length(8) + BodySize(8).
 const headerSize = 20
 
+// maxArrayLength is the maximum number of elements we will allocate when decoding. Prevents panic/OOM on corrupt headers.
+const maxArrayLength = 1 << 30
+
+// maxStringBufLen is the maximum byte length for the string data buffer when decoding. Prevents OOM on corrupt input.
+const maxStringBufLen = 1 << 30
+
 // Header is the fixed 20-byte header written before every array body.
+// All multi-byte fields are little-endian.
 type Header struct {
-	Version  uint8
-	PType    PType
-	Flags    uint16
-	Length   uint64
-	BodySize uint64
+	Version  uint8  // Format version; currently 1.
+	PType    PType  // Element type (int8, uint32, string, etc.).
+	Flags    uint16 // Reserved for future use.
+	Length   uint64 // Number of elements in the array.
+	BodySize uint64 // Size in bytes of the body following this header.
 }
 
-// writeHeader encodes h in LittleEndian and writes it to w. Returns bytes written and any error.
+// readHeader reads a 20-byte header from r.
+func readHeader(r io.Reader) (Header, error) {
+	var buf [headerSize]byte
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
+		return Header{}, err
+	}
+	return Header{
+		Version:  buf[0],
+		PType:    PType(buf[1]),
+		Flags:    binary.LittleEndian.Uint16(buf[2:4]),
+		Length:   binary.LittleEndian.Uint64(buf[4:12]),
+		BodySize: binary.LittleEndian.Uint64(buf[12:20]),
+	}, nil
+}
+
+// WriteTo encodes h in LittleEndian and writes it to w. Returns bytes written and any error.
 func (h Header) WriteTo(w io.Writer) (int64, error) {
 	var buf [headerSize]byte
 	buf[0] = h.Version

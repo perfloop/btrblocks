@@ -1,5 +1,6 @@
 package array
 
+// PType identifies the physical element type of an array (int8, uint32, string, etc.).
 type PType uint8
 
 const (
@@ -62,29 +63,37 @@ func (p PType) IsPrimitive() bool {
 	return p.IsInteger() || p.IsFloat() || p.IsString()
 }
 
+// SignedInteger is the set of signed integer types supported as primitive elements.
 type SignedInteger interface {
 	~int8 | ~int16 | ~int32 | ~int64
 }
 
+// UnsignedInteger is the set of unsigned integer types supported as primitive elements and used for string offset arrays.
 type UnsignedInteger interface {
 	~uint8 | ~uint16 | ~uint32 | ~uint64
 }
 
+// Integer is the union of signed and unsigned integer types.
 type Integer interface {
 	SignedInteger | UnsignedInteger
 }
 
+// Float is the set of floating-point types supported as primitive elements.
 type Float interface {
 	~float32 | ~float64
 }
 
+// PrimitiveType is any numeric type that can be stored in a Primitives array.
 type PrimitiveType interface {
 	Integer | Float
 }
 
+// String is a type constraint for string arrays (currently just string).
 type String interface {
 	~string
 }
+
+// pTypeForType returns the PType for the given type parameter. Used when constructing or validating arrays.
 
 func pTypeForType[T Integer | Float | String]() PType {
 	var t T

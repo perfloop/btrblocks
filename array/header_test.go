@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestHeaderWriteTo(t *testing.T) {
@@ -17,30 +19,38 @@ func TestHeaderWriteTo(t *testing.T) {
 
 	var buf bytes.Buffer
 	n, err := header.WriteTo(&buf)
-	if err != nil {
-		t.Fatalf("WriteTo() error = %v", err)
-	}
-	if n != headerSize {
-		t.Fatalf("WriteTo() bytes = %d, want %d", n, headerSize)
-	}
+	require.NoError(t, err)
+	require.EqualValues(t, headerSize, n)
 
 	got := buf.Bytes()
-	if len(got) != headerSize {
-		t.Fatalf("len(buf) = %d, want %d", len(got), headerSize)
+	require.Len(t, got, headerSize)
+	require.Equal(t, header.Version, got[0])
+	require.Equal(t, header.PType, PType(got[1]))
+	require.Equal(t, header.Flags, binary.LittleEndian.Uint16(got[2:4]))
+	require.Equal(t, header.Length, binary.LittleEndian.Uint64(got[4:12]))
+	require.Equal(t, header.BodySize, binary.LittleEndian.Uint64(got[12:20]))
+}
+
+func BenchmarkHeaderWriteTo(b *testing.B) {
+	h := Header{Version: 1, PType: PTypeUint32, Length: 1000, BodySize: 4000}
+	var buf bytes.Buffer
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf.Reset()
+		_, _ = h.WriteTo(&buf)
 	}
-	if got[0] != header.Version {
-		t.Fatalf("version byte = %d, want %d", got[0], header.Version)
-	}
-	if PType(got[1]) != header.PType {
-		t.Fatalf("ptype byte = %v, want %v", PType(got[1]), header.PType)
-	}
-	if got := binary.LittleEndian.Uint16(got[2:4]); got != header.Flags {
-		t.Fatalf("flags = %#x, want %#x", got, header.Flags)
-	}
-	if got := binary.LittleEndian.Uint64(got[4:12]); got != header.Length {
-		t.Fatalf("length = %#x, want %#x", got, header.Length)
-	}
-	if got := binary.LittleEndian.Uint64(got[12:20]); got != header.BodySize {
-		t.Fatalf("body size = %#x, want %#x", got, header.BodySize)
-	}
+}
+
+func FuzzReadHeader(f *testing.F) {
+	// Seed with valid header bytes so the fuzz corpus has at least one valid input.
+	valid := make([]byte, headerSize)
+	valid[0] = 1
+	valid[1] = byte(PTypeInt32)
+	binary.LittleEndian.PutUint64(valid[4:12], 100)
+	binary.LittleEndian.PutUint64(valid[12:20], 400)
+	f.Add(valid)
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = readHeader(bytes.NewReader(data))
+		// Must not panic; error is acceptable for invalid/corrupt input.
+	})
 }

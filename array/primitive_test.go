@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"io"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewPrimitivesCopiesInput(t *testing.T) {
@@ -13,9 +15,7 @@ func TestNewPrimitivesCopiesInput(t *testing.T) {
 	arr := NewPrimitives(values)
 	values[0] = 99
 
-	if got := arr.ValueAt(0); got != 1 {
-		t.Fatalf("ValueAt(0) = %d, want 1", got)
-	}
+	require.Equal(t, uint32(1), arr.ValueAt(0))
 }
 
 func TestNewPrimitivesUnsafeSharesInput(t *testing.T) {
@@ -24,20 +24,18 @@ func TestNewPrimitivesUnsafeSharesInput(t *testing.T) {
 	arr := NewPrimitivesUnsafe(values)
 	values[0] = 99
 
-	if got := arr.ValueAt(0); got != 99 {
-		t.Fatalf("ValueAt(0) = %d, want 99", got)
-	}
+	require.Equal(t, uint32(99), arr.ValueAt(0))
 }
 
 func TestPrimitiveMetadata(t *testing.T) {
 	t.Run("int32", func(t *testing.T) {
-		assertPrimitiveMetadata(t, []int32{-3, 5, 8}, PTypeInt32, 12)
+		assertPrimitiveMetadata(t, []int32{-3, 5, 8}, PTypeInt32, 32)
 	})
 	t.Run("float32", func(t *testing.T) {
-		assertPrimitiveMetadata(t, []float32{1.5, -2.25}, PTypeFloat32, 8)
+		assertPrimitiveMetadata(t, []float32{1.5, -2.25}, PTypeFloat32, 28)
 	})
 	t.Run("float64", func(t *testing.T) {
-		assertPrimitiveMetadata(t, []float64{1.5, -2.25}, PTypeFloat64, 16)
+		assertPrimitiveMetadata(t, []float64{1.5, -2.25}, PTypeFloat64, 36)
 	})
 }
 
@@ -48,12 +46,8 @@ func TestPrimitiveWriteToIncludesHeaderAndBody(t *testing.T) {
 
 	var buf bytes.Buffer
 	n, err := arr.WriteTo(&buf)
-	if err != nil {
-		t.Fatalf("WriteTo() error = %v", err)
-	}
-	if want := int64(headerSize + len(wantBody)); n != want {
-		t.Fatalf("WriteTo() bytes = %d, want %d", n, want)
-	}
+	require.NoError(t, err)
+	require.EqualValues(t, headerSize+len(wantBody), n)
 
 	got := buf.Bytes()
 	assertHeaderBytes(t, got[:headerSize], Header{
@@ -62,9 +56,7 @@ func TestPrimitiveWriteToIncludesHeaderAndBody(t *testing.T) {
 		Length:   uint64(len(values)),
 		BodySize: uint64(len(wantBody)),
 	})
-	if !bytes.Equal(got[headerSize:], wantBody) {
-		t.Fatalf("body bytes = %v, want %v", got[headerSize:], wantBody)
-	}
+	require.Equal(t, wantBody, got[headerSize:])
 }
 
 func TestPrimitivesLargeCorpus(t *testing.T) {
@@ -74,45 +66,52 @@ func TestPrimitivesLargeCorpus(t *testing.T) {
 	}
 
 	arr := NewPrimitives(values)
-	if got := arr.Length(); got != largeCorpusSize {
-		t.Fatalf("Length() = %d, want %d", got, largeCorpusSize)
-	}
-	if got := arr.BinarySize(); got != uint64(largeCorpusSize*4) {
-		t.Fatalf("BinarySize() = %d, want %d", got, largeCorpusSize*4)
-	}
+	require.EqualValues(t, largeCorpusSize, arr.Length())
+	require.EqualValues(t, headerSize+largeCorpusSize*4, arr.BinarySize())
 
 	for _, idx := range []uint64{0, 1, largeCorpusSize / 2, largeCorpusSize - 1} {
-		if got := arr.ValueAt(idx); got != values[idx] {
-			t.Fatalf("ValueAt(%d) = %d, want %d", idx, got, values[idx])
-		}
+		require.Equal(t, values[idx], arr.ValueAt(idx), "ValueAt(%d)", idx)
 	}
 
 	n, err := arr.WriteTo(io.Discard)
-	if err != nil {
-		t.Fatalf("WriteTo() error = %v", err)
-	}
-	if want := int64(headerSize + arr.BinarySize()); n != want {
-		t.Fatalf("WriteTo() bytes = %d, want %d", n, want)
-	}
+	require.NoError(t, err)
+	require.EqualValues(t, arr.BinarySize(), n)
+}
+
+func TestReadPrimitives(t *testing.T) {
+	t.Run("int32 round-trip", func(t *testing.T) {
+		values := []int32{-1, 0, 42, 1 << 20}
+		arr := NewPrimitives(values)
+		var buf bytes.Buffer
+		_, err := arr.WriteTo(&buf)
+		require.NoError(t, err)
+		got, err := ReadPrimitives[int32](&buf)
+		require.NoError(t, err)
+		require.Equal(t, arr.Length(), got.Length())
+		for i := uint64(0); i < got.Length(); i++ {
+			require.Equal(t, values[i], got.ValueAt(i), "ValueAt(%d)", i)
+		}
+	})
+	t.Run("empty", func(t *testing.T) {
+		arr := NewPrimitives([]float64{})
+		var buf bytes.Buffer
+		_, err := arr.WriteTo(&buf)
+		require.NoError(t, err)
+		got, err := ReadPrimitives[float64](&buf)
+		require.NoError(t, err)
+		require.Equal(t, uint64(0), got.Length())
+	})
 }
 
 func assertPrimitiveMetadata[T PrimitiveType](t *testing.T, values []T, wantPType PType, wantBinarySize uint64) {
 	t.Helper()
 
 	arr := NewPrimitives(values)
-	if got := arr.PType(); got != wantPType {
-		t.Fatalf("PType() = %v, want %v", got, wantPType)
-	}
-	if got := arr.Length(); got != uint64(len(values)) {
-		t.Fatalf("Length() = %d, want %d", got, len(values))
-	}
-	if got := arr.BinarySize(); got != wantBinarySize {
-		t.Fatalf("BinarySize() = %d, want %d", got, wantBinarySize)
-	}
+	require.Equal(t, wantPType, arr.PType())
+	require.Equal(t, uint64(len(values)), arr.Length())
+	require.Equal(t, wantBinarySize, arr.BinarySize())
 	for i, want := range values {
-		if got := arr.ValueAt(uint64(i)); got != want {
-			t.Fatalf("ValueAt(%d) = %v, want %v", i, got, want)
-		}
+		require.Equal(t, want, arr.ValueAt(uint64(i)), "ValueAt(%d)", i)
 	}
 }
 
@@ -120,31 +119,68 @@ func encodePrimitiveBody[T PrimitiveType](t *testing.T, values []T) []byte {
 	t.Helper()
 
 	var buf bytes.Buffer
-	if err := binary.Write(&buf, binary.LittleEndian, values); err != nil {
-		t.Fatalf("binary.Write() error = %v", err)
-	}
+	require.NoError(t, binary.Write(&buf, binary.LittleEndian, values))
 	return buf.Bytes()
 }
 
 func assertHeaderBytes(t *testing.T, got []byte, want Header) {
 	t.Helper()
 
-	if len(got) != headerSize {
-		t.Fatalf("len(header) = %d, want %d", len(got), headerSize)
+	require.Len(t, got, headerSize)
+	require.Equal(t, want.Version, got[0])
+	require.Equal(t, want.PType, PType(got[1]))
+	require.Equal(t, want.Flags, binary.LittleEndian.Uint16(got[2:4]))
+	require.Equal(t, want.Length, binary.LittleEndian.Uint64(got[4:12]))
+	require.Equal(t, want.BodySize, binary.LittleEndian.Uint64(got[12:20]))
+}
+
+func BenchmarkWritePrimitives(b *testing.B) {
+	values := make([]int32, 10000)
+	for i := range values {
+		values[i] = int32(i)
 	}
-	if got[0] != want.Version {
-		t.Fatalf("version byte = %d, want %d", got[0], want.Version)
+	arr := NewPrimitives(values)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = arr.WriteTo(io.Discard)
 	}
-	if PType(got[1]) != want.PType {
-		t.Fatalf("ptype byte = %v, want %v", PType(got[1]), want.PType)
+}
+
+func BenchmarkReadPrimitives(b *testing.B) {
+	values := make([]int32, 10000)
+	for i := range values {
+		values[i] = int32(i)
 	}
-	if got := binary.LittleEndian.Uint16(got[2:4]); got != want.Flags {
-		t.Fatalf("flags = %#x, want %#x", got, want.Flags)
+	arr := NewPrimitives(values)
+	var buf bytes.Buffer
+	_, _ = arr.WriteTo(&buf)
+	data := buf.Bytes()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = ReadPrimitives[int32](bytes.NewReader(data))
 	}
-	if got := binary.LittleEndian.Uint64(got[4:12]); got != want.Length {
-		t.Fatalf("length = %d, want %d", got, want.Length)
+}
+
+func BenchmarkValueAtPrimitives(b *testing.B) {
+	values := make([]uint64, 10000)
+	for i := range values {
+		values[i] = uint64(i)
 	}
-	if got := binary.LittleEndian.Uint64(got[12:20]); got != want.BodySize {
-		t.Fatalf("body size = %d, want %d", got, want.BodySize)
+	arr := NewPrimitives(values)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = arr.ValueAt(uint64(i % 10000))
 	}
+}
+
+func FuzzReadPrimitives(f *testing.F) {
+	// Seed with valid encoded primitive array so corpus has at least one valid input.
+	arr := NewPrimitives([]int32{1, 2, 3})
+	var buf bytes.Buffer
+	_, _ = arr.WriteTo(&buf)
+	f.Add(buf.Bytes())
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = ReadPrimitives[int32](bytes.NewReader(data))
+		// Must not panic; error is acceptable for invalid/corrupt input.
+	})
 }

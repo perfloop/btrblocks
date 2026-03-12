@@ -1,14 +1,16 @@
 package btrblocks
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestCompressDispatchesDeterministicCodecs(t *testing.T) {
 	t.Run("const integer", func(t *testing.T) {
 		data := makeConstantCorpus(256, int64(9))
 		codec := compress(data, defaultDepth)
-		if _, ok := any(codec).(*ConstCodec[int64]); !ok {
-			t.Fatalf("compress() = %s, want *ConstCodec[int64]", describeCodec(codec))
-		}
+		require.IsType(t, &ConstCodec[int64]{}, codec)
 		assertCodecMetadata(t, codec, len(data), PTypeInteger, 0)
 		assertCodecRoundTrip(t, codec, data)
 	})
@@ -16,9 +18,7 @@ func TestCompressDispatchesDeterministicCodecs(t *testing.T) {
 	t.Run("raw integer", func(t *testing.T) {
 		data := makeRampInt64Corpus(256)
 		codec := compress(data, defaultDepth)
-		if _, ok := any(codec).(*RawCodec[int64]); !ok {
-			t.Fatalf("compress() = %s, want *RawCodec[int64]", describeCodec(codec))
-		}
+		require.IsType(t, &RawCodec[int64]{}, codec)
 		assertCodecMetadata(t, codec, len(data), PTypeInteger, 0)
 		assertCodecRoundTrip(t, codec, data)
 	})
@@ -26,9 +26,7 @@ func TestCompressDispatchesDeterministicCodecs(t *testing.T) {
 	t.Run("const string", func(t *testing.T) {
 		data := makeConstantCorpus(256, "zone-a")
 		codec := compress(data, defaultDepth)
-		if _, ok := any(codec).(*ConstCodec[string]); !ok {
-			t.Fatalf("compress() = %s, want *ConstCodec[string]", describeCodec(codec))
-		}
+		require.IsType(t, &ConstCodec[string]{}, codec)
 		assertCodecMetadata(t, codec, len(data), PTypeString, 0)
 		assertCodecRoundTrip(t, codec, data)
 	})
@@ -36,9 +34,7 @@ func TestCompressDispatchesDeterministicCodecs(t *testing.T) {
 	t.Run("raw float", func(t *testing.T) {
 		data := makeUniqueFloat64Corpus(256)
 		codec := compress(data, defaultDepth)
-		if _, ok := any(codec).(*RawCodec[float64]); !ok {
-			t.Fatalf("compress() = %s, want *RawCodec[float64]", describeCodec(codec))
-		}
+		require.IsType(t, &RawCodec[float64]{}, codec)
 		assertCodecMetadata(t, codec, len(data), PTypeFloat, 0)
 		assertCodecRoundTrip(t, codec, data)
 	})
@@ -50,9 +46,7 @@ func TestCompressExportedFunctionsLargeCorpora(t *testing.T) {
 		codecDefault := Compress(data)
 		codecExplicit := CompressWithDepth(data, defaultDepth)
 
-		if describeCodec(codecDefault) != describeCodec(codecExplicit) {
-			t.Fatalf("Compress() = %s, CompressWithDepth() = %s", describeCodec(codecDefault), describeCodec(codecExplicit))
-		}
+		require.Equal(t, describeCodec(codecDefault), describeCodec(codecExplicit))
 
 		assertCodecMetadata(t, codecDefault, len(data), PTypeUnsignedInteger, 0)
 		assertCodecRoundTrip(t, codecDefault, data)
@@ -77,7 +71,8 @@ func TestCompressExportedFunctionsLargeCorpora(t *testing.T) {
 	t.Run("large string patterned", func(t *testing.T) {
 		data := makeLowCardinalityStringCorpus(largeCorpusSize, 8)
 		codec := Compress(data)
-		assertCodecMetadata(t, codec, len(data), PTypeString, 0)
+		require.IsType(t, &DictCodec[string]{}, codec)
+		assertCodecMetadata(t, codec, len(data), PTypeString, 2)
 		assertCodecRoundTrip(t, codec, data)
 	})
 }

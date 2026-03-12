@@ -1,6 +1,10 @@
 package array
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestPTypeStringAndClassifiers(t *testing.T) {
 	tests := []struct {
@@ -18,21 +22,11 @@ func TestPTypeStringAndClassifiers(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := tt.pType.String(); got != tt.wantString {
-			t.Fatalf("%v.String() = %q, want %q", tt.pType, got, tt.wantString)
-		}
-		if got := tt.pType.IsInteger(); got != tt.wantInteger {
-			t.Fatalf("%v.IsInteger() = %t, want %t", tt.pType, got, tt.wantInteger)
-		}
-		if got := tt.pType.IsFloat(); got != tt.wantFloat {
-			t.Fatalf("%v.IsFloat() = %t, want %t", tt.pType, got, tt.wantFloat)
-		}
-		if got := tt.pType.IsString(); got != tt.wantStringy {
-			t.Fatalf("%v.IsString() = %t, want %t", tt.pType, got, tt.wantStringy)
-		}
-		if got := tt.pType.IsPrimitive(); got != (tt.wantInteger || tt.wantFloat || tt.wantStringy) {
-			t.Fatalf("%v.IsPrimitive() = %t", tt.pType, got)
-		}
+		require.Equal(t, tt.wantString, tt.pType.String())
+		require.Equal(t, tt.wantInteger, tt.pType.IsInteger())
+		require.Equal(t, tt.wantFloat, tt.pType.IsFloat())
+		require.Equal(t, tt.wantStringy, tt.pType.IsString())
+		require.Equal(t, tt.wantInteger || tt.wantFloat || tt.wantStringy, tt.pType.IsPrimitive())
 	}
 }
 
@@ -53,7 +47,36 @@ func TestPTypeForType(t *testing.T) {
 func assertPTypeForType[T Integer | Float | String](t *testing.T, want PType) {
 	t.Helper()
 
-	if got := pTypeForType[T](); got != want {
-		t.Fatalf("pTypeForType() = %v, want %v", got, want)
+	require.Equal(t, want, pTypeForType[T]())
+}
+
+func BenchmarkPTypeString(b *testing.B) {
+	p := PTypeInt32
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = p.String()
 	}
+}
+
+func BenchmarkWidthForPType(b *testing.B) {
+	p := PTypeUint64
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = widthForPType(p)
+	}
+}
+
+func FuzzPTypeString(f *testing.F) {
+	for _, p := range []PType{PTypeUnknown, PTypeInt8, PTypeUint64, PTypeFloat32, PTypeString, 255} {
+		f.Add(uint8(p))
+	}
+	f.Fuzz(func(t *testing.T, raw uint8) {
+		p := PType(raw)
+		_ = p.String()
+		_ = p.IsInteger()
+		_ = p.IsFloat()
+		_ = p.IsString()
+		_ = p.IsPrimitive()
+		// Must not panic for any uint8 value.
+	})
 }

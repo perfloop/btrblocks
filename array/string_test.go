@@ -7,50 +7,34 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewStringsChoosesOffsetWidth(t *testing.T) {
 	t.Run("uint8", func(t *testing.T) {
 		arr := NewStrings([]string{strings.Repeat("a", math.MaxUint8)})
-		if _, ok := arr.(*Strings[uint8]); !ok {
-			t.Fatalf("NewStrings() type = %T, want *Strings[uint8]", arr)
-		}
+		require.IsType(t, &Strings[uint8]{}, arr)
 	})
 	t.Run("uint16", func(t *testing.T) {
 		arr := NewStrings([]string{strings.Repeat("a", math.MaxUint8+1)})
-		if _, ok := arr.(*Strings[uint16]); !ok {
-			t.Fatalf("NewStrings() type = %T, want *Strings[uint16]", arr)
-		}
+		require.IsType(t, &Strings[uint16]{}, arr)
 	})
 	t.Run("uint32", func(t *testing.T) {
 		arr := NewStrings([]string{strings.Repeat("a", math.MaxUint16+1)})
-		if _, ok := arr.(*Strings[uint32]); !ok {
-			t.Fatalf("NewStrings() type = %T, want *Strings[uint32]", arr)
-		}
+		require.IsType(t, &Strings[uint32]{}, arr)
 	})
 }
 
 func TestStringsMetadataAndHeader(t *testing.T) {
 	arr := newStringsWithOffsets[uint16]([]string{"go", "", "lang"}, 6, 2)
 
-	if got := arr.Length(); got != 3 {
-		t.Fatalf("Length() = %d, want 3", got)
-	}
-	if got := arr.PType(); got != PTypeString {
-		t.Fatalf("PType() = %v, want %v", got, PTypeString)
-	}
-	if got := arr.BinarySize(); got != 14 {
-		t.Fatalf("BinarySize() = %d, want 14", got)
-	}
-	if got := arr.ValueAt(1); got != "" {
-		t.Fatalf("ValueAt(1) = %q, want empty string", got)
-	}
-	if got := arr.ValueAt(2); got != "lang" {
-		t.Fatalf("ValueAt(2) = %q, want %q", got, "lang")
-	}
-	if got := arr.header(); got != (Header{Version: 1, PType: PTypeString, Length: 3, BodySize: 18}) {
-		t.Fatalf("header() = %+v, want %+v", got, Header{Version: 1, PType: PTypeString, Length: 3, BodySize: 18})
-	}
+	require.EqualValues(t, 3, arr.Length())
+	require.Equal(t, PTypeString, arr.PType())
+	require.EqualValues(t, 38, arr.BinarySize())
+	require.Equal(t, "", arr.ValueAt(1))
+	require.Equal(t, "lang", arr.ValueAt(2))
+	require.Equal(t, Header{Version: 1, PType: PTypeString, Length: 3, BodySize: 18}, arr.header())
 }
 
 func TestStringsWriteToIncludesHeaderOffsetsAndBuffer(t *testing.T) {
@@ -58,9 +42,7 @@ func TestStringsWriteToIncludesHeaderOffsetsAndBuffer(t *testing.T) {
 
 	var buf bytes.Buffer
 	n, err := arr.WriteTo(&buf)
-	if err != nil {
-		t.Fatalf("WriteTo() error = %v", err)
-	}
+	require.NoError(t, err)
 
 	wantBody := make([]byte, 0, 16)
 	var lenBuf [4]byte
@@ -71,9 +53,7 @@ func TestStringsWriteToIncludesHeaderOffsetsAndBuffer(t *testing.T) {
 	wantBody = binary.LittleEndian.AppendUint16(wantBody, 6)
 	wantBody = append(wantBody, []byte("golang")...)
 
-	if want := int64(headerSize + len(wantBody)); n != want {
-		t.Fatalf("WriteTo() bytes = %d, want %d", n, want)
-	}
+	require.EqualValues(t, headerSize+len(wantBody), n)
 
 	got := buf.Bytes()
 	assertHeaderBytes(t, got[:headerSize], Header{
@@ -82,9 +62,7 @@ func TestStringsWriteToIncludesHeaderOffsetsAndBuffer(t *testing.T) {
 		Length:   2,
 		BodySize: uint64(len(wantBody)),
 	})
-	if !bytes.Equal(got[headerSize:], wantBody) {
-		t.Fatalf("body bytes = %v, want %v", got[headerSize:], wantBody)
-	}
+	require.Equal(t, wantBody, got[headerSize:])
 }
 
 func TestStringsLargeCorpus(t *testing.T) {
@@ -98,33 +76,84 @@ func TestStringsLargeCorpus(t *testing.T) {
 
 	arr := NewStrings(values)
 	stringsArr, ok := arr.(*Strings[uint32])
-	if !ok {
-		t.Fatalf("NewStrings() type = %T, want *Strings[uint32]", arr)
-	}
+	require.True(t, ok, "NewStrings() type = %T, want *Strings[uint32]", arr)
 
-	if got := arr.Length(); got != largeCorpusSize {
-		t.Fatalf("Length() = %d, want %d", got, largeCorpusSize)
-	}
-	wantBinarySize := uint64(total) + uint64(largeCorpusSize+1)*4
-	if got := arr.BinarySize(); got != wantBinarySize {
-		t.Fatalf("BinarySize() = %d, want %d", got, wantBinarySize)
-	}
+	require.EqualValues(t, largeCorpusSize, arr.Length())
+	wantBinarySize := uint64(headerSize) + 4 + uint64(total) + uint64(largeCorpusSize+1)*4
+	require.Equal(t, wantBinarySize, arr.BinarySize())
 
 	for _, idx := range []uint64{0, 1, largeCorpusSize / 2, largeCorpusSize - 1} {
-		if got := arr.ValueAt(idx); got != values[idx] {
-			t.Fatalf("ValueAt(%d) = %q, want %q", idx, got, values[idx])
-		}
+		require.Equal(t, values[idx], arr.ValueAt(idx), "ValueAt(%d)", idx)
 	}
 
-	if got := stringsArr.header(); got != (Header{Version: 1, PType: PTypeString, Length: largeCorpusSize, BodySize: 4 + wantBinarySize}) {
-		t.Fatalf("header() = %+v, want %+v", got, Header{Version: 1, PType: PTypeString, Length: largeCorpusSize, BodySize: 4 + wantBinarySize})
-	}
+	require.Equal(t, Header{Version: 1, PType: PTypeString, Length: largeCorpusSize, BodySize: 4 + uint64(total) + uint64(largeCorpusSize+1)*4}, stringsArr.header())
 
 	n, err := arr.WriteTo(io.Discard)
-	if err != nil {
-		t.Fatalf("WriteTo() error = %v", err)
+	require.NoError(t, err)
+	require.EqualValues(t, wantBinarySize, n)
+}
+
+func TestReadStrings(t *testing.T) {
+	values := []string{"go", "", "lang"}
+	arr := NewStrings(values)
+	var buf bytes.Buffer
+	_, err := arr.WriteTo(&buf)
+	require.NoError(t, err)
+	got, err := ReadStrings(&buf)
+	require.NoError(t, err)
+	require.Equal(t, arr.Length(), got.Length())
+	for i := uint64(0); i < got.Length(); i++ {
+		require.Equal(t, values[i], got.ValueAt(i), "ValueAt(%d)", i)
 	}
-	if want := int64(headerSize) + int64(4+wantBinarySize); n != want {
-		t.Fatalf("WriteTo() bytes = %d, want %d", n, want)
+}
+
+func BenchmarkWriteStrings(b *testing.B) {
+	values := make([]string, 1000)
+	for i := range values {
+		values[i] = "hello"
 	}
+	arr := NewStrings(values)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = arr.WriteTo(io.Discard)
+	}
+}
+
+func BenchmarkReadStrings(b *testing.B) {
+	values := make([]string, 1000)
+	for i := range values {
+		values[i] = "hello"
+	}
+	arr := NewStrings(values)
+	var buf bytes.Buffer
+	_, _ = arr.WriteTo(&buf)
+	data := buf.Bytes()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = ReadStrings(bytes.NewReader(data))
+	}
+}
+
+func BenchmarkValueAtStrings(b *testing.B) {
+	values := make([]string, 1000)
+	for i := range values {
+		values[i] = "hello"
+	}
+	arr := NewStrings(values)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = arr.ValueAt(uint64(i % 1000))
+	}
+}
+
+func FuzzReadStrings(f *testing.F) {
+	// Seed with valid encoded string array so corpus has at least one valid input.
+	arr := NewStrings([]string{"a", "bb", "ccc"})
+	var buf bytes.Buffer
+	_, _ = arr.WriteTo(&buf)
+	f.Add(buf.Bytes())
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = ReadStrings(bytes.NewReader(data))
+		// Must not panic; error is acceptable for invalid/corrupt input.
+	})
 }
