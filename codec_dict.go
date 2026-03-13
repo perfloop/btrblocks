@@ -117,6 +117,7 @@ func (d *DictCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
 	if err != nil {
 		return n + int64(nn), err
 	}
+	n += int64(nn)
 
 	nn, err = d.indices.WriteTo(w)
 	return n + int64(nn), err

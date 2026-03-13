@@ -43,5 +43,8 @@ func (h Header) WriteTo(w io.Writer) (int64, error) {
 	binary.LittleEndian.PutUint64(buf[8:16], h.Length)
 	binary.LittleEndian.PutUint64(buf[16:24], h.BodySize)
 	n, err := w.Write(buf[:])
+	if err == nil && n != len(buf) {
+		err = io.ErrShortWrite
+	}
 	return int64(n), err
 }

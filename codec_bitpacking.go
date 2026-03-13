@@ -141,5 +141,8 @@ func (c *BitpackingCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
 	if err != nil {
 		return n + int64(nn), err
 	}
+	if nn != len(c.buf) {
+		return n + int64(nn), io.ErrShortWrite
+	}
 	return n + int64(nn), nil
 }
