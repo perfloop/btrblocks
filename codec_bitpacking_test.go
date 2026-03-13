@@ -6,7 +6,7 @@ func TestBitpackingCodecUint8CrossByteRoundTrip(t *testing.T) {
 	data := []uint8{0, 1, 2, 3, 4, 5, 6, 7}
 	codec := NewBitpackingCodec(data)
 
-	assertCodecMetadata(t, codec, len(data), PTypeUnsignedInteger, 0)
+	assertCodecMetadata(t, codec, len(data), PTypeUint8, 0)
 	assertCodecRoundTrip(t, codec, data)
 
 	if got := codec.bitWidth; got != 3 {
@@ -22,7 +22,7 @@ func TestBitpackingCodecZeroAndWideValues(t *testing.T) {
 		data := makeConstantCorpus(256, uint16(0))
 		codec := NewBitpackingCodec(data)
 
-		assertCodecMetadata(t, codec, len(data), PTypeUnsignedInteger, 0)
+		assertCodecMetadata(t, codec, len(data), PTypeUint16, 0)
 		assertCodecRoundTrip(t, codec, data)
 
 		if got := codec.bitWidth; got != 0 {
@@ -37,7 +37,7 @@ func TestBitpackingCodecZeroAndWideValues(t *testing.T) {
 		data := []uint64{0, ^uint64(0), 1 << 63, 17}
 		codec := NewBitpackingCodec(data)
 
-		assertCodecMetadata(t, codec, len(data), PTypeUnsignedInteger, 0)
+		assertCodecMetadata(t, codec, len(data), PTypeUint64, 0)
 		assertCodecRoundTrip(t, codec, data)
 
 		if got := codec.bitWidth; got != 64 {
@@ -56,7 +56,7 @@ func TestBitpackingCodecLargeCorpus(t *testing.T) {
 	}
 
 	codec := NewBitpackingCodec(data)
-	assertCodecMetadata(t, codec, len(data), PTypeUnsignedInteger, 0)
+	assertCodecMetadata(t, codec, len(data), PTypeUint32, 0)
 	assertCodecRoundTrip(t, codec, data)
 
 	if got := codec.bitWidth; got != 5 {
@@ -82,7 +82,7 @@ func FuzzBitpackingCodecRoundTrip(f *testing.F) {
 		}
 
 		codec := NewBitpackingCodec(values)
-		assertCodecMetadata(t, codec, len(values), PTypeUnsignedInteger, 0)
+		assertCodecMetadata(t, codec, len(values), PTypeUint16, 0)
 		assertCodecRoundTrip(t, codec, values)
 	})
 }

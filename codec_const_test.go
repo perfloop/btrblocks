@@ -15,7 +15,7 @@ func TestConstCodecUint64RoundTrip(t *testing.T) {
 		t.Fatalf("NewConstIntegerCodec() returned error: %v", err)
 	}
 
-	assertCodecMetadata(t, codec, len(data), PTypeUnsignedInteger, 0)
+	assertCodecMetadata(t, codec, len(data), PTypeUint64, 0)
 	assertCodecRoundTrip(t, codec, data)
 }
 
@@ -41,7 +41,7 @@ func TestConstCodecErrorsAndFloatBitPatterns(t *testing.T) {
 			t.Fatalf("NewConstFloatCodec() returned error: %v", err)
 		}
 
-		assertCodecMetadata(t, codec, len(data), PTypeFloat, 0)
+		assertCodecMetadata(t, codec, len(data), PTypeFloat64, 0)
 		assertCodecRoundTrip(t, codec, data)
 	})
 }
@@ -54,7 +54,7 @@ func TestConstCodecLargeCorpus(t *testing.T) {
 		t.Fatalf("NewConstIntegerCodec() returned error: %v", err)
 	}
 
-	assertCodecMetadata(t, codec, len(data), PTypeUnsignedInteger, 0)
+	assertCodecMetadata(t, codec, len(data), PTypeUint64, 0)
 	assertCodecRoundTrip(t, codec, data)
 }
 
@@ -72,7 +72,7 @@ func FuzzConstCodecRoundTrip(f *testing.F) {
 			t.Fatalf("NewConstIntegerCodec() returned error: %v", err)
 		}
 
-		assertCodecMetadata(t, codec, len(data), PTypeUnsignedInteger, 0)
+		assertCodecMetadata(t, codec, len(data), PTypeUint64, 0)
 		assertCodecRoundTrip(t, codec, data)
 	})
 }

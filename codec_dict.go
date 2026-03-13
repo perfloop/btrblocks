@@ -2,6 +2,7 @@ package btrblocks
 
 import (
 	"io"
+	"math"
 
 	"github.com/axiomhq/btrblocks/array"
 )
@@ -26,7 +27,7 @@ type DictCodec[T Integer | Float | String] struct {
 	indices Codec[uint64]
 }
 
-func newDictCodec[T Integer | Float | String](arr array.Array[T], cmpFn cmpFn[T], depth int) (*DictCodec[T], error) {
+func newDictCodec[T Integer | String](arr array.Array[T], depth int) (*DictCodec[T], error) {
 	if depth <= 0 {
 		return nil, errDepthExhausted
 	}
@@ -54,15 +55,39 @@ func newDictCodec[T Integer | Float | String](arr array.Array[T], cmpFn cmpFn[T]
 }
 
 func NewDictFloatCodec[T Float](arr array.Array[T], depth int) (*DictCodec[T], error) {
-	return newDictCodec(arr, cmpFloats[T], depth)
+	if depth <= 0 {
+		return nil, errDepthExhausted
+	}
+	var (
+		dict    = make(map[uint64]uint64)
+		indices = make([]uint64, arr.Length())
+		values  = make([]T, 0, arr.Length())
+	)
+
+	for i := uint64(0); i < arr.Length(); i++ {
+		val := arr.ValueAt(i)
+		key := floatDictKey(val)
+		idx, ok := dict[key]
+		if !ok {
+			idx = uint64(len(values))
+			dict[key] = idx
+			values = append(values, val)
+		}
+		indices[i] = idx
+	}
+
+	valuesCodec := compress(values, depth-1)
+	indicesCodec := CompressInteger(array.NewPrimitivesUnsafe[uint64](indices), depth-1)
+
+	return &DictCodec[T]{values: valuesCodec, indices: indicesCodec}, nil
 }
 
 func NewDictIntegerCodec[T Integer](arr array.Array[T], depth int) (*DictCodec[T], error) {
-	return newDictCodec(arr, cmpIntegers[T], depth)
+	return newDictCodec(arr, depth)
 }
 
 func NewDictStringCodec[T String](arr array.Array[T], depth int) (*DictCodec[T], error) {
-	return newDictCodec(arr, cmpStrings[T], depth)
+	return newDictCodec(arr, depth)
 }
 
 func (d *DictCodec[T]) ValueAt(offset uint64) (T, error) {
@@ -75,15 +100,43 @@ func (d *DictCodec[T]) ValueAt(offset uint64) (T, error) {
 }
 
 func (d *DictCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
-	n, err = d.values.WriteTo(w)
+	n, err = Header{
+		Version:    1,
+		Kind:       CodecTypeDict,
+		ElemType:   pTypeForType[T](),
+		ChildCount: 2,
+		Flags:      0,
+		Length:     d.indices.Length(),
+		BodySize:   0,
+	}.WriteTo(w)
 	if err != nil {
 		return n, err
 	}
-	m, err := d.indices.WriteTo(w)
-	return n + m, err
+
+	nn, err := d.values.WriteTo(w)
+	if err != nil {
+		return n + int64(nn), err
+	}
+
+	nn, err = d.indices.WriteTo(w)
+	return n + int64(nn), err
 }
 
 func (d *DictCodec[T]) Children() []Scheme { return []Scheme{d.values.(Scheme), d.indices.(Scheme)} }
-func (d *DictCodec[T]) BinarySize() uint64 { return d.values.BinarySize() + d.indices.BinarySize() }
 func (d *DictCodec[T]) Length() uint64     { return d.indices.Length() }
 func (d *DictCodec[T]) PType() PType       { return pTypeForType[T]() }
+
+func (d *DictCodec[T]) BinarySize() uint64 {
+	return uint64(headerSize) + d.values.BinarySize() + d.indices.BinarySize()
+}
+
+func floatDictKey[T Float](val T) uint64 {
+	switch v := any(val).(type) {
+	case float32:
+		return uint64(math.Float32bits(v))
+	case float64:
+		return math.Float64bits(v)
+	default:
+		return 0
+	}
+}

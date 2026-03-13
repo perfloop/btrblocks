@@ -58,22 +58,11 @@ func (c *BitpackingCodec[T]) ValueAt(offset uint64) (T, error) {
 	return T(unpackUnsigned(c.buf, offset*uint64(c.bitWidth), c.bitWidth)), nil
 }
 
-func (c *BitpackingCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
-	if len(c.buf) == 0 {
-		return 0, nil
-	}
-
-	written, err := w.Write(c.buf)
-	if err == nil && written != len(c.buf) {
-		err = io.ErrShortWrite
-	}
-	return int64(written), err
-}
-
-func (c *BitpackingCodec[T]) BinarySize() uint64 { return uint64(len(c.buf)) }
+func (c *BitpackingCodec[T]) BinarySize() uint64 { return uint64(headerSize) + c.bodySize() }
 func (c *BitpackingCodec[T]) Length() uint64     { return c.length }
 func (c *BitpackingCodec[T]) PType() PType       { return pTypeForType[T]() }
 func (c *BitpackingCodec[T]) Children() []Scheme { return nil }
+func (c *BitpackingCodec[T]) bodySize() uint64   { return 1 + uint64(len(c.buf)) }
 
 func packedByteSize(length uint64, bitWidth uint) int {
 	if length == 0 || bitWidth == 0 {
@@ -120,4 +109,37 @@ func minUint(a, b uint) uint {
 		return a
 	}
 	return b
+}
+
+func (c *BitpackingCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
+	n, err = Header{
+		Version:    1,
+		Kind:       CodecTypeBitpacking,
+		ElemType:   pTypeForType[T](),
+		ChildCount: 0,
+		Flags:      0,
+		Length:     c.length,
+		BodySize:   c.bodySize(),
+	}.WriteTo(w)
+	if err != nil {
+		return n, err
+	}
+
+	var bitWidth [1]byte
+	bitWidth[0] = byte(c.bitWidth)
+	nn, err := w.Write(bitWidth[:])
+	if err != nil {
+		return n, err
+	}
+	if nn != len(bitWidth) {
+		return n + int64(nn), io.ErrShortWrite
+	}
+
+	n += int64(nn)
+
+	nn, err = w.Write(c.buf)
+	if err != nil {
+		return n + int64(nn), err
+	}
+	return n + int64(nn), nil
 }

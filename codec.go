@@ -13,6 +13,18 @@ var (
 	errDataEmpty        = errors.New("data is empty")
 )
 
+type CodecType uint8
+
+const (
+	CodecTypeUnknown CodecType = iota
+	CodecTypeConst
+	CodecTypeRaw
+	CodecTypeDict
+	CodecTypeRunend
+	CodecTypeZigzag
+	CodecTypeBitpacking
+)
+
 // Scheme is a untyped structural interface
 type Scheme interface {
 	Children() []Scheme

@@ -15,43 +15,50 @@ type (
 	PrimitiveType   = array.PrimitiveType
 )
 
-type PType uint8
+type PType = array.PType
 
 const (
-	PTypeUnknown PType = iota
-	PTypeInteger
-	PTypeUnsignedInteger
-	PTypeFloat
-	PTypeString
+	PTypeUnknown = array.PTypeUnknown
+	PTypeInt8    = array.PTypeInt8
+	PTypeInt16   = array.PTypeInt16
+	PTypeInt32   = array.PTypeInt32
+	PTypeInt64   = array.PTypeInt64
+	PTypeUint8   = array.PTypeUint8
+	PTypeUint16  = array.PTypeUint16
+	PTypeUint32  = array.PTypeUint32
+	PTypeUint64  = array.PTypeUint64
+	PTypeFloat32 = array.PTypeFloat32
+	PTypeFloat64 = array.PTypeFloat64
+	PTypeString  = array.PTypeString
 )
 
 func pTypeForType[T Integer | Float | String]() PType {
 	var t T
 	switch any(t).(type) {
 	case int:
-		return PTypeInteger
+		return PTypeInt8
 	case int8:
-		return PTypeInteger
+		return PTypeInt8
 	case int16:
-		return PTypeInteger
+		return PTypeInt16
 	case int32:
-		return PTypeInteger
+		return PTypeInt32
 	case int64:
-		return PTypeInteger
+		return PTypeInt64
 	case uint:
-		return PTypeUnsignedInteger
+		return PTypeUint8
 	case uint8:
-		return PTypeUnsignedInteger
+		return PTypeUint8
 	case uint16:
-		return PTypeUnsignedInteger
+		return PTypeUint16
 	case uint32:
-		return PTypeUnsignedInteger
+		return PTypeUint32
 	case uint64:
-		return PTypeUnsignedInteger
+		return PTypeUint64
 	case float32:
-		return PTypeFloat
+		return PTypeFloat32
 	case float64:
-		return PTypeFloat
+		return PTypeFloat64
 	case string:
 		return PTypeString
 	default:

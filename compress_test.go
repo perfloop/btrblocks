@@ -11,7 +11,7 @@ func TestCompressDispatchesDeterministicCodecs(t *testing.T) {
 		data := makeConstantCorpus(256, int64(9))
 		codec := compress(data, defaultDepth)
 		require.IsType(t, &ConstCodec[int64]{}, codec)
-		assertCodecMetadata(t, codec, len(data), PTypeInteger, 0)
+		assertCodecMetadata(t, codec, len(data), PTypeInt64, 0)
 		assertCodecRoundTrip(t, codec, data)
 	})
 
@@ -19,7 +19,7 @@ func TestCompressDispatchesDeterministicCodecs(t *testing.T) {
 		data := makeRampInt64Corpus(256)
 		codec := compress(data, defaultDepth)
 		require.IsType(t, &RawCodec[int64]{}, codec)
-		assertCodecMetadata(t, codec, len(data), PTypeInteger, 0)
+		assertCodecMetadata(t, codec, len(data), PTypeInt64, 0)
 		assertCodecRoundTrip(t, codec, data)
 	})
 
@@ -35,7 +35,7 @@ func TestCompressDispatchesDeterministicCodecs(t *testing.T) {
 		data := makeUniqueFloat64Corpus(256)
 		codec := compress(data, defaultDepth)
 		require.IsType(t, &RawCodec[float64]{}, codec)
-		assertCodecMetadata(t, codec, len(data), PTypeFloat, 0)
+		assertCodecMetadata(t, codec, len(data), PTypeFloat64, 0)
 		assertCodecRoundTrip(t, codec, data)
 	})
 }
@@ -48,23 +48,23 @@ func TestCompressExportedFunctionsLargeCorpora(t *testing.T) {
 
 		require.Equal(t, describeCodec(codecDefault), describeCodec(codecExplicit))
 
-		assertCodecMetadata(t, codecDefault, len(data), PTypeUnsignedInteger, 0)
+		assertCodecMetadata(t, codecDefault, len(data), PTypeUint64, 0)
 		assertCodecRoundTrip(t, codecDefault, data)
-		assertCodecMetadata(t, codecExplicit, len(data), PTypeUnsignedInteger, 0)
+		assertCodecMetadata(t, codecExplicit, len(data), PTypeUint64, 0)
 		assertCodecRoundTrip(t, codecExplicit, data)
 	})
 
 	t.Run("large integer constant", func(t *testing.T) {
 		data := makeConstantCorpus(largeCorpusSize, uint64(33))
 		codec := Compress(data)
-		assertCodecMetadata(t, codec, len(data), PTypeUnsignedInteger, 0)
+		assertCodecMetadata(t, codec, len(data), PTypeUint64, 0)
 		assertCodecRoundTrip(t, codec, data)
 	})
 
 	t.Run("large integer unique", func(t *testing.T) {
 		data := makeRampInt64Corpus(largeCorpusSize)
 		codec := CompressWithDepth(data, defaultDepth)
-		assertCodecMetadata(t, codec, len(data), PTypeInteger, 0)
+		assertCodecMetadata(t, codec, len(data), PTypeInt64, 0)
 		assertCodecRoundTrip(t, codec, data)
 	})
 
@@ -98,11 +98,11 @@ func FuzzCompressRoundTrip(f *testing.F) {
 		}
 
 		intCodec := CompressWithDepth(ints, defaultDepth)
-		assertCodecMetadata(t, intCodec, len(ints), PTypeInteger, len(intCodec.Children()))
+		assertCodecMetadata(t, intCodec, len(ints), PTypeInt64, len(intCodec.Children()))
 		assertCodecRoundTrip(t, intCodec, ints)
 
 		floatCodec := Compress(floats)
-		assertCodecMetadata(t, floatCodec, len(floats), PTypeFloat, len(floatCodec.Children()))
+		assertCodecMetadata(t, floatCodec, len(floats), PTypeFloat64, len(floatCodec.Children()))
 		assertCodecRoundTrip(t, floatCodec, floats)
 
 		stringCodec := compress(strings, defaultDepth)

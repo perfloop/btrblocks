@@ -46,7 +46,7 @@ func newRunendCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T], depth 
 		}
 	}
 	runsCodec := compress(runs, depth-1)
-	endsCodec := CompressInteger(array.NewPrimitivesUnsafe[uint64](ends), depth-1)
+	endsCodec := CompressInteger(array.NewPrimitivesUnsafe(ends), depth-1)
 	return &RunendCodec[T]{length: uint64(len(data)), runs: runsCodec, ends: endsCodec}, nil
 }
 
@@ -88,14 +88,32 @@ func (r *RunendCodec[T]) ValueAt(offset uint64) (T, error) {
 }
 
 func (r *RunendCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
-	n, err = r.runs.WriteTo(w)
+	n, err = Header{
+		Version:    1,
+		Kind:       CodecTypeRunend,
+		ElemType:   pTypeForType[T](),
+		ChildCount: 2,
+		Flags:      0,
+		Length:     r.length,
+		BodySize:   0,
+	}.WriteTo(w)
 	if err != nil {
 		return n, err
 	}
-	m, err := r.ends.WriteTo(w)
-	return n + m, err
+
+	nn, err := r.runs.WriteTo(w)
+	if err != nil {
+		return n + int64(nn), err
+	}
+
+	n += int64(nn)
+
+	nn, err = r.ends.WriteTo(w)
+	return n + int64(nn), err
 }
 
-func (r *RunendCodec[T]) BinarySize() uint64 { return r.runs.BinarySize() + r.ends.BinarySize() }
-func (r *RunendCodec[T]) Length() uint64     { return r.length }
-func (r *RunendCodec[T]) PType() PType       { return pTypeForType[T]() }
+func (r *RunendCodec[T]) BinarySize() uint64 {
+	return uint64(headerSize) + r.runs.BinarySize() + r.ends.BinarySize()
+}
+func (r *RunendCodec[T]) Length() uint64 { return r.length }
+func (r *RunendCodec[T]) PType() PType   { return pTypeForType[T]() }

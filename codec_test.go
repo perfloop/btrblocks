@@ -1,8 +1,8 @@
 package btrblocks
 
 import (
+	"bytes"
 	"fmt"
-	"io"
 	"math"
 	"strconv"
 	"testing"
@@ -34,9 +34,11 @@ func assertCodecRoundTrip[T Integer | Float | String](t *testing.T, codec Codec[
 	_, err := codec.ValueAt(codec.Length())
 	require.ErrorIs(t, err, errOffsetOutOfRange)
 
-	n, err := codec.WriteTo(io.Discard)
+	var buf bytes.Buffer
+	n, err := codec.WriteTo(&buf)
 	require.NoError(t, err)
 	require.Equal(t, int64(codec.BinarySize()), n)
+	assertCodecHeader(t, codec, &buf)
 }
 
 func assertValueEqual[T Integer | Float | String](t *testing.T, got, want T, offset int) {
@@ -148,4 +150,16 @@ func benchmarkBuildLoop[T Integer | Float | String](b *testing.B, name string, b
 
 func describeCodec(codec any) string {
 	return fmt.Sprintf("%T", codec)
+}
+
+func assertCodecHeader[T Integer | Float | String](t *testing.T, codec Codec[T], buf *bytes.Buffer) {
+	t.Helper()
+
+	header, err := readHeader(bytes.NewReader(buf.Bytes()))
+	require.NoError(t, err)
+	require.Equal(t, uint8(1), header.Version)
+	require.Equal(t, codec.PType(), header.ElemType)
+	require.Equal(t, uint8(len(codec.Children())), header.ChildCount)
+	require.Equal(t, codec.Length(), header.Length)
+	require.LessOrEqual(t, uint64(headerSize)+header.BodySize, codec.BinarySize())
 }

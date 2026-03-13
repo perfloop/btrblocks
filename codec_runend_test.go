@@ -10,7 +10,7 @@ func TestRunendCodecUint64RoundTrip(t *testing.T) {
 		t.Fatalf("NewRunendIntegerCodec() returned error: %v", err)
 	}
 
-	assertCodecMetadata(t, codec, len(data), PTypeUnsignedInteger, 2)
+	assertCodecMetadata(t, codec, len(data), PTypeUint64, 2)
 	assertCodecRoundTrip(t, codec, data)
 
 	if got := codec.runs.Length(); got != 3 {
@@ -36,7 +36,7 @@ func TestRunendCodecErrorsAndLargeCorpus(t *testing.T) {
 			t.Fatalf("NewRunendIntegerCodec() returned error: %v", err)
 		}
 
-		assertCodecMetadata(t, codec, len(data), PTypeUnsignedInteger, 2)
+		assertCodecMetadata(t, codec, len(data), PTypeUint64, 2)
 		assertCodecRoundTrip(t, codec, data)
 
 		wantRuns := uint64((len(data) + 4096 - 1) / 4096)
@@ -75,7 +75,7 @@ func FuzzRunendCodecRoundTrip(f *testing.F) {
 			t.Fatalf("NewRunendIntegerCodec() returned error: %v", err)
 		}
 
-		assertCodecMetadata(t, codec, len(values), PTypeUnsignedInteger, 2)
+		assertCodecMetadata(t, codec, len(values), PTypeUint64, 2)
 		assertCodecRoundTrip(t, codec, values)
 	})
 }

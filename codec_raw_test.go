@@ -18,7 +18,7 @@ func TestRawCodecLargeCorpus(t *testing.T) {
 	data := makeRampInt64Corpus(largeCorpusSize)
 	codec := NewRawCodec(array.NewPrimitivesUnsafe[int64](data))
 
-	assertCodecMetadata(t, codec, len(data), PTypeInteger, 0)
+	assertCodecMetadata(t, codec, len(data), PTypeInt64, 0)
 	assertCodecRoundTrip(t, codec, data)
 }
 
@@ -33,7 +33,7 @@ func FuzzRawCodecRoundTrip(f *testing.F) {
 		}
 
 		codec := NewRawCodec(array.NewPrimitivesUnsafe[uint16](values))
-		assertCodecMetadata(t, codec, len(values), PTypeUnsignedInteger, 0)
+		assertCodecMetadata(t, codec, len(values), PTypeUint16, 0)
 		assertCodecRoundTrip(t, codec, values)
 	})
 }
