@@ -18,7 +18,7 @@ var (
 
 // Strings is a columnar array of variable-length strings. Offsets are stored as T (uint8/16/32/64) depending on total byte length; ValueAt is O(1).
 type Strings[T UnsignedInteger] struct {
-	offsets []T   // length+1 offsets; offsets[i]..offsets[i+1] is the i-th string in buf.
+	offsets []T // length+1 offsets; offsets[i]..offsets[i+1] is the i-th string in buf.
 	buf     []byte
 }
 
@@ -64,6 +64,7 @@ func (c *Strings[T]) ValueAt(offset uint64) string {
 func (c *Strings[T]) BinarySize() uint64 { return uint64(headerSize) + c.bodySize() }
 func (c *Strings[T]) Length() uint64     { return uint64(len(c.offsets) - 1) }
 func (c *Strings[T]) PType() PType       { return PTypeString }
+
 // bodySize returns the size in bytes of the string body: 4-byte buf length + offsets + raw string bytes.
 func (c *Strings[T]) bodySize() uint64 {
 	return 4 + uint64(len(c.buf)) + uint64(len(c.offsets))*uint64(unsafe.Sizeof(T(0)))
@@ -116,12 +117,7 @@ func (c *Strings[T]) WriteTo(w io.Writer) (int64, error) {
 	return hn + bn, err
 }
 
-// ReadStrings reads a string array from r. The offset width is inferred from the body; the returned Array[string] is the appropriate Strings[T] (uint8/uint16/uint32/uint64).
-func ReadStrings(r io.Reader) (Array[string], error) {
-	h, err := readHeader(r)
-	if err != nil {
-		return nil, err
-	}
+func readStringsWithHeader(r io.Reader, h Header) (Array[string], error) {
 	if h.PType != PTypeString {
 		return nil, errors.New("array: not a string array")
 	}
@@ -161,6 +157,15 @@ func ReadStrings(r io.Reader) (Array[string], error) {
 	}
 }
 
+// ReadStrings reads a string array from r. The offset width is inferred from the body; the returned Array[string] is the appropriate Strings[T] (uint8/uint16/uint32/uint64).
+func ReadStrings(r io.Reader) (Array[string], error) {
+	h, err := readHeader(r)
+	if err != nil {
+		return nil, err
+	}
+	return readStringsWithHeader(r, h)
+}
+
 // readStringsOffsets reads numOffsets offsets of type T and bufLen bytes of string data, then returns a Strings[T].
 func readStringsOffsets[T UnsignedInteger](r io.Reader, numOffsets int, bufLen uint32) (*Strings[T], error) {
 	width := int(unsafe.Sizeof(T(0)))
@@ -174,9 +179,30 @@ func readStringsOffsets[T UnsignedInteger](r io.Reader, numOffsets int, bufLen u
 			return nil, err
 		}
 	}
+	if err := validateStringOffsets(offsets, bufLen); err != nil {
+		return nil, err
+	}
 	buf := make([]byte, bufLen)
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return nil, err
 	}
 	return &Strings[T]{offsets: offsets, buf: buf}, nil
+}
+
+func validateStringOffsets[T UnsignedInteger](offsets []T, bufLen uint32) error {
+	if len(offsets) == 0 {
+		return errors.New("array: invalid string offsets")
+	}
+	if offsets[0] != 0 {
+		return errors.New("array: string offsets must start at 0")
+	}
+	for i := 1; i < len(offsets); i++ {
+		if offsets[i] < offsets[i-1] {
+			return errors.New("array: string offsets must be monotonic")
+		}
+	}
+	if uint64(offsets[len(offsets)-1]) != uint64(bufLen) {
+		return errors.New("array: string offsets must end at buffer length")
+	}
+	return nil
 }

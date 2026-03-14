@@ -91,12 +91,7 @@ func widthForPType(p PType) int {
 	}
 }
 
-// ReadPrimitives reads a primitive array from r. The type parameter T must match the array's PType; otherwise an error is returned.
-func ReadPrimitives[T PrimitiveType](r io.Reader) (*Primitives[T], error) {
-	h, err := readHeader(r)
-	if err != nil {
-		return nil, err
-	}
+func readPrimitivesWithHeader[T PrimitiveType](r io.Reader, h Header) (*Primitives[T], error) {
 	expected := pTypeForType[T]()
 	if h.PType != expected {
 		return nil, fmt.Errorf("array: PType %v does not match %T", h.PType, *new(T))
@@ -122,4 +117,13 @@ func ReadPrimitives[T PrimitiveType](r io.Reader) (*Primitives[T], error) {
 		return nil, err
 	}
 	return &Primitives[T]{pType: h.PType, data: data}, nil
+}
+
+// ReadPrimitives reads a primitive array from r. The type parameter T must match the array's PType; otherwise an error is returned.
+func ReadPrimitives[T PrimitiveType](r io.Reader) (*Primitives[T], error) {
+	h, err := readHeader(r)
+	if err != nil {
+		return nil, err
+	}
+	return readPrimitivesWithHeader[T](r, h)
 }

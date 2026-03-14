@@ -18,6 +18,17 @@ func TestArrayContractWithStrings(t *testing.T) {
 	assertArrayContract(t, NewStrings([]string{"go", "", "lang"}), []string{"go", "", "lang"}, PTypeString, 34, 34)
 }
 
+func TestReadArrayTypeMismatchReturnsError(t *testing.T) {
+	arr := NewStrings([]string{"go", "lang"})
+
+	var buf bytes.Buffer
+	_, err := arr.WriteTo(&buf)
+	require.NoError(t, err)
+
+	_, err = ReadArray[uint64](bytes.NewReader(buf.Bytes()))
+	require.ErrorContains(t, err, "PType")
+}
+
 func assertArrayContract[T Integer | Float | String](t *testing.T, arr Array[T], want []T, wantPType PType, wantBinarySize uint64, wantWriteSize int64) {
 	t.Helper()
 

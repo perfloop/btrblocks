@@ -107,6 +107,20 @@ func TestReadStrings(t *testing.T) {
 	}
 }
 
+func TestReadStringsRejectsInvalidOffsets(t *testing.T) {
+	arr := NewStrings([]string{"go", "lang"})
+
+	var buf bytes.Buffer
+	_, err := arr.WriteTo(&buf)
+	require.NoError(t, err)
+
+	data := buf.Bytes()
+	data[headerSize+4+2] = 1
+
+	_, err = ReadStrings(bytes.NewReader(data))
+	require.ErrorContains(t, err, "offsets")
+}
+
 func BenchmarkWriteStrings(b *testing.B) {
 	values := make([]string, 1000)
 	for i := range values {
