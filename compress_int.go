@@ -13,37 +13,80 @@ var (
 	_ Codec[uint64] = (*RawCodec[uint64])(nil)
 )
 
-type TypeIntCodec uint8
+type codecBuilder[T Integer | Float | String] func(array.Array[T], []T, int) (Codec[T], error)
 
-const (
-	TypeIntCodecRaw TypeIntCodec = iota
-	TypeIntCodecDict
-	TypeIntCodecConst
-)
-
-func intCodecRegistry[T Integer]() map[TypeIntCodec]codecBuilder[T] {
-	return map[TypeIntCodec]codecBuilder[T]{
-		TypeIntCodecRaw:   func(arr array.Array[T], _ int) (Codec[T], error) { return NewRawCodec(arr), nil },
-		TypeIntCodecDict:  func(arr array.Array[T], depth int) (Codec[T], error) { return NewDictIntegerCodec(arr, depth) },
-		TypeIntCodecConst: func(arr array.Array[T], _ int) (Codec[T], error) { return NewConstIntegerCodec(arr) },
-	}
-}
-
-func CompressInteger[T Integer](arr array.Array[T], depth int) Codec[T] {
-	registry := intCodecRegistry[T]()
-	ordered := []TypeIntCodec{TypeIntCodecConst, TypeIntCodecDict, TypeIntCodecRaw}
+func selectBest[T Integer | Float | String](arr array.Array[T], data []T, depth int, builders []codecBuilder[T]) Codec[T] {
 	var (
-		selectedCodec Codec[T]
-		selectedSize  uint64
+		best     Codec[T]
+		bestSize uint64
 	)
-	for _, typ := range ordered {
-		builder := registry[typ]
-		if codec, err := builder(arr, depth); err == nil {
-			if selectedCodec == nil || codec.BinarySize() < selectedSize {
-				selectedCodec = codec
-				selectedSize = codec.BinarySize()
+	for _, build := range builders {
+		if c, err := build(arr, data, depth); err == nil {
+			s := c.BinarySize()
+			if best == nil || s < bestSize {
+				best = c
+				bestSize = s
 			}
 		}
 	}
-	return selectedCodec
+	return best
+}
+
+func integerBuilders[T Integer]() []codecBuilder[T] {
+	return []codecBuilder[T]{
+		func(arr array.Array[T], _ []T, _ int) (Codec[T], error) { return NewRawCodec(arr), nil },
+		func(arr array.Array[T], _ []T, _ int) (Codec[T], error) { return NewConstIntegerCodec(arr) },
+		func(arr array.Array[T], _ []T, depth int) (Codec[T], error) { return NewDictIntegerCodec(arr, depth) },
+		func(_ array.Array[T], data []T, depth int) (Codec[T], error) { return NewRunendIntegerCodec(data, depth) },
+	}
+}
+
+func signedIntegerBuilders[T SignedInteger]() []codecBuilder[T] {
+	return []codecBuilder[T]{
+		func(_ array.Array[T], data []T, depth int) (Codec[T], error) { return NewZigzagCodec(data, depth) },
+	}
+}
+
+func unsignedIntegerBuilders[T UnsignedInteger]() []codecBuilder[T] {
+	return []codecBuilder[T]{
+		func(_ array.Array[T], data []T, _ int) (Codec[T], error) { return NewBitpackingCodec(data), nil },
+	}
+}
+
+func CompressSignedInteger[T SignedInteger](arr array.Array[T], depth int) Codec[T] {
+	data := make([]T, arr.Length())
+	arr.CopyTo(data)
+	builders := append(integerBuilders[T](), signedIntegerBuilders[T]()...)
+	return selectBest(arr, data, depth, builders)
+}
+
+func CompressUnsignedInteger[T UnsignedInteger](arr array.Array[T], depth int) Codec[T] {
+	data := make([]T, arr.Length())
+	arr.CopyTo(data)
+	builders := append(integerBuilders[T](), unsignedIntegerBuilders[T]()...)
+	return selectBest(arr, data, depth, builders)
+}
+
+func CompressInteger[T Integer](arr array.Array[T], depth int) Codec[T] {
+	var zero T
+	switch any(zero).(type) {
+	case int8:
+		return any(CompressSignedInteger(any(arr).(array.Array[int8]), depth)).(Codec[T])
+	case int16:
+		return any(CompressSignedInteger(any(arr).(array.Array[int16]), depth)).(Codec[T])
+	case int32:
+		return any(CompressSignedInteger(any(arr).(array.Array[int32]), depth)).(Codec[T])
+	case int64:
+		return any(CompressSignedInteger(any(arr).(array.Array[int64]), depth)).(Codec[T])
+	case uint8:
+		return any(CompressUnsignedInteger(any(arr).(array.Array[uint8]), depth)).(Codec[T])
+	case uint16:
+		return any(CompressUnsignedInteger(any(arr).(array.Array[uint16]), depth)).(Codec[T])
+	case uint32:
+		return any(CompressUnsignedInteger(any(arr).(array.Array[uint32]), depth)).(Codec[T])
+	case uint64:
+		return any(CompressUnsignedInteger(any(arr).(array.Array[uint64]), depth)).(Codec[T])
+	default:
+		return nil
+	}
 }

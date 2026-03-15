@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-
-	"github.com/axiomhq/btrblocks/array"
 )
 
 var (
@@ -36,12 +34,15 @@ type Codec[T Integer | Float | String] interface {
 	Scheme
 	io.WriterTo
 	ValueAt(offset uint64) (T, error)
+	// Decode materializes all values into dst. len(dst) must equal Length().
+	// Significantly faster than per-element ValueAt for nested codecs (Dict,
+	// Runend, Zigzag) because it bulk-decodes children once and avoids repeated
+	// tree traversal.
+	Decode(dst []T) error
 	BinarySize() uint64
 	Length() uint64
 	PType() PType
 }
-
-type codecBuilder[T Integer | Float | String] func(array.Array[T], int) (Codec[T], error)
 
 func readCodec[T Integer | Float | String](r io.Reader) (Codec[T], error) {
 	header, err := readHeader(r)

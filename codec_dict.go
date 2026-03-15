@@ -115,6 +115,21 @@ func (d *DictCodec[T, U]) ValueAt(offset uint64) (T, error) {
 	return d.values.ValueAt(uint64(id))
 }
 
+func (d *DictCodec[T, U]) Decode(dst []T) error {
+	values := make([]T, d.values.Length())
+	if err := d.values.Decode(values); err != nil {
+		return err
+	}
+	indices := make([]U, d.indices.Length())
+	if err := d.indices.Decode(indices); err != nil {
+		return err
+	}
+	for i, idx := range indices {
+		dst[i] = values[idx]
+	}
+	return nil
+}
+
 func (d *DictCodec[T, U]) WriteTo(w io.Writer) (n int64, err error) {
 	n, err = Header{
 		Version:    1,
@@ -173,11 +188,11 @@ func validateDictCodec[T Integer | Float | String, U UnsignedInteger](length uin
 	if indices.Length() != length {
 		return fmt.Errorf("codec: dict length = %d, want %d", length, indices.Length())
 	}
-	for i := uint64(0); i < indices.Length(); i++ {
-		index, err := indices.ValueAt(i)
-		if err != nil {
-			return err
-		}
+	decoded := make([]U, indices.Length())
+	if err := indices.Decode(decoded); err != nil {
+		return err
+	}
+	for i, index := range decoded {
 		if uint64(index) >= values.Length() {
 			return fmt.Errorf("codec: dict index %d = %d out of range for %d values", i, index, values.Length())
 		}

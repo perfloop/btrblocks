@@ -6,37 +6,17 @@ var (
 	_ Codec[string] = (*RawCodec[string])(nil)
 )
 
-type TypeStringCodec uint8
-
-const (
-	TypeStringCodecRaw TypeStringCodec = iota
-	TypeStringCodecDict
-	TypeStringCodecConst
-)
-
-func stringCodecRegistry() map[TypeStringCodec]codecBuilder[string] {
-	return map[TypeStringCodec]codecBuilder[string]{
-		TypeStringCodecRaw:   func(arr array.Array[string], _ int) (Codec[string], error) { return NewRawCodec(arr), nil },
-		TypeStringCodecDict:  func(arr array.Array[string], depth int) (Codec[string], error) { return NewDictStringCodec(arr, depth) },
-		TypeStringCodecConst: func(arr array.Array[string], _ int) (Codec[string], error) { return NewConstStringCodec(arr) },
+func stringBuilders() []codecBuilder[string] {
+	return []codecBuilder[string]{
+		func(arr array.Array[string], _ []string, _ int) (Codec[string], error) { return NewRawCodec(arr), nil },
+		func(arr array.Array[string], _ []string, _ int) (Codec[string], error) { return NewConstStringCodec(arr) },
+		func(arr array.Array[string], _ []string, depth int) (Codec[string], error) { return NewDictStringCodec(arr, depth) },
+		func(_ array.Array[string], data []string, depth int) (Codec[string], error) { return NewRunendStringCodec(data, depth) },
 	}
 }
 
 func CompressString(arr array.Array[string], depth int) Codec[string] {
-	registry := stringCodecRegistry()
-	ordered := []TypeStringCodec{TypeStringCodecConst, TypeStringCodecDict, TypeStringCodecRaw}
-	var (
-		selectedCodec Codec[string]
-		selectedSize  uint64
-	)
-	for _, typ := range ordered {
-		builder := registry[typ]
-		if codec, err := builder(arr, depth); err == nil {
-			if selectedCodec == nil || codec.BinarySize() < selectedSize {
-				selectedCodec = codec
-				selectedSize = codec.BinarySize()
-			}
-		}
-	}
-	return selectedCodec
+	data := make([]string, arr.Length())
+	arr.CopyTo(data)
+	return selectBest(arr, data, depth, stringBuilders())
 }

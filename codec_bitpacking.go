@@ -55,6 +55,20 @@ func (c *BitpackingCodec[T]) ValueAt(offset uint64) (T, error) {
 	return T(unpackUnsigned(c.buf, offset*uint64(c.bitWidth), c.bitWidth)), nil
 }
 
+func (c *BitpackingCodec[T]) Decode(dst []T) error {
+	if c.bitWidth == 0 {
+		var zero T
+		for i := range dst {
+			dst[i] = zero
+		}
+		return nil
+	}
+	for i := range dst {
+		dst[i] = T(unpackUnsigned(c.buf, uint64(i)*uint64(c.bitWidth), c.bitWidth))
+	}
+	return nil
+}
+
 func (c *BitpackingCodec[T]) BinarySize() uint64 { return uint64(headerSize) + c.bodySize() }
 func (c *BitpackingCodec[T]) Length() uint64     { return c.length }
 func (c *BitpackingCodec[T]) PType() PType       { return pTypeForType[T]() }

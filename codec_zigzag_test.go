@@ -24,27 +24,16 @@ func TestZigzagCodecInt64RoundTripAndWriteTo(t *testing.T) {
 	require.Equal(t, int64(codec.BinarySize()), n)
 	require.Equal(t, int(n), buf.Len())
 
-	header, err := readHeader(&buf)
+	decoded, err := readCodec[int64](bytes.NewReader(buf.Bytes()))
 	require.NoError(t, err)
-	require.Equal(t, CodecTypeZigzag, header.Kind)
-	require.Equal(t, PTypeInt64, header.ElemType)
-	require.Equal(t, uint64(len(data)), header.Length)
-	require.Zero(t, header.BodySize)
-	require.EqualValues(t, 1, header.ChildCount)
-
-	childHeader, err := readHeader(&buf)
-	require.NoError(t, err)
-	require.Equal(t, CodecTypeRaw, childHeader.Kind)
-	require.Equal(t, PTypeUint64, childHeader.ElemType)
-	require.Equal(t, uint64(len(data)), childHeader.Length)
-	require.Zero(t, childHeader.ChildCount)
-
-	got, err := array.ReadPrimitives[uint64](&buf)
-	require.NoError(t, err)
-	require.Equal(t, uint64(len(data)), got.Length())
+	require.Equal(t, uint64(len(data)), decoded.Length())
+	require.Equal(t, PTypeInt64, decoded.PType())
+	require.Len(t, decoded.Children(), 1)
 
 	for i, value := range data {
-		require.Equal(t, zigzagEncodeValue(value), got.ValueAt(uint64(i)))
+		got, err := decoded.ValueAt(uint64(i))
+		require.NoError(t, err)
+		require.Equal(t, value, got)
 	}
 }
 
@@ -90,7 +79,6 @@ func TestNewZigzagCodecChoosesSmallestUnsignedChildWidth(t *testing.T) {
 
 			childHeader, err := readHeader(&buf)
 			require.NoError(t, err)
-			require.Equal(t, CodecTypeRaw, childHeader.Kind)
 			require.Equal(t, tt.wantType, childHeader.ElemType)
 		})
 	}

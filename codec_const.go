@@ -64,12 +64,19 @@ func (c *ConstCodec[T]) ValueAt(offset uint64) (T, error) {
 	return c.value, nil
 }
 
-func (c *ConstCodec[T]) Children() []Scheme { return nil }
+func (c *ConstCodec[T]) Decode(dst []T) error {
+	for i := range dst {
+		dst[i] = c.value
+	}
+	return nil
+}
+
 func (c *ConstCodec[T]) BinarySize() uint64 {
 	return uint64(headerSize) + constBodyArray(c.value).BinarySize()
 }
-func (c *ConstCodec[T]) Length() uint64 { return c.length }
-func (c *ConstCodec[T]) PType() PType   { return pTypeForType[T]() }
+func (c *ConstCodec[T]) Length() uint64     { return c.length }
+func (c *ConstCodec[T]) PType() PType       { return pTypeForType[T]() }
+func (c *ConstCodec[T]) Children() []Scheme { return nil }
 
 func (c *ConstCodec[T]) WriteTo(w io.Writer) (int64, error) {
 	body := constBodyArray(c.value)

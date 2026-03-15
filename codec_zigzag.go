@@ -92,6 +92,17 @@ func (z *ZigzagCodec[T, U]) ValueAt(offset uint64) (T, error) {
 	}
 }
 
+func (z *ZigzagCodec[T, U]) Decode(dst []T) error {
+	unsigned := make([]U, z.data.Length())
+	if err := z.data.Decode(unsigned); err != nil {
+		return err
+	}
+	for i, u := range unsigned {
+		dst[i] = T(zigzagDecode64(uint64(u)))
+	}
+	return nil
+}
+
 func (z *ZigzagCodec[T, U]) Children() []Scheme { return []Scheme{z.data} }
 func (z *ZigzagCodec[T, U]) BinarySize() uint64 { return uint64(headerSize) + z.data.BinarySize() }
 func (z *ZigzagCodec[T, U]) Length() uint64     { return z.data.Length() }

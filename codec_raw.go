@@ -42,6 +42,11 @@ func (r *RawCodec[T]) ValueAt(offset uint64) (T, error) {
 	return r.arr.ValueAt(offset), nil
 }
 
+func (r *RawCodec[T]) Decode(dst []T) error {
+	r.arr.CopyTo(dst)
+	return nil
+}
+
 func (r *RawCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
 	n, err = Header{
 		Version:    1,

@@ -7,37 +7,17 @@ var (
 	_ Codec[float64] = (*RawCodec[float64])(nil)
 )
 
-type TypeFloatCodec uint8
-
-const (
-	TypeFloatCodecRaw TypeFloatCodec = iota
-	TypeFloatCodecDict
-	TypeFloatCodecConst
-)
-
-func floatCodecRegistry[T Float]() map[TypeFloatCodec]codecBuilder[T] {
-	return map[TypeFloatCodec]codecBuilder[T]{
-		TypeFloatCodecRaw:   func(arr array.Array[T], _ int) (Codec[T], error) { return NewRawCodec(arr), nil },
-		TypeFloatCodecDict:  func(arr array.Array[T], depth int) (Codec[T], error) { return NewDictFloatCodec(arr, depth) },
-		TypeFloatCodecConst: func(arr array.Array[T], _ int) (Codec[T], error) { return NewConstFloatCodec(arr) },
+func floatBuilders[T Float]() []codecBuilder[T] {
+	return []codecBuilder[T]{
+		func(arr array.Array[T], _ []T, _ int) (Codec[T], error) { return NewRawCodec(arr), nil },
+		func(arr array.Array[T], _ []T, _ int) (Codec[T], error) { return NewConstFloatCodec(arr) },
+		func(arr array.Array[T], _ []T, depth int) (Codec[T], error) { return NewDictFloatCodec(arr, depth) },
+		func(_ array.Array[T], data []T, depth int) (Codec[T], error) { return NewRunendFloatCodec(data, depth) },
 	}
 }
 
 func CompressFloat[T Float](arr array.Array[T], depth int) Codec[T] {
-	registry := floatCodecRegistry[T]()
-	ordered := []TypeFloatCodec{TypeFloatCodecConst, TypeFloatCodecDict, TypeFloatCodecRaw}
-	var (
-		selectedCodec Codec[T]
-		selectedSize  uint64
-	)
-	for _, typ := range ordered {
-		builder := registry[typ]
-		if codec, err := builder(arr, depth); err == nil {
-			if selectedCodec == nil || codec.BinarySize() < selectedSize {
-				selectedCodec = codec
-				selectedSize = codec.BinarySize()
-			}
-		}
-	}
-	return selectedCodec
+	data := make([]T, arr.Length())
+	arr.CopyTo(data)
+	return selectBest(arr, data, depth, floatBuilders[T]())
 }

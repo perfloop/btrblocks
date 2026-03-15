@@ -77,20 +77,13 @@ func Read[T Integer | Float | String](rdr io.Reader) (Codec[T], error) {
 }
 
 func Decompress[T Integer | Float | String](rdr io.Reader) ([]T, error) {
-	header, err := readHeader(rdr)
-	if err != nil {
-		return nil, err
-	}
-	codec, err := readCodecWithHeader[T](rdr, header)
+	codec, err := readCodec[T](rdr)
 	if err != nil {
 		return nil, err
 	}
 	data := make([]T, codec.Length())
-	for i := range data {
-		data[i], err = codec.ValueAt(uint64(i))
-		if err != nil {
-			return nil, err
-		}
+	if err := codec.Decode(data); err != nil {
+		return nil, err
 	}
 	return data, nil
 }

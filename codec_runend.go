@@ -70,6 +70,31 @@ func NewRunendFloatCodec[T Float](data []T, depth int) (Codec[T], error) {
 	return newRunendCodec(data, cmpFloats[T], depth)
 }
 
+func (r *RunendCodec[T, U]) Decode(dst []T) error {
+	runs := make([]T, r.runs.Length())
+	if err := r.runs.Decode(runs); err != nil {
+		return err
+	}
+	ends := make([]U, r.ends.Length())
+	if err := r.ends.Decode(ends); err != nil {
+		return err
+	}
+	pos := 0
+	for i, run := range runs {
+		var end int
+		if i < len(ends) {
+			end = int(ends[i])
+		} else {
+			end = len(dst)
+		}
+		for pos < end {
+			dst[pos] = run
+			pos++
+		}
+	}
+	return nil
+}
+
 func (r *RunendCodec[T, U]) Children() []Scheme { return []Scheme{r.runs.(Scheme), r.ends.(Scheme)} }
 
 func (r *RunendCodec[T, U]) ValueAt(offset uint64) (T, error) {
