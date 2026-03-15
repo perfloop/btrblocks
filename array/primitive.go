@@ -41,6 +41,7 @@ func NewPrimitivesUnsafe[T PrimitiveType](data []T) *Primitives[T] {
 }
 
 func (c *Primitives[T]) ValueAt(offset uint64) T { return c.data[offset] }
+func (c *Primitives[T]) CopyTo(dst []T)          { copy(dst, c.data) }
 func (c *Primitives[T]) BinarySize() uint64      { return uint64(headerSize) + c.bodySize() }
 func (c *Primitives[T]) Length() uint64          { return uint64(len(c.data)) }
 func (c *Primitives[T]) PType() PType            { return c.pType }

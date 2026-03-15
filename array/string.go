@@ -1,7 +1,6 @@
 package array
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -84,6 +83,12 @@ func (c *Strings[T]) ValueAt(offset uint64) string {
 	return string(c.buf[c.offsets[offset]:c.offsets[offset+1]])
 }
 
+func (c *Strings[T]) CopyTo(dst []string) {
+	for i := range dst {
+		dst[i] = c.ValueAt(uint64(i))
+	}
+}
+
 func (c *Strings[T]) BinarySize() uint64 { return uint64(headerSize) + c.bodySize() }
 func (c *Strings[T]) Length() uint64     { return uint64(len(c.offsets) - 1) }
 func (c *Strings[T]) PType() PType       { return PTypeString }
@@ -114,24 +119,15 @@ func (c *Strings[T]) writeBody(w io.Writer) (int64, error) {
 	}
 	n := int64(4)
 
-	var buf [8]byte
-	width := int(unsafe.Sizeof(T(0)))
-	for _, o := range c.offsets {
-		switch v := any(o).(type) {
-		case uint8:
-			buf[0] = v
-		case uint16:
-			binary.LittleEndian.PutUint16(buf[:2], v)
-		case uint32:
-			binary.LittleEndian.PutUint32(buf[:4], v)
-		case uint64:
-			binary.LittleEndian.PutUint64(buf[:8], v)
-		}
-		wn, err = w.Write(buf[:width])
+	if len(c.offsets) > 0 {
+		width := int(unsafe.Sizeof(T(0)))
+		byteLen := len(c.offsets) * width
+		b := unsafe.Slice((*byte)(unsafe.Pointer(&c.offsets[0])), byteLen)
+		wn, err = w.Write(b)
 		if err != nil {
 			return n + int64(wn), err
 		}
-		if wn != width {
+		if wn != byteLen {
 			return n + int64(wn), io.ErrShortWrite
 		}
 		n += int64(wn)
@@ -206,14 +202,12 @@ func ReadStrings(r io.Reader) (Array[string], error) {
 
 // readStringsOffsets reads numOffsets offsets of type T and bufLen bytes of string data, then returns a Strings[T].
 func readStringsOffsets[T UnsignedInteger](r io.Reader, numOffsets int, bufLen uint32) (*Strings[T], error) {
-	width := int(unsafe.Sizeof(T(0)))
-	offsetBytes := make([]byte, numOffsets*width)
-	if _, err := io.ReadFull(r, offsetBytes); err != nil {
-		return nil, err
-	}
 	offsets := make([]T, numOffsets)
-	for i := range offsets {
-		if err := binary.Read(bytes.NewReader(offsetBytes[i*width:(i+1)*width]), binary.LittleEndian, &offsets[i]); err != nil {
+	if numOffsets > 0 {
+		width := int(unsafe.Sizeof(T(0))) // nasty but cool :D
+		byteLen := numOffsets * width
+		b := unsafe.Slice((*byte)(unsafe.Pointer(&offsets[0])), byteLen)
+		if _, err := io.ReadFull(r, b); err != nil {
 			return nil, err
 		}
 	}

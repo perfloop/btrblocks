@@ -3,7 +3,15 @@ package array
 import (
 	"fmt"
 	"io"
+	"unsafe"
 )
+
+func init() {
+	var x uint32 = 0x01020304
+	if *(*byte)(unsafe.Pointer(&x)) != 0x04 {
+		panic("array: unsafe I/O requires a little-endian platform")
+	}
+}
 
 // Array is the common interface for columnar array types (primitives and strings).
 // All arrays have a fixed PType, support O(1) ValueAt by index, and can be serialized via WriteTo.
@@ -11,6 +19,8 @@ type Array[T Integer | Float | String] interface {
 	io.WriterTo
 	// ValueAt returns the value at the given index. Panics if offset >= Length().
 	ValueAt(offset uint64) T
+	// CopyTo copies all elements into dst. len(dst) must be >= Length().
+	CopyTo(dst []T)
 	// BinarySize is the total size in bytes when written (header + body).
 	BinarySize() uint64
 	// Length is the number of elements in the array.
