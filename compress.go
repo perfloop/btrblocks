@@ -1,6 +1,10 @@
 package btrblocks
 
-import "github.com/axiomhq/btrblocks/array"
+import (
+	"io"
+
+	"github.com/axiomhq/btrblocks/array"
+)
 
 const defaultDepth = 3
 
@@ -62,4 +66,31 @@ func Compress[T Integer | Float | String](data []T) Codec[T] {
 
 func CompressWithDepth[T Integer | Float | String](data []T, depth int) Codec[T] {
 	return compress(data, depth)
+}
+
+func Read[T Integer | Float | String](rdr io.Reader) (Codec[T], error) {
+	header, err := readHeader(rdr)
+	if err != nil {
+		return nil, err
+	}
+	return readCodecWithHeader[T](rdr, header)
+}
+
+func Decompress[T Integer | Float | String](rdr io.Reader) ([]T, error) {
+	header, err := readHeader(rdr)
+	if err != nil {
+		return nil, err
+	}
+	codec, err := readCodecWithHeader[T](rdr, header)
+	if err != nil {
+		return nil, err
+	}
+	data := make([]T, codec.Length())
+	for i := range data {
+		data[i], err = codec.ValueAt(uint64(i))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return data, nil
 }

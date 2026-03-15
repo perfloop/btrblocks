@@ -26,8 +26,15 @@ func TestNewStringsChoosesOffsetWidth(t *testing.T) {
 	})
 }
 
+func TestTotalStringBytesRejectsFormatLimit(t *testing.T) {
+	require.NoError(t, validateStringDataSize(math.MaxUint32))
+
+	err := validateStringDataSize(math.MaxUint32 + 1)
+	require.ErrorContains(t, err, "format limit")
+}
+
 func TestStringsMetadataAndHeader(t *testing.T) {
-	arr := newStringsWithOffsets[uint16]([]string{"go", "", "lang"}, 6, 2)
+	arr := newStringsWithOffsets[uint16]([]string{"go", "", "lang"}, 6)
 
 	require.EqualValues(t, 3, arr.Length())
 	require.Equal(t, PTypeString, arr.PType())
@@ -38,7 +45,7 @@ func TestStringsMetadataAndHeader(t *testing.T) {
 }
 
 func TestStringsWriteToIncludesHeaderOffsetsAndBuffer(t *testing.T) {
-	arr := newStringsWithOffsets[uint16]([]string{"go", "lang"}, 6, 2)
+	arr := newStringsWithOffsets[uint16]([]string{"go", "lang"}, 6)
 
 	var buf bytes.Buffer
 	n, err := arr.WriteTo(&buf)
@@ -149,6 +156,37 @@ func TestReadStringsRejectsUnsupportedHeader(t *testing.T) {
 			require.ErrorContains(t, err, tt.want)
 		})
 	}
+}
+
+func TestReadStringsRejectsInvalidBodySize(t *testing.T) {
+	t.Run("too small for offsets", func(t *testing.T) {
+		var buf bytes.Buffer
+		_, err := Header{
+			Version:  1,
+			PType:    PTypeString,
+			Length:   1,
+			BodySize: 4,
+		}.WriteTo(&buf)
+		require.NoError(t, err)
+
+		_, err = ReadStrings(bytes.NewReader(buf.Bytes()))
+		require.ErrorContains(t, err, "string body")
+	})
+
+	t.Run("buffer exceeds declared body", func(t *testing.T) {
+		var buf bytes.Buffer
+		_, err := Header{
+			Version:  1,
+			PType:    PTypeString,
+			Length:   0,
+			BodySize: 5,
+		}.WriteTo(&buf)
+		require.NoError(t, err)
+		require.NoError(t, binary.Write(&buf, binary.LittleEndian, uint32(2)))
+
+		_, err = ReadStrings(bytes.NewReader(buf.Bytes()))
+		require.ErrorContains(t, err, "string body")
+	})
 }
 
 func TestStringsWriteToShortWrite(t *testing.T) {

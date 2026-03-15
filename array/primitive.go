@@ -88,16 +88,20 @@ func readPrimitivesWithHeader[T PrimitiveType](r io.Reader, h Header) (*Primitiv
 		return nil, fmt.Errorf("array: unknown PType %v", h.PType)
 	}
 	if h.Length == 0 {
+		if h.BodySize != 0 {
+			return nil, errors.New("array: invalid primitive body size")
+		}
 		return &Primitives[T]{pType: h.PType, data: nil}, nil
 	}
-	if h.Length > maxArrayLength {
-		return nil, fmt.Errorf("array: length %d exceeds maximum %d", h.Length, maxArrayLength)
+	width64 := uint64(width)
+	if h.Length > platformSliceLimit()/width64 {
+		return nil, errors.New("array: primitive payload exceeds platform limit")
+	}
+	if h.BodySize != h.Length*width64 {
+		return nil, errors.New("array: invalid primitive body size")
 	}
 	n := int(h.Length)
 	bodySize := int(h.BodySize)
-	if bodySize != n*width {
-		return nil, errors.New("array: invalid primitive body size")
-	}
 	data := make([]T, n)
 	b := unsafe.Slice((*byte)(unsafe.Pointer(&data[0])), bodySize)
 	if _, err := io.ReadFull(r, b); err != nil {

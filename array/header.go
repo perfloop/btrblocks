@@ -9,12 +9,6 @@ import (
 // headerSize is the fixed size of the binary header (20 bytes). Layout: Version(1) + PType(1) + Flags(2) + Length(8) + BodySize(8).
 const headerSize = 20
 
-// maxArrayLength is the maximum number of elements we will allocate when decoding. Prevents panic/OOM on corrupt headers.
-const maxArrayLength = 1 << 30
-
-// maxStringBufLen is the maximum byte length for the string data buffer when decoding. Prevents OOM on corrupt input.
-const maxStringBufLen = 1 << 30
-
 // Header is the fixed 20-byte prefix written before every array body.
 // Layout: Version(1) + PType(1) + Flags(2) + Length(8) + BodySize(8), all
 // little-endian.
@@ -53,6 +47,10 @@ func validateHeader(h Header) error {
 		return fmt.Errorf("array: unsupported flags = 0x%x", h.Flags)
 	}
 	return nil
+}
+
+func platformSliceLimit() uint64 {
+	return uint64(^uint(0) >> 1)
 }
 
 // WriteTo encodes h in LittleEndian and writes it to w. Returns bytes written and any error.

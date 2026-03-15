@@ -1,6 +1,7 @@
 package btrblocks
 
 import (
+	"errors"
 	"io"
 	"testing"
 
@@ -21,6 +22,23 @@ func (w *shortWriter) Write(p []byte) (int, error) {
 		return n, nil
 	}
 	w.remaining -= len(p)
+	return len(p), nil
+}
+
+type partialErrorWriter struct {
+	calls    int
+	failCall int
+	err      error
+}
+
+func (w *partialErrorWriter) Write(p []byte) (int, error) {
+	w.calls++
+	if w.calls == w.failCall {
+		if len(p) == 0 {
+			return 0, w.err
+		}
+		return 1, w.err
+	}
 	return len(p), nil
 }
 
@@ -48,4 +66,14 @@ func TestBitpackingCodecWriteToShortWrite(t *testing.T) {
 	n, err := codec.WriteTo(writer)
 	require.ErrorIs(t, err, io.ErrShortWrite)
 	require.EqualValues(t, headerSize+1+len(codec.buf)-1, n)
+}
+
+func TestBitpackingCodecWriteToCountsPartialErrorOnWidthByte(t *testing.T) {
+	codec := NewBitpackingCodec([]uint8{0, 1, 2, 3, 4, 5, 6, 7})
+	wantErr := errors.New("write failed")
+	writer := &partialErrorWriter{failCall: 2, err: wantErr}
+
+	n, err := codec.WriteTo(writer)
+	require.ErrorIs(t, err, wantErr)
+	require.EqualValues(t, headerSize+1, n)
 }

@@ -26,18 +26,17 @@ func CompressString(arr array.Array[string], depth int) Codec[string] {
 	registry := stringCodecRegistry()
 	ordered := []TypeStringCodec{TypeStringCodecConst, TypeStringCodecDict, TypeStringCodecRaw}
 	var (
-		bestCodec Codec[string]
-		bestSize  uint64
+		selectedCodec Codec[string]
+		selectedSize  uint64
 	)
 	for _, typ := range ordered {
 		builder := registry[typ]
 		if codec, err := builder(arr, depth); err == nil {
-			// if codec is better than best codec, update best codec and best size
-			if bestCodec == nil || codec.BinarySize() < bestSize {
-				bestCodec = codec
-				bestSize = codec.BinarySize()
+			if selectedCodec == nil || codec.BinarySize() < selectedSize {
+				selectedCodec = codec
+				selectedSize = codec.BinarySize()
 			}
 		}
 	}
-	return bestCodec
+	return selectedCodec
 }

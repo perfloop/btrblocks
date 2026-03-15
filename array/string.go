@@ -24,37 +24,60 @@ type Strings[T UnsignedInteger] struct {
 
 // NewStrings builds a string array from values, choosing the smallest offset type that can represent the total byte length.
 func NewStrings(values []string) Array[string] {
-	total := 0
-	for _, v := range values {
-		total += len(v)
+	total, err := totalStringBytes(values)
+	if err != nil {
+		panic(err)
 	}
 	switch {
 	case total <= math.MaxUint8:
-		return newStringsWithOffsets[uint8](values, total, 1)
+		return newStringsWithOffsets[uint8](values, total)
 	case total <= math.MaxUint16:
-		return newStringsWithOffsets[uint16](values, total, 2)
-	case total <= math.MaxUint32:
-		return newStringsWithOffsets[uint32](values, total, 4)
+		return newStringsWithOffsets[uint16](values, total)
 	default:
-		return newStringsWithOffsets[uint64](values, total, 8)
+		return newStringsWithOffsets[uint32](values, total)
 	}
 }
 
 // newStringsWithOffsets constructs a Strings array with the given offset type T. Caller must ensure total fits in T.
-func newStringsWithOffsets[T UnsignedInteger](values []string, total int, width int) *Strings[T] {
-	buf := make([]byte, total)
+func newStringsWithOffsets[T UnsignedInteger](values []string, total uint64) *Strings[T] {
+	buf := make([]byte, int(total))
 	offsets := make([]T, len(values)+1)
-	pos := 0
+	var pos uint64
 	offsets[0] = 0
 	for i, v := range values {
-		copy(buf[pos:], v)
-		pos += len(v)
+		copy(buf[int(pos):], v)
+		pos += uint64(len(v))
 		offsets[i+1] = T(pos)
 	}
 	return &Strings[T]{
 		offsets: offsets,
 		buf:     buf,
 	}
+}
+
+func totalStringBytes(values []string) (uint64, error) {
+	var total uint64
+	for _, v := range values {
+		size := uint64(len(v))
+		if total > ^uint64(0)-size {
+			return 0, errors.New("array: string data size overflows")
+		}
+		total += size
+	}
+	if err := validateStringDataSize(total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func validateStringDataSize(total uint64) error {
+	if total > math.MaxUint32 {
+		return errors.New("array: string data exceeds format limit")
+	}
+	if total > platformSliceLimit() {
+		return errors.New("array: string data exceeds platform limit")
+	}
+	return nil
 }
 
 func (c *Strings[T]) ValueAt(offset uint64) string {
@@ -133,37 +156,37 @@ func readStringsWithHeader(r io.Reader, h Header) (Array[string], error) {
 	if h.PType != PTypeString {
 		return nil, errors.New("array: not a string array")
 	}
-	if h.Length > maxArrayLength {
-		return nil, errors.New("array: string array length exceeds maximum")
+	if h.BodySize < 5 || h.Length == ^uint64(0) {
+		return nil, errors.New("array: invalid string body")
 	}
+	numOffsets := h.Length + 1
 	var bufLen uint32
 	if err := binary.Read(r, binary.LittleEndian, &bufLen); err != nil {
 		return nil, err
 	}
-	if bufLen > maxStringBufLen {
-		return nil, errors.New("array: string buffer length exceeds maximum")
-	}
-	offsetsSize := int(h.BodySize) - 4 - int(bufLen)
-	numOffsets := int(h.Length) + 1
-	if numOffsets <= 0 || offsetsSize <= 0 {
+	if uint64(bufLen)+4 > h.BodySize {
 		return nil, errors.New("array: invalid string body")
 	}
-	if numOffsets > maxArrayLength+1 {
-		return nil, errors.New("array: string array length exceeds maximum")
+	offsetsSize := h.BodySize - 4 - uint64(bufLen)
+	if offsetsSize == 0 {
+		return nil, errors.New("array: invalid string body")
 	}
 	if offsetsSize%numOffsets != 0 {
 		return nil, errors.New("array: invalid string offsets layout")
 	}
 	width := offsetsSize / numOffsets
+	if numOffsets > platformSliceLimit() || offsetsSize > platformSliceLimit() || uint64(bufLen) > platformSliceLimit() {
+		return nil, errors.New("array: string payload exceeds platform limit")
+	}
 	switch width {
 	case 1:
-		return readStringsOffsets[uint8](r, numOffsets, bufLen)
+		return readStringsOffsets[uint8](r, int(numOffsets), bufLen)
 	case 2:
-		return readStringsOffsets[uint16](r, numOffsets, bufLen)
+		return readStringsOffsets[uint16](r, int(numOffsets), bufLen)
 	case 4:
-		return readStringsOffsets[uint32](r, numOffsets, bufLen)
+		return readStringsOffsets[uint32](r, int(numOffsets), bufLen)
 	case 8:
-		return readStringsOffsets[uint64](r, numOffsets, bufLen)
+		return readStringsOffsets[uint64](r, int(numOffsets), bufLen)
 	default:
 		return nil, errors.New("array: unsupported string offset width")
 	}
@@ -197,7 +220,7 @@ func readStringsOffsets[T UnsignedInteger](r io.Reader, numOffsets int, bufLen u
 	if err := validateStringOffsets(offsets, bufLen); err != nil {
 		return nil, err
 	}
-	buf := make([]byte, bufLen)
+	buf := make([]byte, int(bufLen))
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return nil, err
 	}

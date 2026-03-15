@@ -127,7 +127,7 @@ func (c *BitpackingCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
 	bitWidth[0] = byte(c.bitWidth)
 	nn, err := w.Write(bitWidth[:])
 	if err != nil {
-		return n, err
+		return n + int64(nn), err
 	}
 	if nn != len(bitWidth) {
 		return n + int64(nn), io.ErrShortWrite

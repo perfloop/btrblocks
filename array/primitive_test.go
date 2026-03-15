@@ -133,6 +133,20 @@ func TestReadPrimitivesRejectsUnsupportedHeader(t *testing.T) {
 	}
 }
 
+func TestReadPrimitivesRejectsZeroLengthWithBody(t *testing.T) {
+	var buf bytes.Buffer
+	_, err := Header{
+		Version:  1,
+		PType:    PTypeUint32,
+		Length:   0,
+		BodySize: 4,
+	}.WriteTo(&buf)
+	require.NoError(t, err)
+
+	_, err = ReadPrimitives[uint32](bytes.NewReader(buf.Bytes()))
+	require.ErrorContains(t, err, "body size")
+}
+
 func TestPrimitivesWriteToShortWrite(t *testing.T) {
 	arr := NewPrimitives([]uint16{7, 42, 1024})
 	writer := &shortWriter{remaining: int(arr.BinarySize()) - 1}

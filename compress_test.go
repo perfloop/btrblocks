@@ -1,6 +1,7 @@
 package btrblocks
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -75,6 +76,23 @@ func TestCompressExportedFunctionsLargeCorpora(t *testing.T) {
 		assertCodecMetadata(t, codec, len(data), PTypeString, 2)
 		assertCodecRoundTrip(t, codec, data)
 	})
+}
+
+func TestReadAndDecompressRoundTrip(t *testing.T) {
+	data := makeLowCardinalityStringCorpus(1024, 8)
+	codec := Compress(data)
+
+	var buf bytes.Buffer
+	_, err := codec.WriteTo(&buf)
+	require.NoError(t, err)
+
+	decodedCodec, err := Read[string](bytes.NewReader(buf.Bytes()))
+	require.NoError(t, err)
+	assertCodecMetadata(t, decodedCodec, len(data), PTypeString, len(decodedCodec.Children()))
+
+	values, err := Decompress[string](bytes.NewReader(buf.Bytes()))
+	require.NoError(t, err)
+	require.Equal(t, data, values)
 }
 
 func FuzzCompressRoundTrip(f *testing.F) {
