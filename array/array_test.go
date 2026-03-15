@@ -29,6 +29,36 @@ func TestReadArrayTypeMismatchReturnsError(t *testing.T) {
 	require.ErrorContains(t, err, "PType")
 }
 
+func TestReadArrayRejectsUnsupportedHeader(t *testing.T) {
+	tests := []struct {
+		name   string
+		header Header
+		want   string
+	}{
+		{
+			name:   "version",
+			header: Header{Version: 2, PType: PTypeUint64, Length: 0, BodySize: 0},
+			want:   "version",
+		},
+		{
+			name:   "flags",
+			header: Header{Version: 1, PType: PTypeUint64, Flags: 1, Length: 0, BodySize: 0},
+			want:   "flags",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			_, err := tt.header.WriteTo(&buf)
+			require.NoError(t, err)
+
+			_, err = ReadArray[uint64](bytes.NewReader(buf.Bytes()))
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
 func assertArrayContract[T Integer | Float | String](t *testing.T, arr Array[T], want []T, wantPType PType, wantBinarySize uint64, wantWriteSize int64) {
 	t.Helper()
 

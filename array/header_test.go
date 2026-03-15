@@ -3,10 +3,28 @@ package array
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+type shortWriter struct {
+	remaining int
+}
+
+func (w *shortWriter) Write(p []byte) (int, error) {
+	if w.remaining <= 0 {
+		return 0, nil
+	}
+	if len(p) > w.remaining {
+		n := w.remaining
+		w.remaining = 0
+		return n, nil
+	}
+	w.remaining -= len(p)
+	return len(p), nil
+}
 
 func TestHeaderWriteTo(t *testing.T) {
 	header := Header{
@@ -39,6 +57,15 @@ func BenchmarkHeaderWriteTo(b *testing.B) {
 		buf.Reset()
 		_, _ = h.WriteTo(&buf)
 	}
+}
+
+func TestHeaderWriteToShortWrite(t *testing.T) {
+	header := Header{Version: 1, PType: PTypeUint32, Length: 9, BodySize: 32}
+	writer := &shortWriter{remaining: headerSize - 1}
+
+	n, err := header.WriteTo(writer)
+	require.ErrorIs(t, err, io.ErrShortWrite)
+	require.EqualValues(t, headerSize-1, n)
 }
 
 func FuzzReadHeader(f *testing.F) {

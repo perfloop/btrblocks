@@ -1,10 +1,13 @@
 package btrblocks
 
 import (
+	"bytes"
+	"encoding/binary"
 	"math"
 	"testing"
 
 	"github.com/axiomhq/btrblocks/array"
+	"github.com/stretchr/testify/require"
 )
 
 func TestConstCodecUint64RoundTrip(t *testing.T) {
@@ -91,4 +94,43 @@ func BenchmarkConstCodecValueAtLarge(b *testing.B) {
 		b.Fatalf("NewConstIntegerCodec() returned error: %v", err)
 	}
 	benchmarkValueAtLoop(b, codec, len(data))
+}
+
+func TestReadConstCodecRejectsMalformedEmptyBody(t *testing.T) {
+	body := array.NewPrimitivesUnsafe([]uint64{})
+
+	var bodyBuf bytes.Buffer
+	_, err := body.WriteTo(&bodyBuf)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	_, err = Header{
+		Version:    1,
+		Kind:       CodecTypeConst,
+		ElemType:   PTypeUint64,
+		ChildCount: 0,
+		Flags:      0,
+		Length:     1,
+		BodySize:   uint64(bodyBuf.Len()),
+	}.WriteTo(&buf)
+	require.NoError(t, err)
+	buf.Write(bodyBuf.Bytes())
+
+	_, err = readCodec[uint64](bytes.NewReader(buf.Bytes()))
+	require.ErrorContains(t, err, "body length")
+}
+
+func TestReadConstCodecRejectsMismatchedOuterBodySize(t *testing.T) {
+	codec, err := NewConstIntegerCodec(array.NewPrimitivesUnsafe([]uint64{7, 7, 7}))
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	_, err = codec.WriteTo(&buf)
+	require.NoError(t, err)
+
+	data := append([]byte(nil), buf.Bytes()...)
+	binary.LittleEndian.PutUint64(data[16:24], 1)
+
+	_, err = readCodec[uint64](bytes.NewReader(data))
+	require.ErrorContains(t, err, "const body size")
 }

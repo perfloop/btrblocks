@@ -13,11 +13,12 @@ func TestPTypeStringAndClassifiers(t *testing.T) {
 		wantInteger bool
 		wantFloat   bool
 		wantStringy bool
+		wantBytes   int
 	}{
 		{pType: PTypeUnknown, wantString: "unknown"},
-		{pType: PTypeInt8, wantString: "int8", wantInteger: true},
-		{pType: PTypeUint64, wantString: "uint64", wantInteger: true},
-		{pType: PTypeFloat32, wantString: "float32", wantFloat: true},
+		{pType: PTypeInt8, wantString: "int8", wantInteger: true, wantBytes: 1},
+		{pType: PTypeUint64, wantString: "uint64", wantInteger: true, wantBytes: 8},
+		{pType: PTypeFloat32, wantString: "float32", wantFloat: true, wantBytes: 4},
 		{pType: PTypeString, wantString: "string", wantStringy: true},
 	}
 
@@ -27,6 +28,7 @@ func TestPTypeStringAndClassifiers(t *testing.T) {
 		require.Equal(t, tt.wantFloat, tt.pType.IsFloat())
 		require.Equal(t, tt.wantStringy, tt.pType.IsString())
 		require.Equal(t, tt.wantInteger || tt.wantFloat || tt.wantStringy, tt.pType.IsPrimitive())
+		require.Equal(t, tt.wantBytes, tt.pType.ByteWidth())
 	}
 }
 
@@ -47,7 +49,7 @@ func TestPTypeForType(t *testing.T) {
 func assertPTypeForType[T Integer | Float | String](t *testing.T, want PType) {
 	t.Helper()
 
-	require.Equal(t, want, pTypeForType[T]())
+	require.Equal(t, want, PTypeForType[T]())
 }
 
 func BenchmarkPTypeString(b *testing.B) {
@@ -58,11 +60,11 @@ func BenchmarkPTypeString(b *testing.B) {
 	}
 }
 
-func BenchmarkWidthForPType(b *testing.B) {
+func BenchmarkPTypeByteWidth(b *testing.B) {
 	p := PTypeUint64
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = widthForPType(p)
+		_ = p.ByteWidth()
 	}
 }
 
@@ -77,6 +79,7 @@ func FuzzPTypeString(f *testing.F) {
 		_ = p.IsFloat()
 		_ = p.IsString()
 		_ = p.IsPrimitive()
+		_ = p.ByteWidth()
 		// Must not panic for any uint8 value.
 	})
 }

@@ -163,3 +163,16 @@ func assertCodecHeader[T Integer | Float | String](t *testing.T, codec Codec[T],
 	require.Equal(t, codec.Length(), header.Length)
 	require.LessOrEqual(t, uint64(headerSize)+header.BodySize, codec.BinarySize())
 }
+
+type childCodecMetadata interface {
+	Length() uint64
+	PType() PType
+}
+
+func requireChildCodecMetadata(t *testing.T, scheme Scheme) childCodecMetadata {
+	t.Helper()
+
+	child, ok := scheme.(childCodecMetadata)
+	require.True(t, ok, "child %T does not expose codec metadata", scheme)
+	return child
+}

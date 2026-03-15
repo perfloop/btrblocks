@@ -121,6 +121,45 @@ func TestReadStringsRejectsInvalidOffsets(t *testing.T) {
 	require.ErrorContains(t, err, "offsets")
 }
 
+func TestReadStringsRejectsUnsupportedHeader(t *testing.T) {
+	tests := []struct {
+		name   string
+		header Header
+		want   string
+	}{
+		{
+			name:   "version",
+			header: Header{Version: 2, PType: PTypeString, Length: 0, BodySize: 4},
+			want:   "version",
+		},
+		{
+			name:   "flags",
+			header: Header{Version: 1, PType: PTypeString, Flags: 1, Length: 0, BodySize: 4},
+			want:   "flags",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			_, err := tt.header.WriteTo(&buf)
+			require.NoError(t, err)
+
+			_, err = ReadStrings(bytes.NewReader(buf.Bytes()))
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
+func TestStringsWriteToShortWrite(t *testing.T) {
+	arr := NewStrings([]string{"go", "lang"})
+	writer := &shortWriter{remaining: int(arr.BinarySize()) - 1}
+
+	n, err := arr.WriteTo(writer)
+	require.ErrorIs(t, err, io.ErrShortWrite)
+	require.EqualValues(t, arr.BinarySize()-1, n)
+}
+
 func BenchmarkWriteStrings(b *testing.B) {
 	values := make([]string, 1000)
 	for i := range values {

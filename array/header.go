@@ -2,6 +2,7 @@ package array
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 )
 
@@ -14,8 +15,13 @@ const maxArrayLength = 1 << 30
 // maxStringBufLen is the maximum byte length for the string data buffer when decoding. Prevents OOM on corrupt input.
 const maxStringBufLen = 1 << 30
 
-// Header is the fixed 20-byte header written before every array body.
-// All multi-byte fields are little-endian.
+// Header is the fixed 20-byte prefix written before every array body.
+// Layout: Version(1) + PType(1) + Flags(2) + Length(8) + BodySize(8), all
+// little-endian.
+//
+// This format intentionally omits magic bytes. Array streams are only entered
+// through array/codec decode paths that already know they are at an array
+// boundary, so version and flags carry the format-evolution contract.
 type Header struct {
 	Version  uint8  // Format version; currently 1.
 	PType    PType  // Element type (int8, uint32, string, etc.).
@@ -39,6 +45,16 @@ func readHeader(r io.Reader) (Header, error) {
 	}, nil
 }
 
+func validateHeader(h Header) error {
+	if h.Version != 1 {
+		return fmt.Errorf("array: unsupported version = %d", h.Version)
+	}
+	if h.Flags != 0 {
+		return fmt.Errorf("array: unsupported flags = 0x%x", h.Flags)
+	}
+	return nil
+}
+
 // WriteTo encodes h in LittleEndian and writes it to w. Returns bytes written and any error.
 func (h Header) WriteTo(w io.Writer) (int64, error) {
 	var buf [headerSize]byte
@@ -48,5 +64,8 @@ func (h Header) WriteTo(w io.Writer) (int64, error) {
 	binary.LittleEndian.PutUint64(buf[4:12], h.Length)
 	binary.LittleEndian.PutUint64(buf[12:20], h.BodySize)
 	n, err := w.Write(buf[:])
+	if err == nil && n != len(buf) {
+		err = io.ErrShortWrite
+	}
 	return int64(n), err
 }

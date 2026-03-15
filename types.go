@@ -33,37 +33,7 @@ const (
 )
 
 func pTypeForType[T Integer | Float | String]() PType {
-	var t T
-	switch any(t).(type) {
-	case int:
-		return PTypeInt8
-	case int8:
-		return PTypeInt8
-	case int16:
-		return PTypeInt16
-	case int32:
-		return PTypeInt32
-	case int64:
-		return PTypeInt64
-	case uint:
-		return PTypeUint8
-	case uint8:
-		return PTypeUint8
-	case uint16:
-		return PTypeUint16
-	case uint32:
-		return PTypeUint32
-	case uint64:
-		return PTypeUint64
-	case float32:
-		return PTypeFloat32
-	case float64:
-		return PTypeFloat64
-	case string:
-		return PTypeString
-	default:
-		return PTypeUnknown
-	}
+	return array.PTypeForType[T]()
 }
 
 func cmpFloats[T Float](a, b T) bool {

@@ -1,6 +1,11 @@
 package btrblocks
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestBitpackingCodecUint8CrossByteRoundTrip(t *testing.T) {
 	data := []uint8{0, 1, 2, 3, 4, 5, 6, 7}
@@ -106,4 +111,54 @@ func BenchmarkBitpackingCodecValueAtLarge(b *testing.B) {
 
 	codec := NewBitpackingCodec(data)
 	benchmarkValueAtLoop(b, codec, len(data))
+}
+
+func TestReadBitpackingCodecRejectsInvalidBodySize(t *testing.T) {
+	var buf bytes.Buffer
+	_, err := Header{
+		Version:    1,
+		Kind:       CodecTypeBitpacking,
+		ElemType:   PTypeUint8,
+		ChildCount: 0,
+		Flags:      0,
+		Length:     8,
+		BodySize:   2,
+	}.WriteTo(&buf)
+	require.NoError(t, err)
+	buf.WriteByte(3)
+	buf.WriteByte(0xff)
+
+	_, err = readCodec[uint8](bytes.NewReader(buf.Bytes()))
+	require.ErrorContains(t, err, "body size")
+}
+
+func TestReadBitpackingCodecRejectsOversizedBitWidth(t *testing.T) {
+	var buf bytes.Buffer
+	_, err := Header{
+		Version:    1,
+		Kind:       CodecTypeBitpacking,
+		ElemType:   PTypeUint8,
+		ChildCount: 0,
+		Flags:      0,
+		Length:     1,
+		BodySize:   2,
+	}.WriteTo(&buf)
+	require.NoError(t, err)
+	buf.WriteByte(9)
+	buf.WriteByte(0x01)
+
+	_, err = readCodec[uint8](bytes.NewReader(buf.Bytes()))
+	require.ErrorContains(t, err, "bit width")
+}
+
+func TestReadBitpackingCodecZeroLengthRoundTrip(t *testing.T) {
+	codec := NewBitpackingCodec([]uint8{})
+
+	var buf bytes.Buffer
+	_, err := codec.WriteTo(&buf)
+	require.NoError(t, err)
+
+	decoded, err := readCodec[uint8](bytes.NewReader(buf.Bytes()))
+	require.NoError(t, err)
+	assertCodecMetadata(t, decoded, 0, PTypeUint8, 0)
 }

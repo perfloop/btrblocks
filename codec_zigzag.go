@@ -1,24 +1,14 @@
 package btrblocks
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/axiomhq/btrblocks/array"
 )
 
-var (
-	_ Codec[int8]   = (*ZigzagCodec[int8])(nil)
-	_ Codec[int16]  = (*ZigzagCodec[int16])(nil)
-	_ Codec[int32]  = (*ZigzagCodec[int32])(nil)
-	_ Codec[int64]  = (*ZigzagCodec[int64])(nil)
-	_ Codec[uint8]  = (*ZigzagCodec[uint8])(nil)
-	_ Codec[uint16] = (*ZigzagCodec[uint16])(nil)
-	_ Codec[uint32] = (*ZigzagCodec[uint32])(nil)
-	_ Codec[uint64] = (*ZigzagCodec[uint64])(nil)
-)
-
-type ZigzagCodec[T Integer] struct {
-	data Codec[uint64]
+type ZigzagCodec[T SignedInteger, U UnsignedInteger] struct {
+	data Codec[U]
 }
 
 func zigzagEncode64(n int64) uint64 {
@@ -29,93 +19,85 @@ func zigzagDecode64(z uint64) int64 {
 	return int64(z>>1) ^ -int64(z&1)
 }
 
-func zigzagEncodeSlice[T Integer](vals []T) []uint64 {
-	out := make([]uint64, len(vals))
-	switch any(*new(T)).(type) {
+func zigzagEncodeValue[T SignedInteger](v T) uint64 {
+	switch value := any(v).(type) {
 	case int8:
-		for i, v := range vals {
-			out[i] = zigzagEncode64(int64(any(v).(int8)))
-		}
+		return zigzagEncode64(int64(value))
 	case int16:
-		for i, v := range vals {
-			out[i] = zigzagEncode64(int64(any(v).(int16)))
-		}
+		return zigzagEncode64(int64(value))
 	case int32:
-		for i, v := range vals {
-			out[i] = zigzagEncode64(int64(any(v).(int32)))
-		}
+		return zigzagEncode64(int64(value))
 	case int64:
-		for i, v := range vals {
-			out[i] = zigzagEncode64(any(v).(int64))
-		}
-	case uint8:
-		for i, v := range vals {
-			out[i] = uint64(any(v).(uint8))
-		}
-	case uint16:
-		for i, v := range vals {
-			out[i] = uint64(any(v).(uint16))
-		}
-	case uint32:
-		for i, v := range vals {
-			out[i] = uint64(any(v).(uint32))
-		}
-	case uint64:
-		for i, v := range vals {
-			out[i] = any(v).(uint64)
-		}
+		return zigzagEncode64(value)
 	default:
-		return out
+		return 0
 	}
-	return out
 }
 
-func NewZigzagCodec[T Integer](vals []T, depth int) (*ZigzagCodec[T], error) {
+func zigzagMaxEncodedValue[T SignedInteger](vals []T) uint64 {
+	var max uint64
+	for _, v := range vals {
+		encoded := zigzagEncodeValue(v)
+		if encoded > max {
+			max = encoded
+		}
+	}
+	return max
+}
+
+func newZigzagCodecWithWidth[T SignedInteger, U UnsignedInteger](vals []T, depth int) (Codec[T], error) {
+	data := make([]U, len(vals))
+	for i, v := range vals {
+		data[i] = U(zigzagEncodeValue(v))
+	}
+	inner := CompressInteger(array.NewPrimitivesUnsafe(data), depth-1)
+	return &ZigzagCodec[T, U]{data: inner}, nil
+}
+
+func NewZigzagCodec[T SignedInteger](vals []T, depth int) (Codec[T], error) {
 	if depth <= 0 {
 		return nil, errDepthExhausted
 	}
-	encoded := zigzagEncodeSlice(vals)
-	inner := CompressInteger(array.NewPrimitivesUnsafe(encoded), depth-1)
-	return &ZigzagCodec[T]{data: inner}, nil
+	max := zigzagMaxEncodedValue(vals)
+	switch {
+	case max <= uint64(^uint8(0)):
+		return newZigzagCodecWithWidth[T, uint8](vals, depth)
+	case max <= uint64(^uint16(0)):
+		return newZigzagCodecWithWidth[T, uint16](vals, depth)
+	case max <= uint64(^uint32(0)):
+		return newZigzagCodecWithWidth[T, uint32](vals, depth)
+	default:
+		return newZigzagCodecWithWidth[T, uint64](vals, depth)
+	}
 }
 
-func (z *ZigzagCodec[T]) ValueAt(offset uint64) (T, error) {
+func (z *ZigzagCodec[T, U]) ValueAt(offset uint64) (T, error) {
 	var zero T
 	u, err := z.data.ValueAt(offset)
 	if err != nil {
 		return zero, err
 	}
+	value := uint64(u)
 	switch any(zero).(type) {
 	case int8:
-		return any(int8(zigzagDecode64(u))).(T), nil
+		return any(int8(zigzagDecode64(value))).(T), nil
 	case int16:
-		return any(int16(zigzagDecode64(u))).(T), nil
+		return any(int16(zigzagDecode64(value))).(T), nil
 	case int32:
-		return any(int32(zigzagDecode64(u))).(T), nil
+		return any(int32(zigzagDecode64(value))).(T), nil
 	case int64:
-		return any(zigzagDecode64(u)).(T), nil
-	case uint8:
-		return any(uint8(u)).(T), nil
-	case uint16:
-		return any(uint16(u)).(T), nil
-	case uint32:
-		return any(uint32(u)).(T), nil
-	case uint64:
-		return any(u).(T), nil
+		return any(zigzagDecode64(value)).(T), nil
 	default:
-		return zero, nil
+		return zero, fmt.Errorf("codec: zigzag not supported for type %T", zero)
 	}
 }
 
-func (z *ZigzagCodec[T]) Children() []Scheme {
-	return []Scheme{z.data}
-}
+func (z *ZigzagCodec[T, U]) Children() []Scheme { return []Scheme{z.data} }
+func (z *ZigzagCodec[T, U]) BinarySize() uint64 { return uint64(headerSize) + z.data.BinarySize() }
+func (z *ZigzagCodec[T, U]) Length() uint64     { return z.data.Length() }
+func (z *ZigzagCodec[T, U]) PType() PType       { return pTypeForType[T]() }
 
-func (z *ZigzagCodec[T]) BinarySize() uint64 { return uint64(headerSize) + z.data.BinarySize() }
-func (z *ZigzagCodec[T]) Length() uint64     { return z.data.Length() }
-func (z *ZigzagCodec[T]) PType() PType       { return pTypeForType[T]() }
-
-func (z *ZigzagCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
+func (z *ZigzagCodec[T, U]) WriteTo(w io.Writer) (n int64, err error) {
 	n, err = Header{
 		Version:    1,
 		Kind:       CodecTypeZigzag,
@@ -131,4 +113,72 @@ func (z *ZigzagCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
 
 	nn, err := z.data.WriteTo(w)
 	return n + int64(nn), err
+}
+
+func readZigzagCodecWithChild[T SignedInteger, U UnsignedInteger](r io.Reader, header Header, childHeader Header) (Codec[T], error) {
+	data, err := readCodecWithHeader[U](r, childHeader)
+	if err != nil {
+		return nil, err
+	}
+	if header.Length != data.Length() {
+		return nil, fmt.Errorf("codec: zigzag length = %d, want %d", header.Length, data.Length())
+	}
+	return &ZigzagCodec[T, U]{data: data}, nil
+}
+
+func readAnyZigzagCodec[T Integer | Float | String](r io.Reader, header Header) (Codec[T], error) {
+	var zero T
+	switch any(zero).(type) {
+	case int8:
+		c, err := readZigzagCodec[int8](r, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(c).(Codec[T]), nil
+	case int16:
+		c, err := readZigzagCodec[int16](r, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(c).(Codec[T]), nil
+	case int32:
+		c, err := readZigzagCodec[int32](r, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(c).(Codec[T]), nil
+	case int64:
+		c, err := readZigzagCodec[int64](r, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(c).(Codec[T]), nil
+	default:
+		return nil, fmt.Errorf("codec: zigzag not supported for type %v", header.ElemType)
+	}
+}
+
+func readZigzagCodec[T SignedInteger](r io.Reader, header Header) (Codec[T], error) {
+	if header.ChildCount != 1 {
+		return nil, fmt.Errorf("codec: zigzag child count = %d, want 1", header.ChildCount)
+	}
+	if header.BodySize != 0 {
+		return nil, fmt.Errorf("codec: zigzag body size = %d, want 0", header.BodySize)
+	}
+	childHeader, err := readHeader(r)
+	if err != nil {
+		return nil, err
+	}
+	switch childHeader.ElemType {
+	case PTypeUint8:
+		return readZigzagCodecWithChild[T, uint8](r, header, childHeader)
+	case PTypeUint16:
+		return readZigzagCodecWithChild[T, uint16](r, header, childHeader)
+	case PTypeUint32:
+		return readZigzagCodecWithChild[T, uint32](r, header, childHeader)
+	case PTypeUint64:
+		return readZigzagCodecWithChild[T, uint64](r, header, childHeader)
+	default:
+		return nil, fmt.Errorf("codec: zigzag child element type = %v, want unsigned integer", childHeader.ElemType)
+	}
 }

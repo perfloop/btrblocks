@@ -1,13 +1,10 @@
 package btrblocks
 
 import (
+	"fmt"
 	"io"
 	"math/bits"
 )
-
-type bitpackableUnsigned interface {
-	~uint8 | ~uint16 | ~uint32 | ~uint64
-}
 
 var (
 	_ Codec[uint64] = (*BitpackingCodec[uint64])(nil)
@@ -16,13 +13,13 @@ var (
 	_ Codec[uint8]  = (*BitpackingCodec[uint8])(nil)
 )
 
-type BitpackingCodec[T bitpackableUnsigned] struct {
+type BitpackingCodec[T UnsignedInteger] struct {
 	length   uint64
 	bitWidth uint
 	buf      []byte
 }
 
-func NewBitpackingCodec[T bitpackableUnsigned](data []T) *BitpackingCodec[T] {
+func NewBitpackingCodec[T UnsignedInteger](data []T) *BitpackingCodec[T] {
 	codec := &BitpackingCodec[T]{length: uint64(len(data))}
 	if len(data) == 0 {
 		return codec
@@ -65,10 +62,11 @@ func (c *BitpackingCodec[T]) Children() []Scheme { return nil }
 func (c *BitpackingCodec[T]) bodySize() uint64   { return 1 + uint64(len(c.buf)) }
 
 func packedByteSize(length uint64, bitWidth uint) int {
-	if length == 0 || bitWidth == 0 {
-		return 0
+	size, err := checkedPackedByteSize(length, bitWidth)
+	if err != nil {
+		panic(err)
 	}
-	return int((length*uint64(bitWidth) + 7) / 8)
+	return size
 }
 
 func packUnsigned(buf []byte, bitOffset uint64, bitWidth uint, value uint64) {
@@ -145,4 +143,90 @@ func (c *BitpackingCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
 		return n + int64(nn), io.ErrShortWrite
 	}
 	return n + int64(nn), nil
+}
+
+func readAnyBitpackingCodec[T Integer | Float | String](r io.Reader, header Header) (Codec[T], error) {
+	var zero T
+	switch any(zero).(type) {
+	case uint8:
+		c, err := readBitpackingCodec[uint8](r, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(c).(Codec[T]), nil
+	case uint16:
+		c, err := readBitpackingCodec[uint16](r, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(c).(Codec[T]), nil
+	case uint32:
+		c, err := readBitpackingCodec[uint32](r, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(c).(Codec[T]), nil
+	case uint64:
+		c, err := readBitpackingCodec[uint64](r, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(c).(Codec[T]), nil
+	default:
+		return nil, fmt.Errorf("codec: bitpacking not supported for type %v", header.ElemType)
+	}
+}
+
+func readBitpackingCodec[T UnsignedInteger](r io.Reader, header Header) (Codec[T], error) {
+	if header.ChildCount != 0 {
+		return nil, fmt.Errorf("codec: bitpacking child count = %d, want 0", header.ChildCount)
+	}
+	if header.BodySize < 1 {
+		return nil, fmt.Errorf("codec: bitpacking body too small")
+	}
+	var widthByte [1]byte
+	if _, err := io.ReadFull(r, widthByte[:]); err != nil {
+		return nil, err
+	}
+	bitWidth := uint(widthByte[0])
+	maxBitWidth := uint(pTypeForType[T]().ByteWidth() * 8)
+	if maxBitWidth == 0 {
+		return nil, fmt.Errorf("codec: bitpacking unsupported for %T", *new(T))
+	}
+	if bitWidth > maxBitWidth {
+		return nil, fmt.Errorf("codec: bitpacking bit width = %d exceeds %T width", bitWidth, *new(T))
+	}
+	if header.Length == 0 && bitWidth != 0 {
+		return nil, fmt.Errorf("codec: bitpacking bit width = %d for empty payload", bitWidth)
+	}
+	dataSize, err := checkedPackedByteSize(header.Length, bitWidth)
+	if err != nil {
+		return nil, err
+	}
+	if header.BodySize != 1+uint64(dataSize) {
+		return nil, fmt.Errorf("codec: bitpacking body size = %d, want %d", header.BodySize, 1+uint64(dataSize))
+	}
+	var buf []byte
+	if dataSize > 0 {
+		buf = make([]byte, dataSize)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return nil, err
+		}
+	}
+	return &BitpackingCodec[T]{length: header.Length, bitWidth: bitWidth, buf: buf}, nil
+}
+
+func checkedPackedByteSize(length uint64, bitWidth uint) (int, error) {
+	if length == 0 || bitWidth == 0 {
+		return 0, nil
+	}
+	maxInt := uint64(^uint(0) >> 1)
+	if length > (^uint64(0)-7)/uint64(bitWidth) {
+		return 0, fmt.Errorf("codec: bitpacking payload size overflows for length %d and bit width %d", length, bitWidth)
+	}
+	size := (length*uint64(bitWidth) + 7) / 8
+	if size > maxInt {
+		return 0, fmt.Errorf("codec: bitpacking payload size %d exceeds maximum", size)
+	}
+	return int(size), nil
 }

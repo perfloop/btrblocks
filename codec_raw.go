@@ -1,6 +1,7 @@
 package btrblocks
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/axiomhq/btrblocks/array"
@@ -68,4 +69,21 @@ func (r *RawCodec[T]) Length() uint64 {
 
 func (r *RawCodec[T]) PType() PType {
 	return pTypeForType[T]()
+}
+
+func readRawCodec[T Integer | Float | String](r io.Reader, header Header) (Codec[T], error) {
+	if header.ChildCount != 0 {
+		return nil, fmt.Errorf("codec: raw child count = %d, want 0", header.ChildCount)
+	}
+	arr, err := array.ReadArray[T](r)
+	if err != nil {
+		return nil, err
+	}
+	if header.Length != arr.Length() {
+		return nil, fmt.Errorf("codec: raw length = %d, want %d", header.Length, arr.Length())
+	}
+	if header.BodySize != arr.BinarySize() {
+		return nil, fmt.Errorf("codec: raw body size = %d, want %d", header.BodySize, arr.BinarySize())
+	}
+	return &RawCodec[T]{arr: arr}, nil
 }

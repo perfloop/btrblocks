@@ -7,6 +7,17 @@ import (
 
 const headerSize = 24
 
+// Header is the fixed 24-byte prefix for every codec node.
+// Layout: Version(1) + Kind(1) + ElemType(1) + ChildCount(1) + Flags(4) +
+// Length(8) + BodySize(8), all little-endian.
+//
+// A serialized codec node is:
+//
+//	[Header][BodySize bytes of codec-local body][ChildCount child codec nodes]
+//
+// This format intentionally omits magic bytes. Codec streams are only entered
+// through typed decode paths that already know they are positioned at a codec
+// boundary, so the extra per-node overhead does not buy a useful recovery path.
 type Header struct {
 	Version    uint8
 	Kind       CodecType

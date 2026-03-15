@@ -63,6 +63,23 @@ func (p PType) IsPrimitive() bool {
 	return p.IsInteger() || p.IsFloat() || p.IsString()
 }
 
+// ByteWidth returns the byte width of a fixed-width physical type.
+// It returns 0 for unknown or variable-width types such as string.
+func (p PType) ByteWidth() int {
+	switch p {
+	case PTypeInt8, PTypeUint8:
+		return 1
+	case PTypeInt16, PTypeUint16:
+		return 2
+	case PTypeInt32, PTypeUint32, PTypeFloat32:
+		return 4
+	case PTypeInt64, PTypeUint64, PTypeFloat64:
+		return 8
+	default:
+		return 0
+	}
+}
+
 // SignedInteger is the set of signed integer types supported as primitive elements.
 type SignedInteger interface {
 	~int8 | ~int16 | ~int32 | ~int64
@@ -93,9 +110,8 @@ type String interface {
 	~string
 }
 
-// pTypeForType returns the PType for the given type parameter. Used when constructing or validating arrays.
-
-func pTypeForType[T Integer | Float | String]() PType {
+// PTypeForType returns the PType for the given type parameter.
+func PTypeForType[T Integer | Float | String]() PType {
 	var t T
 	switch any(t).(type) {
 	case int8:

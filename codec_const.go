@@ -2,6 +2,7 @@ package btrblocks
 
 import (
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/axiomhq/btrblocks/array"
@@ -117,4 +118,24 @@ func constBodyArray[T Integer | Float | String](value T) array.Array[T] {
 	default:
 		return nil
 	}
+}
+
+func readConstCodec[T Integer | Float | String](r io.Reader, header Header) (Codec[T], error) {
+	if header.ChildCount != 0 {
+		return nil, fmt.Errorf("codec: const child count = %d, want 0", header.ChildCount)
+	}
+	if header.Length == 0 {
+		return nil, fmt.Errorf("codec: const length = 0")
+	}
+	arr, err := array.ReadArray[T](r)
+	if err != nil {
+		return nil, err
+	}
+	if header.BodySize != arr.BinarySize() {
+		return nil, fmt.Errorf("codec: const body size = %d, want %d", header.BodySize, arr.BinarySize())
+	}
+	if arr.Length() != 1 {
+		return nil, fmt.Errorf("codec: const body length = %d, want 1", arr.Length())
+	}
+	return &ConstCodec[T]{length: header.Length, value: arr.ValueAt(0)}, nil
 }

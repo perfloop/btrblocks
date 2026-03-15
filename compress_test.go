@@ -71,7 +71,7 @@ func TestCompressExportedFunctionsLargeCorpora(t *testing.T) {
 	t.Run("large string patterned", func(t *testing.T) {
 		data := makeLowCardinalityStringCorpus(largeCorpusSize, 8)
 		codec := Compress(data)
-		require.IsType(t, &DictCodec[string]{}, codec)
+		require.Contains(t, describeCodec(codec), "DictCodec[string,")
 		assertCodecMetadata(t, codec, len(data), PTypeString, 2)
 		assertCodecRoundTrip(t, codec, data)
 	})

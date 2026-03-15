@@ -103,6 +103,45 @@ func TestReadPrimitives(t *testing.T) {
 	})
 }
 
+func TestReadPrimitivesRejectsUnsupportedHeader(t *testing.T) {
+	tests := []struct {
+		name   string
+		header Header
+		want   string
+	}{
+		{
+			name:   "version",
+			header: Header{Version: 2, PType: PTypeInt32, Length: 0, BodySize: 0},
+			want:   "version",
+		},
+		{
+			name:   "flags",
+			header: Header{Version: 1, PType: PTypeInt32, Flags: 1, Length: 0, BodySize: 0},
+			want:   "flags",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			_, err := tt.header.WriteTo(&buf)
+			require.NoError(t, err)
+
+			_, err = ReadPrimitives[int32](bytes.NewReader(buf.Bytes()))
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
+func TestPrimitivesWriteToShortWrite(t *testing.T) {
+	arr := NewPrimitives([]uint16{7, 42, 1024})
+	writer := &shortWriter{remaining: int(arr.BinarySize()) - 1}
+
+	n, err := arr.WriteTo(writer)
+	require.ErrorIs(t, err, io.ErrShortWrite)
+	require.EqualValues(t, arr.BinarySize()-1, n)
+}
+
 func assertPrimitiveMetadata[T PrimitiveType](t *testing.T, values []T, wantPType PType, wantBinarySize uint64) {
 	t.Helper()
 

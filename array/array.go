@@ -28,7 +28,10 @@ func ReadArray[T Integer | Float | String](r io.Reader) (Array[T], error) {
 }
 
 func readArrayWithHeader[T Integer | Float | String](r io.Reader, header Header) (Array[T], error) {
-	expected := pTypeForType[T]()
+	if err := validateHeader(header); err != nil {
+		return nil, err
+	}
+	expected := PTypeForType[T]()
 	if header.PType != expected {
 		return nil, fmt.Errorf("array: PType %v does not match %T", header.PType, *new(T))
 	}

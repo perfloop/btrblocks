@@ -1,6 +1,8 @@
 package btrblocks
 
 import (
+	"bytes"
+	"encoding/binary"
 	"math"
 	"testing"
 
@@ -17,8 +19,10 @@ func TestDictCodecStringRoundTrip(t *testing.T) {
 	assertCodecMetadata(t, codec, len(data), PTypeString, 2)
 	assertCodecRoundTrip(t, codec, data)
 
-	require.EqualValues(t, 4, codec.values.Length())
-	require.Equal(t, uint64(len(data)), codec.indices.Length())
+	children := codec.Children()
+	require.Len(t, children, 2)
+	require.EqualValues(t, 4, requireChildCodecMetadata(t, children[0]).Length())
+	require.Equal(t, uint64(len(data)), requireChildCodecMetadata(t, children[1]).Length())
 }
 
 func TestDictCodecLargeCorpus(t *testing.T) {
@@ -30,8 +34,45 @@ func TestDictCodecLargeCorpus(t *testing.T) {
 	assertCodecMetadata(t, codec, len(data), PTypeUint64, 2)
 	assertCodecRoundTrip(t, codec, data)
 
-	require.EqualValues(t, 16, codec.values.Length())
-	require.Equal(t, uint64(len(data)), codec.indices.Length())
+	children := codec.Children()
+	require.Len(t, children, 2)
+	require.EqualValues(t, 16, requireChildCodecMetadata(t, children[0]).Length())
+	require.Equal(t, uint64(len(data)), requireChildCodecMetadata(t, children[1]).Length())
+}
+
+func TestDictCodecChoosesSmallestUnsignedIndexWidth(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []uint64
+		wantType PType
+	}{
+		{
+			name:     "uint8",
+			data:     makeLowCardinalityUint64Corpus(512, 16),
+			wantType: PTypeUint8,
+		},
+		{
+			name: "uint16",
+			data: func() []uint64 {
+				out := make([]uint64, 300)
+				for i := range out {
+					out[i] = uint64(i)
+				}
+				return out
+			}(),
+			wantType: PTypeUint16,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(tt.data), defaultDepth)
+			require.NoError(t, err)
+			children := codec.Children()
+			require.Len(t, children, 2)
+			require.Equal(t, tt.wantType, requireChildCodecMetadata(t, children[1]).PType())
+		})
+	}
 }
 
 func TestDictCodecFloat64SpecialValuesRoundTrip(t *testing.T) {
@@ -53,8 +94,10 @@ func TestDictCodecFloat64SpecialValuesRoundTrip(t *testing.T) {
 	assertCodecMetadata(t, codec, len(data), PTypeFloat64, 2)
 	assertCodecRoundTrip(t, codec, data)
 
-	require.EqualValues(t, countUniqueFloat64Bits(data), codec.values.Length())
-	require.Equal(t, uint64(len(data)), codec.indices.Length())
+	children := codec.Children()
+	require.Len(t, children, 2)
+	require.EqualValues(t, countUniqueFloat64Bits(data), requireChildCodecMetadata(t, children[0]).Length())
+	require.Equal(t, uint64(len(data)), requireChildCodecMetadata(t, children[1]).Length())
 }
 
 func TestDictCodecFloat64DistinguishesBitPatterns(t *testing.T) {
@@ -79,8 +122,10 @@ func TestDictCodecFloat64DistinguishesBitPatterns(t *testing.T) {
 	assertCodecMetadata(t, codec, len(data), PTypeFloat64, 2)
 	assertCodecRoundTrip(t, codec, data)
 
-	require.EqualValues(t, countUniqueFloat64Bits(data), codec.values.Length())
-	require.Equal(t, uint64(len(data)), codec.indices.Length())
+	children := codec.Children()
+	require.Len(t, children, 2)
+	require.EqualValues(t, countUniqueFloat64Bits(data), requireChildCodecMetadata(t, children[0]).Length())
+	require.Equal(t, uint64(len(data)), requireChildCodecMetadata(t, children[1]).Length())
 }
 
 func TestCompressFloatSpecialValuesRoundTrip(t *testing.T) {
@@ -136,6 +181,73 @@ func BenchmarkDictCodecValueAtLarge(b *testing.B) {
 		b.Fatalf("NewDictIntegerCodec() returned error: %v", err)
 	}
 	benchmarkValueAtLoop(b, codec, len(data))
+}
+
+func TestReadDictCodecZeroLengthRoundTrip(t *testing.T) {
+	codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe([]uint64{}), defaultDepth)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	_, err = codec.WriteTo(&buf)
+	require.NoError(t, err)
+
+	decoded, err := readCodec[uint64](bytes.NewReader(buf.Bytes()))
+	require.NoError(t, err)
+	assertCodecMetadata(t, decoded, 0, PTypeUint64, 2)
+}
+
+func TestReadDictCodecRejectsOutOfRangeIndices(t *testing.T) {
+	codec := &DictCodec[uint64, uint8]{
+		values:  NewRawCodec(array.NewPrimitivesUnsafe([]uint64{11})),
+		indices: NewRawCodec(array.NewPrimitivesUnsafe([]uint8{0, 1})),
+	}
+
+	var buf bytes.Buffer
+	_, err := codec.WriteTo(&buf)
+	require.NoError(t, err)
+
+	_, err = readCodec[uint64](bytes.NewReader(buf.Bytes()))
+	require.ErrorContains(t, err, "out of range")
+}
+
+func TestReadDictCodecRejectsMismatchedOuterMetadata(t *testing.T) {
+	codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe([]uint64{1, 2, 1}), defaultDepth)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	_, err = codec.WriteTo(&buf)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		mutate func([]byte)
+		want   string
+	}{
+		{
+			name: "body size",
+			mutate: func(data []byte) {
+				binary.LittleEndian.PutUint64(data[16:24], 1)
+			},
+			want: "dict body size",
+		},
+		{
+			name: "length",
+			mutate: func(data []byte) {
+				binary.LittleEndian.PutUint64(data[8:16], 4)
+			},
+			want: "dict length",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := append([]byte(nil), buf.Bytes()...)
+			tt.mutate(data)
+
+			_, err := readCodec[uint64](bytes.NewReader(data))
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
 }
 
 func countUniqueFloat64Bits(data []float64) int {

@@ -80,8 +80,14 @@ func (c *Strings[T]) header() Header {
 }
 
 func (c *Strings[T]) writeBody(w io.Writer) (int64, error) {
-	if err := binary.Write(w, binary.LittleEndian, uint32(len(c.buf))); err != nil {
-		return 0, err
+	var lenBuf [4]byte
+	binary.LittleEndian.PutUint32(lenBuf[:], uint32(len(c.buf)))
+	wn, err := w.Write(lenBuf[:])
+	if err != nil {
+		return int64(wn), err
+	}
+	if wn != len(lenBuf) {
+		return int64(wn), io.ErrShortWrite
 	}
 	n := int64(4)
 
@@ -98,13 +104,19 @@ func (c *Strings[T]) writeBody(w io.Writer) (int64, error) {
 		case uint64:
 			binary.LittleEndian.PutUint64(buf[:8], v)
 		}
-		wn, err := w.Write(buf[:width])
+		wn, err = w.Write(buf[:width])
 		if err != nil {
 			return n + int64(wn), err
 		}
+		if wn != width {
+			return n + int64(wn), io.ErrShortWrite
+		}
 		n += int64(wn)
 	}
-	wn, err := w.Write(c.buf)
+	wn, err = w.Write(c.buf)
+	if err == nil && wn != len(c.buf) {
+		err = io.ErrShortWrite
+	}
 	return n + int64(wn), err
 }
 
@@ -161,6 +173,9 @@ func readStringsWithHeader(r io.Reader, h Header) (Array[string], error) {
 func ReadStrings(r io.Reader) (Array[string], error) {
 	h, err := readHeader(r)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateHeader(h); err != nil {
 		return nil, err
 	}
 	return readStringsWithHeader(r, h)

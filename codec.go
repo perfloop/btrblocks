@@ -2,6 +2,7 @@ package btrblocks
 
 import (
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/axiomhq/btrblocks/array"
@@ -41,3 +42,47 @@ type Codec[T Integer | Float | String] interface {
 }
 
 type codecBuilder[T Integer | Float | String] func(array.Array[T], int) (Codec[T], error)
+
+func readCodec[T Integer | Float | String](r io.Reader) (Codec[T], error) {
+	header, err := readHeader(r)
+	if err != nil {
+		return nil, err
+	}
+	return readCodecWithHeader[T](r, header)
+}
+
+func readCodecWithHeader[T Integer | Float | String](r io.Reader, header Header) (Codec[T], error) {
+	if err := validateCodecHeader[T](header); err != nil {
+		return nil, err
+	}
+	switch header.Kind {
+	case CodecTypeConst:
+		return readConstCodec[T](r, header)
+	case CodecTypeRaw:
+		return readRawCodec[T](r, header)
+	case CodecTypeDict:
+		return readDictCodec[T](r, header)
+	case CodecTypeRunend:
+		return readRunendCodec[T](r, header)
+	case CodecTypeZigzag:
+		return readAnyZigzagCodec[T](r, header)
+	case CodecTypeBitpacking:
+		return readAnyBitpackingCodec[T](r, header)
+	default:
+		return nil, fmt.Errorf("codec: unknown codec type = %d", header.Kind)
+	}
+}
+
+func validateCodecHeader[T Integer | Float | String](header Header) error {
+	if header.Version != 1 {
+		return fmt.Errorf("codec: unsupported version = %d", header.Version)
+	}
+	if header.Flags != 0 {
+		return fmt.Errorf("codec: unsupported flags = 0x%x", header.Flags)
+	}
+	expected := pTypeForType[T]()
+	if header.ElemType != expected {
+		return fmt.Errorf("codec: element type = %v, want %v", header.ElemType, expected)
+	}
+	return nil
+}
