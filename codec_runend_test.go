@@ -9,24 +9,46 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRunendCodecUint64RoundTrip(t *testing.T) {
-	data := []uint64{5, 5, 5, 8, 8, 13, 13, 13}
-
-	codec, err := NewRunendIntegerCodec(data, defaultDepth)
-	if err != nil {
-		t.Fatalf("NewRunendIntegerCodec() returned error: %v", err)
+func TestRunendCodecRoundTrip(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []uint64
+		wantRuns uint64
+		wantEnds uint64
+	}{
+		{
+			name:     "small",
+			data:     []uint64{5, 5, 5, 8, 8, 13, 13, 13},
+			wantRuns: 3,
+			wantEnds: 2,
+		},
+		{
+			name:     "large",
+			data:     makeRunUint64Corpus(largeCorpusSize, 4096),
+			wantRuns: uint64((largeCorpusSize + 4096 - 1) / 4096),
+			wantEnds: uint64((largeCorpusSize+4096-1)/4096) - 1,
+		},
 	}
 
-	assertCodecMetadata(t, codec, len(data), PTypeUint64, 2)
-	assertCodecRoundTrip(t, codec, data)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			codec, err := NewRunendIntegerCodec(tt.data, defaultDepth)
+			if err != nil {
+				t.Fatalf("NewRunendIntegerCodec() returned error: %v", err)
+			}
 
-	children := codec.Children()
-	require.Len(t, children, 2)
-	if got := requireChildCodecMetadata(t, children[0]).Length(); got != 3 {
-		t.Fatalf("runs.Length() = %d, want 3", got)
-	}
-	if got := requireChildCodecMetadata(t, children[1]).Length(); got != 2 {
-		t.Fatalf("ends.Length() = %d, want 2", got)
+			assertCodecMetadata(t, codec, len(tt.data), PTypeUint64, 2)
+			assertCodecRoundTrip(t, codec, tt.data)
+
+			children := codec.Children()
+			require.Len(t, children, 2)
+			if got := requireChildCodecMetadata(t, children[0]).Length(); got != tt.wantRuns {
+				t.Fatalf("runs.Length() = %d, want %d", got, tt.wantRuns)
+			}
+			if got := requireChildCodecMetadata(t, children[1]).Length(); got != tt.wantEnds {
+				t.Fatalf("ends.Length() = %d, want %d", got, tt.wantEnds)
+			}
+		})
 	}
 }
 
@@ -63,28 +85,6 @@ func TestRunendCodecErrorsAndLargeCorpus(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
 		if _, err := NewRunendIntegerCodec([]uint64{}, defaultDepth); err != errDataEmpty {
 			t.Fatalf("NewRunendIntegerCodec() error = %v, want %v", err, errDataEmpty)
-		}
-	})
-
-	t.Run("large", func(t *testing.T) {
-		data := makeRunUint64Corpus(largeCorpusSize, 4096)
-
-		codec, err := NewRunendIntegerCodec(data, defaultDepth)
-		if err != nil {
-			t.Fatalf("NewRunendIntegerCodec() returned error: %v", err)
-		}
-
-		assertCodecMetadata(t, codec, len(data), PTypeUint64, 2)
-		assertCodecRoundTrip(t, codec, data)
-
-		wantRuns := uint64((len(data) + 4096 - 1) / 4096)
-		children := codec.Children()
-		require.Len(t, children, 2)
-		if got := requireChildCodecMetadata(t, children[0]).Length(); got != wantRuns {
-			t.Fatalf("runs.Length() = %d, want %d", got, wantRuns)
-		}
-		if got := requireChildCodecMetadata(t, children[1]).Length(); got != wantRuns-1 {
-			t.Fatalf("ends.Length() = %d, want %d", got, wantRuns-1)
 		}
 	})
 }

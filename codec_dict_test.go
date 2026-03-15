@@ -75,57 +75,62 @@ func TestDictCodecChoosesSmallestUnsignedIndexWidth(t *testing.T) {
 	}
 }
 
-func TestDictCodecFloat64SpecialValuesRoundTrip(t *testing.T) {
-	nan := math.Float64frombits(0x7ff8000000000001)
-	data := []float64{
-		nan,
-		nan,
-		math.Inf(1),
-		math.Inf(1),
-		math.Inf(-1),
-		math.Inf(-1),
-		1.5,
-		1.5,
+func TestDictCodecFloat64RoundTrip(t *testing.T) {
+	tests := []struct {
+		name string
+		data []float64
+	}{
+		{
+			name: "special values",
+			data: func() []float64 {
+				nan := math.Float64frombits(0x7ff8000000000001)
+				return []float64{
+					nan,
+					nan,
+					math.Inf(1),
+					math.Inf(1),
+					math.Inf(-1),
+					math.Inf(-1),
+					1.5,
+					1.5,
+				}
+			}(),
+		},
+		{
+			name: "distinguishes bit patterns",
+			data: func() []float64 {
+				posZero := 0.0
+				negZero := math.Copysign(0, -1)
+				nanA := math.Float64frombits(0x7ff8000000000001)
+				nanB := math.Float64frombits(0x7ff8000000000002)
+				return []float64{
+					posZero,
+					negZero,
+					nanA,
+					nanB,
+					posZero,
+					negZero,
+					nanA,
+					nanB,
+				}
+			}(),
+		},
 	}
 
-	codec, err := NewDictFloatCodec(array.NewPrimitivesUnsafe(data), defaultDepth)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			codec, err := NewDictFloatCodec(array.NewPrimitivesUnsafe(tt.data), defaultDepth)
+			require.NoError(t, err)
 
-	assertCodecMetadata(t, codec, len(data), PTypeFloat64, 2)
-	assertCodecRoundTrip(t, codec, data)
+			assertCodecMetadata(t, codec, len(tt.data), PTypeFloat64, 2)
+			assertCodecRoundTrip(t, codec, tt.data)
 
-	children := codec.Children()
-	require.Len(t, children, 2)
-	require.EqualValues(t, countUniqueFloat64Bits(data), requireChildCodecMetadata(t, children[0]).Length())
-	require.Equal(t, uint64(len(data)), requireChildCodecMetadata(t, children[1]).Length())
-}
-
-func TestDictCodecFloat64DistinguishesBitPatterns(t *testing.T) {
-	posZero := 0.0
-	negZero := math.Copysign(0, -1)
-	nanA := math.Float64frombits(0x7ff8000000000001)
-	nanB := math.Float64frombits(0x7ff8000000000002)
-	data := []float64{
-		posZero,
-		negZero,
-		nanA,
-		nanB,
-		posZero,
-		negZero,
-		nanA,
-		nanB,
+			children := codec.Children()
+			require.Len(t, children, 2)
+			require.EqualValues(t, countUniqueFloat64Bits(tt.data), requireChildCodecMetadata(t, children[0]).Length())
+			require.Equal(t, uint64(len(tt.data)), requireChildCodecMetadata(t, children[1]).Length())
+		})
 	}
-
-	codec, err := NewDictFloatCodec(array.NewPrimitivesUnsafe(data), defaultDepth)
-	require.NoError(t, err)
-
-	assertCodecMetadata(t, codec, len(data), PTypeFloat64, 2)
-	assertCodecRoundTrip(t, codec, data)
-
-	children := codec.Children()
-	require.Len(t, children, 2)
-	require.EqualValues(t, countUniqueFloat64Bits(data), requireChildCodecMetadata(t, children[0]).Length())
-	require.Equal(t, uint64(len(data)), requireChildCodecMetadata(t, children[1]).Length())
 }
 
 func TestCompressFloatSpecialValuesRoundTrip(t *testing.T) {

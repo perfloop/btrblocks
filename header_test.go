@@ -59,21 +59,22 @@ func TestHeaderWriteToShortWrite(t *testing.T) {
 	require.EqualValues(t, headerSize-1, n)
 }
 
-func TestBitpackingCodecWriteToShortWrite(t *testing.T) {
+func TestBitpackingCodecWriteToErrorPaths(t *testing.T) {
 	codec := NewBitpackingCodec([]uint8{0, 1, 2, 3, 4, 5, 6, 7})
 
-	writer := &shortWriter{remaining: headerSize + 1 + len(codec.buf) - 1}
-	n, err := codec.WriteTo(writer)
-	require.ErrorIs(t, err, io.ErrShortWrite)
-	require.EqualValues(t, headerSize+1+len(codec.buf)-1, n)
-}
+	t.Run("short write", func(t *testing.T) {
+		writer := &shortWriter{remaining: headerSize + 1 + len(codec.buf) - 1}
+		n, err := codec.WriteTo(writer)
+		require.ErrorIs(t, err, io.ErrShortWrite)
+		require.EqualValues(t, headerSize+1+len(codec.buf)-1, n)
+	})
 
-func TestBitpackingCodecWriteToCountsPartialErrorOnWidthByte(t *testing.T) {
-	codec := NewBitpackingCodec([]uint8{0, 1, 2, 3, 4, 5, 6, 7})
-	wantErr := errors.New("write failed")
-	writer := &partialErrorWriter{failCall: 2, err: wantErr}
+	t.Run("partial width byte error", func(t *testing.T) {
+		wantErr := errors.New("write failed")
+		writer := &partialErrorWriter{failCall: 2, err: wantErr}
 
-	n, err := codec.WriteTo(writer)
-	require.ErrorIs(t, err, wantErr)
-	require.EqualValues(t, headerSize+1, n)
+		n, err := codec.WriteTo(writer)
+		require.ErrorIs(t, err, wantErr)
+		require.EqualValues(t, headerSize+1, n)
+	})
 }
