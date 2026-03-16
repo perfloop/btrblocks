@@ -396,7 +396,7 @@ func TestDictDecodeReusesValuesScratch(t *testing.T) {
 	dst := make([]int64, 3)
 	scratch := make([]int64, 0, 3)
 
-	reused, err := codec.decodeWithValuesScratch(dst, scratch)
+	reused, err := codec.decode(dst, scratch)
 	require.NoError(t, err)
 	require.Equal(t, []int64{30, 20, 10}, dst)
 	require.Equal(t, 1, values.decodeCalls)

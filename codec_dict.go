@@ -115,9 +115,9 @@ func (d *DictCodec[T, U]) ValueAt(offset uint64) (T, error) {
 	return d.values.ValueAt(uint64(id))
 }
 
-// decodeWithValuesScratch materializes dictionary values only when the value
+// decode materializes dictionary values only when the value
 // table is small enough, or when the caller already provides reusable scratch.
-func (d *DictCodec[T, U]) decodeWithValuesScratch(dst []T, valuesScratch []T) ([]T, error) {
+func (d *DictCodec[T, U]) decode(dst []T, valuesScratch []T) ([]T, error) {
 	if err := validateDecodeLength(d.indices.Length(), len(dst)); err != nil {
 		return valuesScratch, err
 	}
@@ -153,7 +153,7 @@ func (d *DictCodec[T, U]) decodeWithValuesScratch(dst []T, valuesScratch []T) ([
 }
 
 func (d *DictCodec[T, U]) Decode(dst []T) error {
-	_, err := d.decodeWithValuesScratch(dst, nil)
+	_, err := d.decode(dst, nil)
 	return err
 }
 

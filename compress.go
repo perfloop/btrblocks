@@ -1,6 +1,7 @@
 package btrblocks
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/axiomhq/btrblocks/array"
@@ -76,10 +77,18 @@ func Read[T Integer | Float | String](rdr io.Reader) (Codec[T], error) {
 	return readCodecWithHeader[T](rdr, header)
 }
 
+// maxDecompressLength is the maximum number of elements Decompress will
+// allocate. Callers needing larger outputs should use Read and Decode
+// separately with their own allocation strategy.
+const maxDecompressLength = 1 << 30 // ~1 billion elements
+
 func Decompress[T Integer | Float | String](rdr io.Reader) ([]T, error) {
 	codec, err := readCodec[T](rdr)
 	if err != nil {
 		return nil, err
+	}
+	if codec.Length() > maxDecompressLength {
+		return nil, fmt.Errorf("codec: decompressed length %d exceeds limit %d; use Read+Decode for large data", codec.Length(), maxDecompressLength)
 	}
 	data := make([]T, codec.Length())
 	if err := codec.Decode(data); err != nil {
