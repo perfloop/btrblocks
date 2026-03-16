@@ -188,3 +188,15 @@ func TestReadRunendCodecRejectsUnexpectedBodySize(t *testing.T) {
 	_, err = readCodec[uint64](bytes.NewReader(data))
 	require.ErrorContains(t, err, "runend body size")
 }
+
+func TestRunendDecodeRejectsZeroLengthRun(t *testing.T) {
+	codec := &RunendCodec[uint64, uint8]{
+		length: 8,
+		runs:   NewRawCodec(array.NewPrimitivesUnsafe([]uint64{5, 8, 13})),
+		ends:   NewRawCodec(array.NewPrimitivesUnsafe([]uint8{3, 3})),
+	}
+
+	dst := make([]uint64, 8)
+	err := codec.Decode(dst)
+	require.ErrorContains(t, err, "out of range")
+}

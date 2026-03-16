@@ -13,6 +13,41 @@ type RunendCodec[T Integer | Float | String, U UnsignedInteger] struct {
 	ends   Codec[U]
 }
 
+func newRunendCodecFromSource[T Integer | Float | String](length uint64, valueAt func(uint64) T, cmpFn cmpFn[T], depth int) (Codec[T], error) {
+	if length == 0 {
+		return nil, errDataEmpty
+	}
+	if depth <= 0 {
+		return nil, errDepthExhausted
+	}
+	runs := make([]T, 0)
+	ends := make([]uint64, 0)
+	prev := valueAt(0)
+	runs = append(runs, prev)
+	for i := uint64(1); i < length; i++ {
+		val := valueAt(i)
+		if !cmpFn(prev, val) {
+			ends = append(ends, i)
+			runs = append(runs, val)
+			prev = val
+		}
+	}
+	maxEnd := uint64(0)
+	if len(ends) > 0 {
+		maxEnd = ends[len(ends)-1]
+	}
+	switch {
+	case maxEnd <= uint64(^uint8(0)):
+		return newRunendCodecWithWidth[T, uint8](length, runs, ends, depth)
+	case maxEnd <= uint64(^uint16(0)):
+		return newRunendCodecWithWidth[T, uint16](length, runs, ends, depth)
+	case maxEnd <= uint64(^uint32(0)):
+		return newRunendCodecWithWidth[T, uint32](length, runs, ends, depth)
+	default:
+		return newRunendCodecWithWidth[T, uint64](length, runs, ends, depth)
+	}
+}
+
 func newRunendCodecWithWidth[T Integer | Float | String, U UnsignedInteger](length uint64, runs []T, ends []uint64, depth int) (Codec[T], error) {
 	narrow := make([]U, len(ends))
 	for i, end := range ends {
@@ -24,38 +59,11 @@ func newRunendCodecWithWidth[T Integer | Float | String, U UnsignedInteger](leng
 }
 
 func newRunendCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T], depth int) (Codec[T], error) {
-	if len(data) == 0 {
-		return nil, errDataEmpty
-	}
-	if depth <= 0 {
-		return nil, errDepthExhausted
-	}
-	runs := make([]T, 0, len(data))
-	ends := make([]uint64, 0, len(data))
-	for i, val := range data {
-		if i == 0 {
-			runs = append(runs, val)
-			continue
-		}
-		if !cmpFn(runs[len(runs)-1], val) {
-			ends = append(ends, uint64(i))
-			runs = append(runs, val)
-		}
-	}
-	maxEnd := uint64(0)
-	if len(ends) > 0 {
-		maxEnd = ends[len(ends)-1]
-	}
-	switch {
-	case maxEnd <= uint64(^uint8(0)):
-		return newRunendCodecWithWidth[T, uint8](uint64(len(data)), runs, ends, depth)
-	case maxEnd <= uint64(^uint16(0)):
-		return newRunendCodecWithWidth[T, uint16](uint64(len(data)), runs, ends, depth)
-	case maxEnd <= uint64(^uint32(0)):
-		return newRunendCodecWithWidth[T, uint32](uint64(len(data)), runs, ends, depth)
-	default:
-		return newRunendCodecWithWidth[T, uint64](uint64(len(data)), runs, ends, depth)
-	}
+	return newRunendCodecFromSource(uint64(len(data)), func(i uint64) T { return data[i] }, cmpFn, depth)
+}
+
+func newRunendCodecFromArray[T Integer | Float | String](arr array.Array[T], cmpFn cmpFn[T], depth int) (Codec[T], error) {
+	return newRunendCodecFromSource(arr.Length(), arr.ValueAt, cmpFn, depth)
 }
 
 func NewRunendIntegerCodec[T Integer](data []T, depth int) (Codec[T], error) {
@@ -70,28 +78,94 @@ func NewRunendFloatCodec[T Float](data []T, depth int) (Codec[T], error) {
 	return newRunendCodec(data, cmpFloats[T], depth)
 }
 
+// fillRun writes value into dst[start:end] without any extra allocation.
+// It seeds the first slot and then doubles the initialized prefix with copy,
+// which is noticeably cheaper than one assignment per decoded value on long runs.
+func fillRun[T Integer | Float | String](dst []T, start, end int, value T) {
+	if start >= end {
+		return
+	}
+	dst[start] = value
+	filled := 1
+	for start+filled < end {
+		n := filled
+		if start+filled+n > end {
+			n = end - (start + filled)
+		}
+		copy(dst[start+filled:start+filled+n], dst[start:start+n])
+		filled += n
+	}
+}
+
+// Decode expands run-end encoded data into dst in a single forward pass
+// without output-sized scratch.
+//
+// ends[i] is the exclusive upper bound for runs[i]. The final run does not
+// store an end; it implicitly extends to Length().
+//
+// Slice indices stay in int because that is what dst requires. Serialized
+// run-end offsets are validated against len(dst) before converting from U.
 func (r *RunendCodec[T, U]) Decode(dst []T) error {
-	runs := make([]T, r.runs.Length())
-	if err := r.runs.Decode(runs); err != nil {
+	if err := validateDecodeLength(r.length, len(dst)); err != nil {
 		return err
 	}
-	ends := make([]U, r.ends.Length())
-	if err := r.ends.Decode(ends); err != nil {
+	runCount := r.runs.Length()
+	endCount := r.ends.Length()
+	if runCount == 0 {
+		return fmt.Errorf("codec: runend runs length = 0")
+	}
+	if runCount != endCount+1 {
+		return fmt.Errorf("codec: runend runs length = %d, want %d", runCount, endCount+1)
+	}
+
+	runsScratch, haveRunsScratch, err := decodeWithOptionalScratch(r.runs, nil)
+	if err != nil {
 		return err
 	}
+	endsScratch, haveEndsScratch, err := decodeWithOptionalScratch(r.ends, nil)
+	if err != nil {
+		return err
+	}
+
 	pos := 0
-	for i, run := range runs {
-		var end int
-		if i < len(ends) {
-			end = int(ends[i])
+	limit := len(dst)
+	for i := uint64(0); i < endCount; i++ {
+		var run T
+		if haveRunsScratch {
+			run = runsScratch[i]
 		} else {
-			end = len(dst)
+			run, err = r.runs.ValueAt(i)
+			if err != nil {
+				return err
+			}
 		}
-		for pos < end {
-			dst[pos] = run
-			pos++
+		var rawEnd U
+		if haveEndsScratch {
+			rawEnd = endsScratch[i]
+		} else {
+			rawEnd, err = r.ends.ValueAt(i)
+			if err != nil {
+				return err
+			}
+		}
+		end64 := uint64(rawEnd)
+		if end64 <= uint64(pos) || end64 > uint64(limit) {
+			return fmt.Errorf("codec: runend end %d = %d out of range for length %d", i, end64, len(dst))
+		}
+		end := int(end64)
+		fillRun(dst, pos, end, run)
+		pos = end
+	}
+	var last T
+	if haveRunsScratch {
+		last = runsScratch[endCount]
+	} else {
+		last, err = r.runs.ValueAt(endCount)
+		if err != nil {
+			return err
 		}
 	}
+	fillRun(dst, pos, limit, last)
 	return nil
 }
 

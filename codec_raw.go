@@ -43,6 +43,9 @@ func (r *RawCodec[T]) ValueAt(offset uint64) (T, error) {
 }
 
 func (r *RawCodec[T]) Decode(dst []T) error {
+	if err := validateDecodeLength(r.arr.Length(), len(dst)); err != nil {
+		return err
+	}
 	r.arr.CopyTo(dst)
 	return nil
 }

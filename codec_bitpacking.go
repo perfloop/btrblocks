@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"math/bits"
+
+	"github.com/axiomhq/btrblocks/array"
 )
 
 var (
@@ -20,13 +22,18 @@ type BitpackingCodec[T UnsignedInteger] struct {
 }
 
 func NewBitpackingCodec[T UnsignedInteger](data []T) *BitpackingCodec[T] {
-	codec := &BitpackingCodec[T]{length: uint64(len(data))}
-	if len(data) == 0 {
+	return newBitpackingCodecFromArray(array.NewPrimitivesUnsafe(data))
+}
+
+func newBitpackingCodecFromArray[T UnsignedInteger](arr array.Array[T]) *BitpackingCodec[T] {
+	codec := &BitpackingCodec[T]{length: arr.Length()}
+	if arr.Length() == 0 {
 		return codec
 	}
 
 	var max uint64
-	for _, value := range data {
+	for i := uint64(0); i < arr.Length(); i++ {
+		value := arr.ValueAt(i)
 		if v := uint64(value); v > max {
 			max = v
 		}
@@ -38,8 +45,9 @@ func NewBitpackingCodec[T UnsignedInteger](data []T) *BitpackingCodec[T] {
 	}
 
 	codec.buf = make([]byte, packedByteSize(codec.length, codec.bitWidth))
-	for i, value := range data {
-		packUnsigned(codec.buf, uint64(i)*uint64(codec.bitWidth), codec.bitWidth, uint64(value))
+	for i := uint64(0); i < arr.Length(); i++ {
+		value := arr.ValueAt(i)
+		packUnsigned(codec.buf, i*uint64(codec.bitWidth), codec.bitWidth, uint64(value))
 	}
 	return codec
 }
@@ -56,6 +64,9 @@ func (c *BitpackingCodec[T]) ValueAt(offset uint64) (T, error) {
 }
 
 func (c *BitpackingCodec[T]) Decode(dst []T) error {
+	if err := validateDecodeLength(c.length, len(dst)); err != nil {
+		return err
+	}
 	if c.bitWidth == 0 {
 		var zero T
 		for i := range dst {

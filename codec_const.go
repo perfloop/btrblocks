@@ -65,6 +65,9 @@ func (c *ConstCodec[T]) ValueAt(offset uint64) (T, error) {
 }
 
 func (c *ConstCodec[T]) Decode(dst []T) error {
+	if err := validateDecodeLength(c.length, len(dst)); err != nil {
+		return err
+	}
 	for i := range dst {
 		dst[i] = c.value
 	}

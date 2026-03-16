@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"unsafe"
 )
 
 var (
@@ -11,6 +12,10 @@ var (
 	errDepthExhausted   = errors.New("depth exhausted")
 	errDataEmpty        = errors.New("data is empty")
 )
+
+const maxDecodeScratchBytes = 512 << 10
+
+const decodeStringHeaderSize = uint64(unsafe.Sizeof(""))
 
 type CodecType uint8
 
@@ -35,13 +40,52 @@ type Codec[T Integer | Float | String] interface {
 	io.WriterTo
 	ValueAt(offset uint64) (T, error)
 	// Decode materializes all values into dst. len(dst) must equal Length().
-	// Significantly faster than per-element ValueAt for nested codecs (Dict,
-	// Runend, Zigzag) because it bulk-decodes children once and avoids repeated
-	// tree traversal.
+	// Nested codecs may choose between child Decode and ValueAt depending on
+	// their memory/cpu tradeoff.
 	Decode(dst []T) error
 	BinarySize() uint64
 	Length() uint64
 	PType() PType
+}
+
+func validateDecodeLength(length uint64, dstLen int) error {
+	if uint64(dstLen) != length {
+		return fmt.Errorf("codec: decode destination length = %d, want %d", dstLen, length)
+	}
+	return nil
+}
+
+func ensureDecodeScratch[T any](scratch []T, length uint64) []T {
+	if uint64(cap(scratch)) >= length {
+		return scratch[:length]
+	}
+	return make([]T, length)
+}
+
+func shouldMaterializeDecode[T Integer | Float | String](length uint64, scratchCap int) bool {
+	if uint64(scratchCap) >= length {
+		return true
+	}
+	pType := pTypeForType[T]()
+	if pType == PTypeString {
+		return length <= maxDecodeScratchBytes/decodeStringHeaderSize
+	}
+	width := pType.ByteWidth()
+	if width == 0 {
+		return false
+	}
+	return length <= maxDecodeScratchBytes/uint64(width)
+}
+
+func decodeWithOptionalScratch[T Integer | Float | String](codec Codec[T], scratch []T) ([]T, bool, error) {
+	if !shouldMaterializeDecode[T](codec.Length(), cap(scratch)) {
+		return scratch[:0], false, nil
+	}
+	scratch = ensureDecodeScratch(scratch, codec.Length())
+	if err := codec.Decode(scratch); err != nil {
+		return scratch[:0], false, err
+	}
+	return scratch, true, nil
 }
 
 func readCodec[T Integer | Float | String](r io.Reader) (Codec[T], error) {

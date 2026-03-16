@@ -80,7 +80,13 @@ func validateStringDataSize(total uint64) error {
 }
 
 func (c *Strings[T]) ValueAt(offset uint64) string {
-	return string(c.buf[c.offsets[offset]:c.offsets[offset+1]])
+	start := int(c.offsets[offset])
+	end := int(c.offsets[offset+1])
+	if start == end {
+		return ""
+	}
+	buf := c.buf[start:end]
+	return unsafe.String(unsafe.SliceData(buf), len(buf))
 }
 
 func (c *Strings[T]) CopyTo(dst []string) {

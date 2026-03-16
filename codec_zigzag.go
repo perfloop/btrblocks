@@ -3,12 +3,89 @@ package btrblocks
 import (
 	"fmt"
 	"io"
+	"unsafe"
 
 	"github.com/axiomhq/btrblocks/array"
 )
 
 type ZigzagCodec[T SignedInteger, U UnsignedInteger] struct {
 	data Codec[U]
+}
+
+// primitiveArrayHeaderSize mirrors array/header.go.
+const primitiveArrayHeaderSize = 20
+
+type zigzagEncodedArray[T SignedInteger, U UnsignedInteger] struct {
+	length  uint64
+	valueAt func(uint64) T
+}
+
+func (a zigzagEncodedArray[T, U]) encodedAt(offset uint64) U {
+	return U(zigzagEncodeValue(a.valueAt(offset)))
+}
+
+func (a zigzagEncodedArray[T, U]) ValueAt(offset uint64) U {
+	return a.encodedAt(offset)
+}
+
+func (a zigzagEncodedArray[T, U]) CopyTo(dst []U) {
+	for i := range dst {
+		dst[i] = a.encodedAt(uint64(i))
+	}
+}
+
+func (a zigzagEncodedArray[T, U]) BinarySize() uint64 {
+	return primitiveArrayHeaderSize + a.length*uint64(pTypeForType[U]().ByteWidth())
+}
+
+func (a zigzagEncodedArray[T, U]) Length() uint64 {
+	return a.length
+}
+
+func (a zigzagEncodedArray[T, U]) PType() PType {
+	return pTypeForType[U]()
+}
+
+func (a zigzagEncodedArray[T, U]) WriteTo(w io.Writer) (int64, error) {
+	bodySize := a.length * uint64(pTypeForType[U]().ByteWidth())
+	n, err := array.Header{
+		Version:  1,
+		PType:    array.PTypeForType[U](),
+		Length:   a.length,
+		BodySize: bodySize,
+	}.WriteTo(w)
+	if err != nil {
+		return n, err
+	}
+	if a.length == 0 {
+		return n, nil
+	}
+
+	const chunkElems = 1024
+	buf := make([]U, chunkElems)
+	width := int(unsafe.Sizeof(U(0)))
+	var written int64
+	for offset := uint64(0); offset < a.length; {
+		chunk := len(buf)
+		remaining := a.length - offset
+		if remaining < uint64(chunk) {
+			chunk = int(remaining)
+		}
+		for i := 0; i < chunk; i++ {
+			buf[i] = a.encodedAt(offset + uint64(i))
+		}
+		bytes := unsafe.Slice((*byte)(unsafe.Pointer(&buf[0])), chunk*width)
+		wn, err := w.Write(bytes)
+		written += int64(wn)
+		if err != nil {
+			return n + written, err
+		}
+		if wn != len(bytes) {
+			return n + written, io.ErrShortWrite
+		}
+		offset += uint64(chunk)
+	}
+	return n + written, nil
 }
 
 func zigzagEncode64(n int64) uint64 {
@@ -34,10 +111,10 @@ func zigzagEncodeValue[T SignedInteger](v T) uint64 {
 	}
 }
 
-func zigzagMaxEncodedValue[T SignedInteger](vals []T) uint64 {
+func zigzagMaxEncodedFromSource[T SignedInteger](length uint64, valueAt func(uint64) T) uint64 {
 	var max uint64
-	for _, v := range vals {
-		encoded := zigzagEncodeValue(v)
+	for i := uint64(0); i < length; i++ {
+		encoded := zigzagEncodeValue(valueAt(i))
 		if encoded > max {
 			max = encoded
 		}
@@ -45,29 +122,33 @@ func zigzagMaxEncodedValue[T SignedInteger](vals []T) uint64 {
 	return max
 }
 
-func newZigzagCodecWithWidth[T SignedInteger, U UnsignedInteger](vals []T, depth int) (Codec[T], error) {
-	data := make([]U, len(vals))
-	for i, v := range vals {
-		data[i] = U(zigzagEncodeValue(v))
-	}
-	inner := CompressInteger(array.NewPrimitivesUnsafe(data), depth-1)
+func newZigzagCodecWithWidthFromSource[T SignedInteger, U UnsignedInteger](length uint64, valueAt func(uint64) T, depth int) (Codec[T], error) {
+	inner := CompressInteger(zigzagEncodedArray[T, U]{length: length, valueAt: valueAt}, depth-1)
 	return &ZigzagCodec[T, U]{data: inner}, nil
 }
 
 func NewZigzagCodec[T SignedInteger](vals []T, depth int) (Codec[T], error) {
+	return newZigzagCodecFromSource(uint64(len(vals)), func(i uint64) T { return vals[i] }, depth)
+}
+
+func newZigzagCodecFromArray[T SignedInteger](arr array.Array[T], depth int) (Codec[T], error) {
+	return newZigzagCodecFromSource(arr.Length(), arr.ValueAt, depth)
+}
+
+func newZigzagCodecFromSource[T SignedInteger](length uint64, valueAt func(uint64) T, depth int) (Codec[T], error) {
 	if depth <= 0 {
 		return nil, errDepthExhausted
 	}
-	max := zigzagMaxEncodedValue(vals)
+	max := zigzagMaxEncodedFromSource(length, valueAt)
 	switch {
 	case max <= uint64(^uint8(0)):
-		return newZigzagCodecWithWidth[T, uint8](vals, depth)
+		return newZigzagCodecWithWidthFromSource[T, uint8](length, valueAt, depth)
 	case max <= uint64(^uint16(0)):
-		return newZigzagCodecWithWidth[T, uint16](vals, depth)
+		return newZigzagCodecWithWidthFromSource[T, uint16](length, valueAt, depth)
 	case max <= uint64(^uint32(0)):
-		return newZigzagCodecWithWidth[T, uint32](vals, depth)
+		return newZigzagCodecWithWidthFromSource[T, uint32](length, valueAt, depth)
 	default:
-		return newZigzagCodecWithWidth[T, uint64](vals, depth)
+		return newZigzagCodecWithWidthFromSource[T, uint64](length, valueAt, depth)
 	}
 }
 
@@ -93,11 +174,24 @@ func (z *ZigzagCodec[T, U]) ValueAt(offset uint64) (T, error) {
 }
 
 func (z *ZigzagCodec[T, U]) Decode(dst []T) error {
-	unsigned := make([]U, z.data.Length())
-	if err := z.data.Decode(unsigned); err != nil {
+	if err := validateDecodeLength(z.data.Length(), len(dst)); err != nil {
 		return err
 	}
-	for i, u := range unsigned {
+	dataScratch, haveDataScratch, err := decodeWithOptionalScratch(z.data, nil)
+	if err != nil {
+		return err
+	}
+	if haveDataScratch {
+		for i, u := range dataScratch {
+			dst[i] = T(zigzagDecode64(uint64(u)))
+		}
+		return nil
+	}
+	for i := range dst {
+		u, err := z.data.ValueAt(uint64(i))
+		if err != nil {
+			return err
+		}
 		dst[i] = T(zigzagDecode64(uint64(u)))
 	}
 	return nil

@@ -13,15 +13,15 @@ var (
 	_ Codec[uint64] = (*RawCodec[uint64])(nil)
 )
 
-type codecBuilder[T Integer | Float | String] func(array.Array[T], []T, int) (Codec[T], error)
+type codecBuilder[T Integer | Float | String] func(array.Array[T], int) (Codec[T], error)
 
-func selectBest[T Integer | Float | String](arr array.Array[T], data []T, depth int, builders []codecBuilder[T]) Codec[T] {
+func selectBest[T Integer | Float | String](arr array.Array[T], depth int, builders []codecBuilder[T]) Codec[T] {
 	var (
 		best     Codec[T]
 		bestSize uint64
 	)
 	for _, build := range builders {
-		if c, err := build(arr, data, depth); err == nil {
+		if c, err := build(arr, depth); err == nil {
 			s := c.BinarySize()
 			if best == nil || s < bestSize {
 				best = c
@@ -34,37 +34,35 @@ func selectBest[T Integer | Float | String](arr array.Array[T], data []T, depth 
 
 func integerBuilders[T Integer]() []codecBuilder[T] {
 	return []codecBuilder[T]{
-		func(arr array.Array[T], _ []T, _ int) (Codec[T], error) { return NewRawCodec(arr), nil },
-		func(arr array.Array[T], _ []T, _ int) (Codec[T], error) { return NewConstIntegerCodec(arr) },
-		func(arr array.Array[T], _ []T, depth int) (Codec[T], error) { return NewDictIntegerCodec(arr, depth) },
-		func(_ array.Array[T], data []T, depth int) (Codec[T], error) { return NewRunendIntegerCodec(data, depth) },
+		func(arr array.Array[T], _ int) (Codec[T], error) { return NewRawCodec(arr), nil },
+		func(arr array.Array[T], _ int) (Codec[T], error) { return NewConstIntegerCodec(arr) },
+		func(arr array.Array[T], depth int) (Codec[T], error) { return NewDictIntegerCodec(arr, depth) },
+		func(arr array.Array[T], depth int) (Codec[T], error) {
+			return newRunendCodecFromArray(arr, cmpIntegers[T], depth)
+		},
 	}
 }
 
 func signedIntegerBuilders[T SignedInteger]() []codecBuilder[T] {
 	return []codecBuilder[T]{
-		func(_ array.Array[T], data []T, depth int) (Codec[T], error) { return NewZigzagCodec(data, depth) },
+		func(arr array.Array[T], depth int) (Codec[T], error) { return newZigzagCodecFromArray(arr, depth) },
 	}
 }
 
 func unsignedIntegerBuilders[T UnsignedInteger]() []codecBuilder[T] {
 	return []codecBuilder[T]{
-		func(_ array.Array[T], data []T, _ int) (Codec[T], error) { return NewBitpackingCodec(data), nil },
+		func(arr array.Array[T], _ int) (Codec[T], error) { return newBitpackingCodecFromArray(arr), nil },
 	}
 }
 
 func CompressSignedInteger[T SignedInteger](arr array.Array[T], depth int) Codec[T] {
-	data := make([]T, arr.Length())
-	arr.CopyTo(data)
 	builders := append(integerBuilders[T](), signedIntegerBuilders[T]()...)
-	return selectBest(arr, data, depth, builders)
+	return selectBest(arr, depth, builders)
 }
 
 func CompressUnsignedInteger[T UnsignedInteger](arr array.Array[T], depth int) Codec[T] {
-	data := make([]T, arr.Length())
-	arr.CopyTo(data)
 	builders := append(integerBuilders[T](), unsignedIntegerBuilders[T]()...)
-	return selectBest(arr, data, depth, builders)
+	return selectBest(arr, depth, builders)
 }
 
 func CompressInteger[T Integer](arr array.Array[T], depth int) Codec[T] {

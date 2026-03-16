@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"github.com/stretchr/testify/require"
 )
@@ -42,6 +43,14 @@ func TestStringsMetadataAndHeader(t *testing.T) {
 	require.Equal(t, "", arr.ValueAt(1))
 	require.Equal(t, "lang", arr.ValueAt(2))
 	require.Equal(t, Header{Version: 1, PType: PTypeString, Length: 3, BodySize: 18}, arr.header())
+}
+
+func TestStringsValueAtUsesBackingBuffer(t *testing.T) {
+	arr := newStringsWithOffsets[uint16]([]string{"go", "", "lang"}, 6)
+	got := arr.ValueAt(2)
+
+	require.Equal(t, "lang", got)
+	require.Equal(t, unsafe.StringData(got), unsafe.SliceData(arr.buf[2:6]))
 }
 
 func TestStringsWriteToIncludesHeaderOffsetsAndBuffer(t *testing.T) {

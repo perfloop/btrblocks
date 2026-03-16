@@ -9,15 +9,15 @@ var (
 
 func floatBuilders[T Float]() []codecBuilder[T] {
 	return []codecBuilder[T]{
-		func(arr array.Array[T], _ []T, _ int) (Codec[T], error) { return NewRawCodec(arr), nil },
-		func(arr array.Array[T], _ []T, _ int) (Codec[T], error) { return NewConstFloatCodec(arr) },
-		func(arr array.Array[T], _ []T, depth int) (Codec[T], error) { return NewDictFloatCodec(arr, depth) },
-		func(_ array.Array[T], data []T, depth int) (Codec[T], error) { return NewRunendFloatCodec(data, depth) },
+		func(arr array.Array[T], _ int) (Codec[T], error) { return NewRawCodec(arr), nil },
+		func(arr array.Array[T], _ int) (Codec[T], error) { return NewConstFloatCodec(arr) },
+		func(arr array.Array[T], depth int) (Codec[T], error) { return NewDictFloatCodec(arr, depth) },
+		func(arr array.Array[T], depth int) (Codec[T], error) {
+			return newRunendCodecFromArray(arr, cmpFloats[T], depth)
+		},
 	}
 }
 
 func CompressFloat[T Float](arr array.Array[T], depth int) Codec[T] {
-	data := make([]T, arr.Length())
-	arr.CopyTo(data)
-	return selectBest(arr, data, depth, floatBuilders[T]())
+	return selectBest(arr, depth, floatBuilders[T]())
 }
