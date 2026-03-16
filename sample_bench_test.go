@@ -22,7 +22,7 @@ func BenchmarkSelectBest(b *testing.B) {
 			builders := append(integerBuilders[int32](), signedIntegerBuilders[int32]()...)
 			b.ResetTimer()
 			for range b.N {
-				selectBest(arr, defaultDepth, builders)
+				selectBest(arr, defaultDepth, builders, 0)
 			}
 		})
 
@@ -30,7 +30,7 @@ func BenchmarkSelectBest(b *testing.B) {
 			builders := append(integerBuilders[int32](), signedIntegerBuilders[int32]()...)
 			b.ResetTimer()
 			for range b.N {
-				selectBestAll(arr, defaultDepth, builders)
+				selectBestAll(arr, defaultDepth, builders, 0)
 			}
 		})
 	}

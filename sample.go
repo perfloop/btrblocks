@@ -1,6 +1,8 @@
 package btrblocks
 
-import "github.com/axiomhq/btrblocks/array"
+import (
+	"github.com/axiomhq/btrblocks/array"
+)
 
 const (
 	// sampleThreshold is the minimum array length before sampling kicks in.
@@ -10,68 +12,39 @@ const (
 	sampleChunks   = 16
 	samplePerChunk = 64
 	sampleSize     = sampleChunks * samplePerChunk // 1024
+
+	// LCG parameters for deterministic pseudo-random chunk offsets.
+	// Seed matches Vortex's StdRng::seed_from_u64(1234567890).
+	sampleSeed   = 1234567890
+	sampleLCGMul = 6364136223846793005
+	sampleLCGInc = 1442695040888963407
 )
 
 // sampleArray returns a stratified sample of arr: sampleChunks evenly-spaced
-// chunks of samplePerChunk consecutive elements each. The caller must ensure
-// arr.Length() >= sampleThreshold.
+// chunks of samplePerChunk consecutive elements each, with a deterministic
+// pseudo-random offset within each chunk (matching Vortex's seeded RNG
+// approach). The caller must ensure arr.Length() >= sampleThreshold.
 func sampleArray[T Integer | Float | String](arr array.Array[T]) array.Array[T] {
-	n := arr.Length()
-	chunkStride := n / sampleChunks
-	sampled := make([]T, 0, sampleSize)
+	var (
+		n           = arr.Length()
+		chunkStride = n / sampleChunks
+		sampled     = make([]T, 0, sampleSize)
+		rng         = uint64(sampleSeed)
+	)
+
 	for chunk := range uint64(sampleChunks) {
-		start := chunk * chunkStride
+		maxOffset := chunkStride - samplePerChunk
+		rng = rng*sampleLCGMul + sampleLCGInc
+		offset := uint64(0)
+		if maxOffset > 0 {
+			offset = (rng >> 33) % maxOffset
+		}
+		start := chunk*chunkStride + offset
 		for j := range uint64(samplePerChunk) {
 			sampled = append(sampled, arr.ValueAt(start+j))
 		}
 	}
 	return buildArray(sampled)
-}
-
-// sampleHints holds lightweight statistics computed from a sample for
-// stats-based builder rejection, matching Vortex's Level 1 filtering.
-type sampleHints struct {
-	distinctRatio float64 // distinctCount / length
-	avgRunLength  float64 // length / runCount
-}
-
-// shouldSkip returns true if a builder of the given kind should be skipped
-// based on sample statistics.
-func (h sampleHints) shouldSkip(kind CodecType) bool {
-	switch kind {
-	case CodecTypeDict:
-		// Vortex: skip if >50% distinct values.
-		return h.distinctRatio > 0.5
-	case CodecTypeRunend:
-		// Skip if average run length < 2 (almost no runs).
-		return h.avgRunLength < 2.0
-	default:
-		return false
-	}
-}
-
-// computeSampleHints scans a sample array once to compute lightweight stats.
-func computeSampleHints[T Integer | Float | String](arr array.Array[T]) sampleHints {
-	n := arr.Length()
-	if n == 0 {
-		return sampleHints{}
-	}
-	distinct := make(map[any]struct{}, 256)
-	runs := uint64(1)
-	prev := any(arr.ValueAt(0))
-	distinct[prev] = struct{}{}
-	for i := uint64(1); i < n; i++ {
-		v := any(arr.ValueAt(i))
-		distinct[v] = struct{}{}
-		if v != prev {
-			runs++
-			prev = v
-		}
-	}
-	return sampleHints{
-		distinctRatio: float64(len(distinct)) / float64(n),
-		avgRunLength:  float64(n) / float64(runs),
-	}
 }
 
 // buildArray wraps a []T into the appropriate array.Array[T].

@@ -9,15 +9,35 @@ var (
 
 func floatBuilders[T Float]() []taggedBuilder[T] {
 	return []taggedBuilder[T]{
-		{func(arr array.Array[T], _ int) (Codec[T], error) { return NewRawCodec(arr), nil }, CodecTypeRaw},
-		{func(arr array.Array[T], _ int) (Codec[T], error) { return NewConstFloatCodec(arr) }, CodecTypeConst},
-		{func(arr array.Array[T], depth int) (Codec[T], error) { return NewDictFloatCodec(arr, depth) }, CodecTypeDict},
-		{func(arr array.Array[T], depth int) (Codec[T], error) {
-			return NewRunendFloatCodec(arr, depth)
-		}, CodecTypeRunend},
+		{
+			kind:  CodecTypeRaw,
+			build: func(arr array.Array[T], _ int, _ codecExcludes) (Codec[T], error) { return NewRawCodec(arr), nil },
+		},
+		{
+			kind:  CodecTypeConst,
+			build: func(arr array.Array[T], _ int, _ codecExcludes) (Codec[T], error) { return NewConstFloatCodec(arr) },
+		},
+		{
+			kind: CodecTypeDict,
+			build: func(arr array.Array[T], depth int, excl codecExcludes) (Codec[T], error) {
+				return NewDictFloatCodec(arr, depth, excl)
+			},
+		},
+		{
+			kind: CodecTypeRunend,
+			build: func(arr array.Array[T], depth int, excl codecExcludes) (Codec[T], error) {
+				return NewRunendFloatCodec(arr, depth, excl)
+			},
+		},
+		{
+			kind: CodecTypeSparse,
+			build: func(arr array.Array[T], depth int, excl codecExcludes) (Codec[T], error) {
+				return NewSparseFloatCodec(arr, depth, excl)
+			},
+		},
 	}
 }
 
-func CompressFloat[T Float](arr array.Array[T], depth int) Codec[T] {
-	return selectBest(arr, depth, floatBuilders[T]())
+func CompressFloat[T Float](arr array.Array[T], depth int, excludes codecExcludes) Codec[T] {
+	return selectBest(arr, depth, floatBuilders[T](), excludes)
 }

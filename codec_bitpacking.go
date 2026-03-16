@@ -209,8 +209,12 @@ func readBitpackingCodec[T UnsignedInteger](r io.Reader, header Header) (Codec[T
 	if _, err := io.ReadFull(r, widthByte[:]); err != nil {
 		return nil, err
 	}
-	bitWidth := uint(widthByte[0])
-	maxBitWidth := uint(pTypeForType[T]().ByteWidth() * 8)
+
+	var (
+		bitWidth    = uint(widthByte[0])
+		maxBitWidth = uint(pTypeForType[T]().ByteWidth() * 8)
+	)
+
 	if maxBitWidth == 0 {
 		return nil, fmt.Errorf("codec: bitpacking unsupported for %T", *new(T))
 	}

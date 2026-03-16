@@ -62,9 +62,11 @@ func (a zigzagEncodedArray[T, U]) WriteTo(w io.Writer) (int64, error) {
 	}
 
 	const chunkElems = 1024
-	buf := make([]U, chunkElems)
-	width := int(unsafe.Sizeof(U(0)))
-	var written int64
+	var (
+		buf     = make([]U, chunkElems)
+		width   = int(unsafe.Sizeof(U(0)))
+		written int64
+	)
 	for offset := uint64(0); offset < a.length; {
 		chunk := len(buf)
 		remaining := a.length - offset
@@ -122,29 +124,30 @@ func zigzagMaxEncodedFromSource[T SignedInteger](length uint64, valueAt func(uin
 	return max
 }
 
-func newZigzagCodecWithWidthFromSource[T SignedInteger, U UnsignedInteger](length uint64, valueAt func(uint64) T, depth int) (Codec[T], error) {
-	inner := CompressInteger(zigzagEncodedArray[T, U]{length: length, valueAt: valueAt}, depth-1)
+func newZigzagCodecWithWidthFromSource[T SignedInteger, U UnsignedInteger](length uint64, valueAt func(uint64) T, depth int, excludes codecExcludes) (Codec[T], error) {
+	childExcl := excludes.with(CodecTypeZigzag, CodecTypeDict, CodecTypeRunend, CodecTypeSparse)
+	inner := CompressInteger(zigzagEncodedArray[T, U]{length: length, valueAt: valueAt}, depth-1, childExcl)
 	return &ZigzagCodec[T, U]{data: inner}, nil
 }
 
-func NewZigzagCodec[T SignedInteger](arr array.Array[T], depth int) (Codec[T], error) {
-	return newZigzagCodecFromSource(arr.Length(), arr.ValueAt, depth)
+func NewZigzagCodec[T SignedInteger](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
+	return newZigzagCodecFromSource(arr.Length(), arr.ValueAt, depth, excludes)
 }
 
-func newZigzagCodecFromSource[T SignedInteger](length uint64, valueAt func(uint64) T, depth int) (Codec[T], error) {
+func newZigzagCodecFromSource[T SignedInteger](length uint64, valueAt func(uint64) T, depth int, excludes codecExcludes) (Codec[T], error) {
 	if depth <= 0 {
 		return nil, errDepthExhausted
 	}
 	max := zigzagMaxEncodedFromSource(length, valueAt)
 	switch {
 	case max <= uint64(^uint8(0)):
-		return newZigzagCodecWithWidthFromSource[T, uint8](length, valueAt, depth)
+		return newZigzagCodecWithWidthFromSource[T, uint8](length, valueAt, depth, excludes)
 	case max <= uint64(^uint16(0)):
-		return newZigzagCodecWithWidthFromSource[T, uint16](length, valueAt, depth)
+		return newZigzagCodecWithWidthFromSource[T, uint16](length, valueAt, depth, excludes)
 	case max <= uint64(^uint32(0)):
-		return newZigzagCodecWithWidthFromSource[T, uint32](length, valueAt, depth)
+		return newZigzagCodecWithWidthFromSource[T, uint32](length, valueAt, depth, excludes)
 	default:
-		return newZigzagCodecWithWidthFromSource[T, uint64](length, valueAt, depth)
+		return newZigzagCodecWithWidthFromSource[T, uint64](length, valueAt, depth, excludes)
 	}
 }
 

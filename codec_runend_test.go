@@ -32,7 +32,7 @@ func TestRunendCodecRoundTrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			codec, err := NewRunendIntegerCodec(array.NewPrimitivesUnsafe(tt.data), defaultDepth)
+			codec, err := NewRunendIntegerCodec(array.NewPrimitivesUnsafe(tt.data), defaultDepth, 0)
 			if err != nil {
 				t.Fatalf("NewRunendIntegerCodec() returned error: %v", err)
 			}
@@ -72,7 +72,7 @@ func TestRunendCodecChoosesSmallestUnsignedEndWidth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			codec, err := NewRunendIntegerCodec(array.NewPrimitivesUnsafe(tt.data), defaultDepth)
+			codec, err := NewRunendIntegerCodec(array.NewPrimitivesUnsafe(tt.data), defaultDepth, 0)
 			require.NoError(t, err)
 			children := codec.Children()
 			require.Len(t, children, 2)
@@ -83,7 +83,7 @@ func TestRunendCodecChoosesSmallestUnsignedEndWidth(t *testing.T) {
 
 func TestRunendCodecErrorsAndLargeCorpus(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
-		if _, err := NewRunendIntegerCodec(array.NewPrimitivesUnsafe([]uint64{}), defaultDepth); err != errDataEmpty {
+		if _, err := NewRunendIntegerCodec(array.NewPrimitivesUnsafe([]uint64{}), defaultDepth, 0); err != errDataEmpty {
 			t.Fatalf("NewRunendIntegerCodec() error = %v, want %v", err, errDataEmpty)
 		}
 	})
@@ -110,7 +110,7 @@ func FuzzRunendCodecRoundTrip(f *testing.F) {
 			values = []uint64{0}
 		}
 
-		codec, err := NewRunendIntegerCodec(array.NewPrimitivesUnsafe(values), defaultDepth)
+		codec, err := NewRunendIntegerCodec(array.NewPrimitivesUnsafe(values), defaultDepth, 0)
 		if err != nil {
 			t.Fatalf("NewRunendIntegerCodec() returned error: %v", err)
 		}
@@ -123,13 +123,13 @@ func FuzzRunendCodecRoundTrip(f *testing.F) {
 func BenchmarkRunendCodecBuildLarge(b *testing.B) {
 	data := makeRunUint64Corpus(largeCorpusSize, 4096)
 	benchmarkBuildLoop(b, "runend", func(values []uint64) (Codec[uint64], error) {
-		return NewRunendIntegerCodec(array.NewPrimitivesUnsafe(values), defaultDepth)
+		return NewRunendIntegerCodec(array.NewPrimitivesUnsafe(values), defaultDepth, 0)
 	}, data)
 }
 
 func BenchmarkRunendCodecValueAtLarge(b *testing.B) {
 	data := makeRunUint64Corpus(largeCorpusSize, 4096)
-	codec, err := NewRunendIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth)
+	codec, err := NewRunendIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth, 0)
 	if err != nil {
 		b.Fatalf("NewRunendIntegerCodec() returned error: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestReadRunendCodecRejectsInvalidRunStructure(t *testing.T) {
 }
 
 func TestReadRunendCodecRejectsUnexpectedBodySize(t *testing.T) {
-	codec, err := NewRunendIntegerCodec(array.NewPrimitivesUnsafe([]uint64{5, 5, 8}), defaultDepth)
+	codec, err := NewRunendIntegerCodec(array.NewPrimitivesUnsafe([]uint64{5, 5, 8}), defaultDepth, 0)
 	require.NoError(t, err)
 
 	var buf bytes.Buffer

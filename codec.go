@@ -22,7 +22,23 @@ const (
 	CodecTypeRunend
 	CodecTypeZigzag
 	CodecTypeBitpacking
+	CodecTypeFoR
+	CodecTypeSparse
 )
+
+// codecExcludes is a bitmask of CodecType values to skip during compression.
+type codecExcludes uint16
+
+func (e codecExcludes) has(kind CodecType) bool {
+	return e&(1<<kind) != 0
+}
+
+func (e codecExcludes) with(kinds ...CodecType) codecExcludes {
+	for _, k := range kinds {
+		e |= 1 << k
+	}
+	return e
+}
 
 // Scheme is a untyped structural interface
 type Scheme interface {
@@ -73,6 +89,10 @@ func readCodecWithHeader[T Integer | Float | String](r io.Reader, header Header)
 		return readAnyZigzagCodec[T](r, header)
 	case CodecTypeBitpacking:
 		return readAnyBitpackingCodec[T](r, header)
+	case CodecTypeFoR:
+		return readAnyFoRCodec[T](r, header)
+	case CodecTypeSparse:
+		return readSparseCodec[T](r, header)
 	default:
 		return nil, fmt.Errorf("codec: unknown codec type = %d", header.Kind)
 	}

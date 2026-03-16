@@ -13,16 +13,18 @@ type RunendCodec[T Integer | Float | String, U UnsignedInteger] struct {
 	ends   Codec[U]
 }
 
-func newRunendCodecFromSource[T Integer | Float | String](length uint64, valueAt func(uint64) T, cmpFn cmpFn[T], depth int) (Codec[T], error) {
+func newRunendCodecFromSource[T Integer | Float | String](length uint64, valueAt func(uint64) T, cmpFn cmpFn[T], depth int, excludes codecExcludes) (Codec[T], error) {
 	if length == 0 {
 		return nil, errDataEmpty
 	}
 	if depth <= 0 {
 		return nil, errDepthExhausted
 	}
-	runs := make([]T, 0)
-	ends := make([]uint64, 0)
-	prev := valueAt(0)
+	var (
+		runs = make([]T, 0)
+		ends = make([]uint64, 0)
+		prev = valueAt(0)
+	)
 	runs = append(runs, prev)
 	for i := uint64(1); i < length; i++ {
 		val := valueAt(i)
@@ -38,36 +40,37 @@ func newRunendCodecFromSource[T Integer | Float | String](length uint64, valueAt
 	}
 	switch {
 	case maxEnd <= uint64(^uint8(0)):
-		return newRunendCodecWithWidth[T, uint8](length, runs, ends, depth)
+		return newRunendCodecWithWidth[T, uint8](length, runs, ends, depth, excludes)
 	case maxEnd <= uint64(^uint16(0)):
-		return newRunendCodecWithWidth[T, uint16](length, runs, ends, depth)
+		return newRunendCodecWithWidth[T, uint16](length, runs, ends, depth, excludes)
 	case maxEnd <= uint64(^uint32(0)):
-		return newRunendCodecWithWidth[T, uint32](length, runs, ends, depth)
+		return newRunendCodecWithWidth[T, uint32](length, runs, ends, depth, excludes)
 	default:
-		return newRunendCodecWithWidth[T, uint64](length, runs, ends, depth)
+		return newRunendCodecWithWidth[T, uint64](length, runs, ends, depth, excludes)
 	}
 }
 
-func newRunendCodecWithWidth[T Integer | Float | String, U UnsignedInteger](length uint64, runs []T, ends []uint64, depth int) (Codec[T], error) {
+func newRunendCodecWithWidth[T Integer | Float | String, U UnsignedInteger](length uint64, runs []T, ends []uint64, depth int, excludes codecExcludes) (Codec[T], error) {
 	narrow := make([]U, len(ends))
 	for i, end := range ends {
 		narrow[i] = U(end)
 	}
-	runsCodec := compress(runs, depth-1)
-	endsCodec := CompressInteger(array.NewPrimitivesUnsafe(narrow), depth-1)
+	childExcl := excludes.with(CodecTypeRunend, CodecTypeDict)
+	runsCodec := compress(runs, depth-1, childExcl)
+	endsCodec := CompressInteger(array.NewPrimitivesUnsafe(narrow), depth-1, childExcl)
 	return &RunendCodec[T, U]{length: length, runs: runsCodec, ends: endsCodec}, nil
 }
 
-func NewRunendIntegerCodec[T Integer](arr array.Array[T], depth int) (Codec[T], error) {
-	return newRunendCodecFromSource(arr.Length(), arr.ValueAt, cmpIntegers[T], depth)
+func NewRunendIntegerCodec[T Integer](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
+	return newRunendCodecFromSource(arr.Length(), arr.ValueAt, cmpIntegers[T], depth, excludes)
 }
 
-func NewRunendStringCodec[T String](arr array.Array[T], depth int) (Codec[T], error) {
-	return newRunendCodecFromSource(arr.Length(), arr.ValueAt, cmpStrings[T], depth)
+func NewRunendStringCodec[T String](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
+	return newRunendCodecFromSource(arr.Length(), arr.ValueAt, cmpStrings[T], depth, excludes)
 }
 
-func NewRunendFloatCodec[T Float](arr array.Array[T], depth int) (Codec[T], error) {
-	return newRunendCodecFromSource(arr.Length(), arr.ValueAt, cmpFloats[T], depth)
+func NewRunendFloatCodec[T Float](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
+	return newRunendCodecFromSource(arr.Length(), arr.ValueAt, cmpFloats[T], depth, excludes)
 }
 
 // fillRun writes value into dst[start:end] without any extra allocation.

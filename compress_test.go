@@ -17,21 +17,21 @@ func TestReadAndDecompressRunendLargeCorpora(t *testing.T) {
 
 	t.Run("int64", func(t *testing.T) {
 		data := makeRunInt64CycleCorpus(largeCorpusSize, runLength, cardinality)
-		codec, err := NewRunendIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth)
+		codec, err := NewRunendIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth, 0)
 		require.NoError(t, err)
 		assertReadAndDecompressLargeCorpus(t, data, codec, &RunendCodec[int64, uint32]{})
 	})
 
 	t.Run("float64", func(t *testing.T) {
 		data := makeRunFloat64CycleCorpus(largeCorpusSize, runLength, cardinality)
-		codec, err := NewRunendFloatCodec(array.NewPrimitivesUnsafe(data), defaultDepth)
+		codec, err := NewRunendFloatCodec(array.NewPrimitivesUnsafe(data), defaultDepth, 0)
 		require.NoError(t, err)
 		assertReadAndDecompressLargeCorpus(t, data, codec, &RunendCodec[float64, uint32]{})
 	})
 
 	t.Run("string", func(t *testing.T) {
 		data := makeRunStringCycleCorpus(largeCorpusSize, runLength, cardinality)
-		codec, err := NewRunendStringCodec(array.NewStrings(data), defaultDepth)
+		codec, err := NewRunendStringCodec(array.NewStrings(data), defaultDepth, 0)
 		require.NoError(t, err)
 		assertReadAndDecompressLargeCorpus(t, data, codec, &RunendCodec[string, uint32]{})
 	})
@@ -42,21 +42,21 @@ func TestReadAndDecompressDictLargeCorpora(t *testing.T) {
 
 	t.Run("int64", func(t *testing.T) {
 		data := makeLowCardinalityInt64Corpus(largeCorpusSize, cardinality)
-		codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth)
+		codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth, 0)
 		require.NoError(t, err)
 		assertReadAndDecompressLargeCorpus(t, data, codec, &DictCodec[int64, uint8]{})
 	})
 
 	t.Run("float64", func(t *testing.T) {
 		data := makeLowCardinalityFloat64Corpus(largeCorpusSize, cardinality)
-		codec, err := NewDictFloatCodec(array.NewPrimitivesUnsafe(data), defaultDepth)
+		codec, err := NewDictFloatCodec(array.NewPrimitivesUnsafe(data), defaultDepth, 0)
 		require.NoError(t, err)
 		assertReadAndDecompressLargeCorpus(t, data, codec, &DictCodec[float64, uint8]{})
 	})
 
 	t.Run("string", func(t *testing.T) {
 		data := makeLowCardinalityStringCorpus(largeCorpusSize, cardinality)
-		codec, err := NewDictStringCodec(array.NewStrings(data), defaultDepth)
+		codec, err := NewDictStringCodec(array.NewStrings(data), defaultDepth, 0)
 		require.NoError(t, err)
 		assertReadAndDecompressLargeCorpus(t, data, codec, &DictCodec[string, uint8]{})
 	})
@@ -178,7 +178,7 @@ func TestSchemeSelectionInteger(t *testing.T) {
 		for i := range values {
 			values[i] = 42
 		}
-		codec := CompressInteger[int32](array.NewPrimitivesUnsafe(values), defaultDepth)
+		codec := CompressInteger[int32](array.NewPrimitivesUnsafe(values), defaultDepth, 0)
 		require.IsType(t, (*ConstCodec[int32])(nil), codec)
 	})
 
@@ -187,7 +187,7 @@ func TestSchemeSelectionInteger(t *testing.T) {
 		for i := range values {
 			values[i] = uint32(i % 16)
 		}
-		codec := CompressUnsignedInteger[uint32](array.NewPrimitivesUnsafe(values), defaultDepth)
+		codec := CompressUnsignedInteger[uint32](array.NewPrimitivesUnsafe(values), defaultDepth, 0)
 		require.IsType(t, (*BitpackingCodec[uint32])(nil), codec)
 	})
 
@@ -199,7 +199,7 @@ func TestSchemeSelectionInteger(t *testing.T) {
 		for i := range values {
 			values[i] = numbers[(i*7+3)%len(numbers)]
 		}
-		codec := CompressInteger[int32](array.NewPrimitivesUnsafe(values), defaultDepth)
+		codec := CompressInteger[int32](array.NewPrimitivesUnsafe(values), defaultDepth, 0)
 		_, ok := codec.(*DictCodec[int32, uint8])
 		require.True(t, ok, "expected *DictCodec[int32, uint8], got %T", codec)
 	})
@@ -214,7 +214,7 @@ func TestSchemeSelectionInteger(t *testing.T) {
 				values[i*10+j] = v
 			}
 		}
-		codec := CompressInteger[int32](array.NewPrimitivesUnsafe(values), defaultDepth)
+		codec := CompressInteger[int32](array.NewPrimitivesUnsafe(values), defaultDepth, 0)
 		_, ok := codec.(*RunendCodec[int32, uint16])
 		require.True(t, ok, "expected *RunendCodec[int32, uint16], got %T", codec)
 	})
@@ -229,7 +229,7 @@ func TestSchemeSelectionFloat(t *testing.T) {
 		for i := range values {
 			values[i] = 42.5
 		}
-		codec := CompressFloat[float64](array.NewPrimitivesUnsafe(values), defaultDepth)
+		codec := CompressFloat[float64](array.NewPrimitivesUnsafe(values), defaultDepth, 0)
 		require.IsType(t, (*ConstCodec[float64])(nil), codec)
 	})
 
@@ -240,7 +240,7 @@ func TestSchemeSelectionFloat(t *testing.T) {
 		for i := range values {
 			values[i] = distinct[i%len(distinct)]
 		}
-		codec := CompressFloat[float64](array.NewPrimitivesUnsafe(values), defaultDepth)
+		codec := CompressFloat[float64](array.NewPrimitivesUnsafe(values), defaultDepth, 0)
 		_, ok := codec.(*DictCodec[float64, uint8])
 		require.True(t, ok, "expected *DictCodec[float64, uint8], got %T", codec)
 	})
@@ -255,7 +255,7 @@ func TestSchemeSelectionString(t *testing.T) {
 		for i := range values {
 			values[i] = "constant_value"
 		}
-		codec := CompressString(array.NewStrings(values), defaultDepth)
+		codec := CompressString(array.NewStrings(values), defaultDepth, 0)
 		require.IsType(t, (*ConstCodec[string])(nil), codec)
 	})
 
@@ -266,7 +266,7 @@ func TestSchemeSelectionString(t *testing.T) {
 		for i := range values {
 			values[i] = distinct[i%len(distinct)]
 		}
-		codec := CompressString(array.NewStrings(values), defaultDepth)
+		codec := CompressString(array.NewStrings(values), defaultDepth, 0)
 		_, ok := codec.(*DictCodec[string, uint8])
 		require.True(t, ok, "expected *DictCodec[string, uint8], got %T", codec)
 	})
@@ -276,13 +276,13 @@ func TestSchemeSelectionString(t *testing.T) {
 // produces a codec with length 0, mirroring vortex-btrblocks' test_empty.
 func TestCompressEmptyArray(t *testing.T) {
 	t.Run("integer", func(t *testing.T) {
-		codec := CompressInteger[int32](array.NewPrimitivesUnsafe([]int32{}), defaultDepth)
+		codec := CompressInteger[int32](array.NewPrimitivesUnsafe([]int32{}), defaultDepth, 0)
 		require.NotNil(t, codec)
 		require.Equal(t, uint64(0), codec.Length())
 	})
 
 	t.Run("float", func(t *testing.T) {
-		codec := CompressFloat[float32](array.NewPrimitivesUnsafe([]float32{}), defaultDepth)
+		codec := CompressFloat[float32](array.NewPrimitivesUnsafe([]float32{}), defaultDepth, 0)
 		require.NotNil(t, codec)
 		require.Equal(t, uint64(0), codec.Length())
 	})
@@ -296,7 +296,7 @@ func TestCompressFloatCyclingValues(t *testing.T) {
 	for i := range values {
 		values[i] = float32(i % 50)
 	}
-	codec := CompressFloat[float32](array.NewPrimitivesUnsafe(values), defaultDepth)
+	codec := CompressFloat[float32](array.NewPrimitivesUnsafe(values), defaultDepth, 0)
 	_, ok := codec.(*DictCodec[float32, uint8])
 	require.True(t, ok, "expected *DictCodec[float32, uint8], got %T", codec)
 	require.Equal(t, uint64(1024), codec.Length())
@@ -311,7 +311,7 @@ func TestCompressStringsDict(t *testing.T) {
 	for i := range values {
 		values[i] = distinct[i%len(distinct)]
 	}
-	codec := CompressString(array.NewStrings(values), defaultDepth)
+	codec := CompressString(array.NewStrings(values), defaultDepth, 0)
 	_, ok := codec.(*DictCodec[string, uint8])
 	require.True(t, ok, "expected *DictCodec[string, uint8], got %T", codec)
 	require.Equal(t, uint64(3000), codec.Length())
@@ -332,7 +332,7 @@ func TestCompressIntegerDictEncodable(t *testing.T) {
 		}
 	}
 	values = values[:64000]
-	codec := CompressInteger[int32](array.NewPrimitivesUnsafe(values), defaultDepth)
+	codec := CompressInteger[int32](array.NewPrimitivesUnsafe(values), defaultDepth, 0)
 	_, ok := codec.(*DictCodec[int32, uint8])
 	require.True(t, ok, "expected *DictCodec[int32, uint8], got %T", codec)
 }
@@ -348,7 +348,7 @@ func TestCompressNaNFloat(t *testing.T) {
 		0.0,
 		float32(math.Copysign(0, -1)),
 	}
-	codec := CompressFloat[float32](array.NewPrimitivesUnsafe(special), defaultDepth)
+	codec := CompressFloat[float32](array.NewPrimitivesUnsafe(special), defaultDepth, 0)
 	require.NotNil(t, codec)
 	require.Equal(t, uint64(len(special)), codec.Length())
 

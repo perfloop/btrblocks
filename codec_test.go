@@ -233,7 +233,7 @@ func TestCompressPathsAvoidCopyTo(t *testing.T) {
 			base:   array.NewPrimitivesUnsafe([]int64{-3, -2, -1, 0, 1, 2, 3}),
 			copied: &copied,
 		}
-		codec := CompressInteger[int64](arr, defaultDepth)
+		codec := CompressInteger[int64](arr, defaultDepth, 0)
 		require.NotNil(t, codec)
 		require.False(t, copied)
 	})
@@ -244,7 +244,7 @@ func TestCompressPathsAvoidCopyTo(t *testing.T) {
 			base:   array.NewPrimitivesUnsafe([]uint64{0, 1, 3, 7, 15, 31}),
 			copied: &copied,
 		}
-		codec := CompressInteger[uint64](arr, defaultDepth)
+		codec := CompressInteger[uint64](arr, defaultDepth, 0)
 		require.NotNil(t, codec)
 		require.False(t, copied)
 	})
@@ -255,7 +255,7 @@ func TestCompressPathsAvoidCopyTo(t *testing.T) {
 			base:   array.NewPrimitivesUnsafe([]float64{1.5, 1.5, 2.5, 2.5}),
 			copied: &copied,
 		}
-		codec := CompressFloat[float64](arr, defaultDepth)
+		codec := CompressFloat[float64](arr, defaultDepth, 0)
 		require.NotNil(t, codec)
 		require.False(t, copied)
 	})
@@ -266,7 +266,7 @@ func TestCompressPathsAvoidCopyTo(t *testing.T) {
 			base:   array.NewStrings([]string{"aa", "aa", "bb", "bb"}),
 			copied: &copied,
 		}
-		codec := CompressString(arr, defaultDepth)
+		codec := CompressString(arr, defaultDepth, 0)
 		require.NotNil(t, codec)
 		require.False(t, copied)
 	})

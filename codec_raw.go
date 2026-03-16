@@ -60,9 +60,11 @@ func (r *RawCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
 		Length:     r.arr.Length(),
 		BodySize:   r.arr.BinarySize(),
 	}.WriteTo(w)
+
 	if err != nil {
 		return n, err
 	}
+
 	nn, err := r.arr.WriteTo(w)
 	return n + int64(nn), err
 }

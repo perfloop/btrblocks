@@ -13,7 +13,7 @@ import (
 func TestDictCodecStringRoundTrip(t *testing.T) {
 	data := []string{"east", "west", "east", "north", "west", "east", "south", "north"}
 
-	codec, err := NewDictStringCodec(array.NewStrings(data), defaultDepth)
+	codec, err := NewDictStringCodec(array.NewStrings(data), defaultDepth, 0)
 	require.NoError(t, err)
 
 	assertCodecMetadata(t, codec, len(data), PTypeString, 2)
@@ -28,7 +28,7 @@ func TestDictCodecStringRoundTrip(t *testing.T) {
 func TestDictCodecLargeCorpus(t *testing.T) {
 	data := makeLowCardinalityUint64Corpus(largeCorpusSize, 16)
 
-	codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth)
+	codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth, 0)
 	require.NoError(t, err)
 
 	assertCodecMetadata(t, codec, len(data), PTypeUint64, 2)
@@ -66,7 +66,7 @@ func TestDictCodecChoosesSmallestUnsignedIndexWidth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(tt.data), defaultDepth)
+			codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(tt.data), defaultDepth, 0)
 			require.NoError(t, err)
 			children := codec.Children()
 			require.Len(t, children, 2)
@@ -119,7 +119,7 @@ func TestDictCodecFloat64RoundTrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			codec, err := NewDictFloatCodec(array.NewPrimitivesUnsafe(tt.data), defaultDepth)
+			codec, err := NewDictFloatCodec(array.NewPrimitivesUnsafe(tt.data), defaultDepth, 0)
 			require.NoError(t, err)
 
 			assertCodecMetadata(t, codec, len(tt.data), PTypeFloat64, 2)
@@ -164,7 +164,7 @@ func FuzzDictCodecRoundTrip(f *testing.F) {
 			values[i] = uint64((int(b) + i) % 32)
 		}
 
-		codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(values), defaultDepth)
+		codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(values), defaultDepth, 0)
 		require.NoError(t, err)
 
 		assertCodecMetadata(t, codec, len(values), PTypeUint64, 2)
@@ -175,13 +175,13 @@ func FuzzDictCodecRoundTrip(f *testing.F) {
 func BenchmarkDictCodecBuildLarge(b *testing.B) {
 	data := makeLowCardinalityUint64Corpus(largeCorpusSize, 16)
 	benchmarkBuildLoop(b, "dict", func(values []uint64) (Codec[uint64], error) {
-		return NewDictIntegerCodec(array.NewPrimitivesUnsafe(values), defaultDepth)
+		return NewDictIntegerCodec(array.NewPrimitivesUnsafe(values), defaultDepth, 0)
 	}, data)
 }
 
 func BenchmarkDictCodecValueAtLarge(b *testing.B) {
 	data := makeLowCardinalityUint64Corpus(largeCorpusSize, 16)
-	codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth)
+	codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth, 0)
 	if err != nil {
 		b.Fatalf("NewDictIntegerCodec() returned error: %v", err)
 	}
@@ -189,7 +189,7 @@ func BenchmarkDictCodecValueAtLarge(b *testing.B) {
 }
 
 func TestReadDictCodecZeroLengthRoundTrip(t *testing.T) {
-	codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe([]uint64{}), defaultDepth)
+	codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe([]uint64{}), defaultDepth, 0)
 	require.NoError(t, err)
 
 	var buf bytes.Buffer
@@ -222,7 +222,7 @@ func TestDictCodecDecodePanicsOnOutOfRangeIndices(t *testing.T) {
 }
 
 func TestReadDictCodecRejectsMismatchedOuterMetadata(t *testing.T) {
-	codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe([]uint64{1, 2, 1}), defaultDepth)
+	codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe([]uint64{1, 2, 1}), defaultDepth, 0)
 	require.NoError(t, err)
 
 	var buf bytes.Buffer
@@ -274,7 +274,7 @@ func BenchmarkDictDecode(b *testing.B) {
 	for _, size := range []int{1 << 16, 1 << 20} {
 		b.Run(sizeLabel(size), func(b *testing.B) {
 			data := makeLowCardinalityUint64Corpus(size, 16)
-			codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth)
+			codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth, 0)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -296,7 +296,7 @@ func BenchmarkReadDictCodec(b *testing.B) {
 	for _, size := range []int{1 << 16, 1 << 20} {
 		b.Run(sizeLabel(size), func(b *testing.B) {
 			data := makeLowCardinalityUint64Corpus(size, 16)
-			codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth)
+			codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth, 0)
 			if err != nil {
 				b.Fatal(err)
 			}

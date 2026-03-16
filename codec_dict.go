@@ -13,17 +13,17 @@ type DictCodec[T Integer | Float | String, U UnsignedInteger] struct {
 	indices Codec[U]
 }
 
-func newDictCodecWithWidth[T Integer | Float | String, U UnsignedInteger](values []T, indices []uint64, depth int) (Codec[T], error) {
+func newDictCodecWithWidth[T Integer | Float | String, U UnsignedInteger](values []T, indices []uint64, depth int, excludes codecExcludes) (Codec[T], error) {
 	narrow := make([]U, len(indices))
 	for i, index := range indices {
 		narrow[i] = U(index)
 	}
-	valuesCodec := compress(values, depth-1)
-	indicesCodec := CompressInteger(array.NewPrimitivesUnsafe(narrow), depth-1)
+	valuesCodec := compress(values, depth-1, excludes)
+	indicesCodec := CompressInteger(array.NewPrimitivesUnsafe(narrow), depth-1, excludes.with(CodecTypeDict))
 	return &DictCodec[T, U]{values: valuesCodec, indices: indicesCodec}, nil
 }
 
-func newDictCodec[T Integer | String](arr array.Array[T], depth int) (Codec[T], error) {
+func newDictCodec[T Integer | String](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
 	if depth <= 0 {
 		return nil, errDepthExhausted
 	}
@@ -50,17 +50,17 @@ func newDictCodec[T Integer | String](arr array.Array[T], depth int) (Codec[T], 
 	}
 	switch {
 	case maxIndex <= uint64(^uint8(0)):
-		return newDictCodecWithWidth[T, uint8](values, indices, depth)
+		return newDictCodecWithWidth[T, uint8](values, indices, depth, excludes)
 	case maxIndex <= uint64(^uint16(0)):
-		return newDictCodecWithWidth[T, uint16](values, indices, depth)
+		return newDictCodecWithWidth[T, uint16](values, indices, depth, excludes)
 	case maxIndex <= uint64(^uint32(0)):
-		return newDictCodecWithWidth[T, uint32](values, indices, depth)
+		return newDictCodecWithWidth[T, uint32](values, indices, depth, excludes)
 	default:
-		return newDictCodecWithWidth[T, uint64](values, indices, depth)
+		return newDictCodecWithWidth[T, uint64](values, indices, depth, excludes)
 	}
 }
 
-func NewDictFloatCodec[T Float](arr array.Array[T], depth int) (Codec[T], error) {
+func NewDictFloatCodec[T Float](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
 	if depth <= 0 {
 		return nil, errDepthExhausted
 	}
@@ -88,22 +88,22 @@ func NewDictFloatCodec[T Float](arr array.Array[T], depth int) (Codec[T], error)
 	}
 	switch {
 	case maxIndex <= uint64(^uint8(0)):
-		return newDictCodecWithWidth[T, uint8](values, indices, depth)
+		return newDictCodecWithWidth[T, uint8](values, indices, depth, excludes)
 	case maxIndex <= uint64(^uint16(0)):
-		return newDictCodecWithWidth[T, uint16](values, indices, depth)
+		return newDictCodecWithWidth[T, uint16](values, indices, depth, excludes)
 	case maxIndex <= uint64(^uint32(0)):
-		return newDictCodecWithWidth[T, uint32](values, indices, depth)
+		return newDictCodecWithWidth[T, uint32](values, indices, depth, excludes)
 	default:
-		return newDictCodecWithWidth[T, uint64](values, indices, depth)
+		return newDictCodecWithWidth[T, uint64](values, indices, depth, excludes)
 	}
 }
 
-func NewDictIntegerCodec[T Integer](arr array.Array[T], depth int) (Codec[T], error) {
-	return newDictCodec(arr, depth)
+func NewDictIntegerCodec[T Integer](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
+	return newDictCodec(arr, depth, excludes)
 }
 
-func NewDictStringCodec[T String](arr array.Array[T], depth int) (Codec[T], error) {
-	return newDictCodec(arr, depth)
+func NewDictStringCodec[T String](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
+	return newDictCodec(arr, depth, excludes)
 }
 
 func (d *DictCodec[T, U]) ValueAt(offset uint64) (T, error) {
