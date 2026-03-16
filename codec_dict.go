@@ -115,46 +115,22 @@ func (d *DictCodec[T, U]) ValueAt(offset uint64) (T, error) {
 	return d.values.ValueAt(uint64(id))
 }
 
-// decode materializes dictionary values only when the value
-// table is small enough, or when the caller already provides reusable scratch.
-func (d *DictCodec[T, U]) decode(dst []T, valuesScratch []T) ([]T, error) {
-	if err := validateDecodeLength(d.indices.Length(), len(dst)); err != nil {
-		return valuesScratch, err
-	}
-	materialized, ok, err := decodeWithOptionalScratch(d.values, valuesScratch)
-	if err != nil {
-		return materialized[:0], err
-	}
-	if !ok {
-		for i := range dst {
-			idx, err := d.indices.ValueAt(uint64(i))
-			if err != nil {
-				return valuesScratch, err
-			}
-			value, err := d.values.ValueAt(uint64(idx))
-			if err != nil {
-				return valuesScratch, err
-			}
-			dst[i] = value
-		}
-		return valuesScratch[:0], nil
-	}
-	for i := range dst {
-		idx, err := d.indices.ValueAt(uint64(i))
-		if err != nil {
-			return materialized[:0], err
-		}
-		if uint64(idx) >= uint64(len(materialized)) {
-			return materialized[:0], fmt.Errorf("codec: dict index %d = %d out of range for %d values", i, idx, len(materialized))
-		}
-		dst[i] = materialized[idx]
-	}
-	return materialized, nil
-}
-
 func (d *DictCodec[T, U]) Decode(dst []T) error {
-	_, err := d.decode(dst, nil)
-	return err
+	if err := validateDecodeLength(d.indices.Length(), len(dst)); err != nil {
+		return err
+	}
+	values := make([]T, d.values.Length())
+	if err := d.values.Decode(values); err != nil {
+		return err
+	}
+	indices := make([]U, d.indices.Length())
+	if err := d.indices.Decode(indices); err != nil {
+		return err
+	}
+	for i, idx := range indices {
+		dst[i] = values[idx]
+	}
+	return nil
 }
 
 func (d *DictCodec[T, U]) WriteTo(w io.Writer) (n int64, err error) {
@@ -205,26 +181,10 @@ func readDictCodecWithIndices[T Integer | Float | String, U UnsignedInteger](r i
 	if err != nil {
 		return nil, err
 	}
-	if err := validateDictCodec(header.Length, values, indices); err != nil {
-		return nil, err
+	if indices.Length() != header.Length {
+		return nil, fmt.Errorf("codec: dict length = %d, want %d", header.Length, indices.Length())
 	}
 	return &DictCodec[T, U]{values: values, indices: indices}, nil
-}
-
-func validateDictCodec[T Integer | Float | String, U UnsignedInteger](length uint64, values Codec[T], indices Codec[U]) error {
-	if indices.Length() != length {
-		return fmt.Errorf("codec: dict length = %d, want %d", length, indices.Length())
-	}
-	for i := uint64(0); i < indices.Length(); i++ {
-		index, err := indices.ValueAt(i)
-		if err != nil {
-			return err
-		}
-		if uint64(index) >= values.Length() {
-			return fmt.Errorf("codec: dict index %d = %d out of range for %d values", i, index, values.Length())
-		}
-	}
-	return nil
 }
 
 func readDictCodec[T Integer | Float | String](r io.Reader, header Header) (Codec[T], error) {

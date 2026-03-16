@@ -75,8 +75,9 @@ func (c *ConstCodec[T]) Decode(dst []T) error {
 }
 
 func (c *ConstCodec[T]) BinarySize() uint64 {
-	return uint64(headerSize) + constBodyArray(c.value).BinarySize()
+	return uint64(headerSize) + constBodyBinarySize(c.value)
 }
+
 func (c *ConstCodec[T]) Length() uint64     { return c.length }
 func (c *ConstCodec[T]) PType() PType       { return pTypeForType[T]() }
 func (c *ConstCodec[T]) Children() []Scheme { return nil }
@@ -98,6 +99,27 @@ func (c *ConstCodec[T]) WriteTo(w io.Writer) (int64, error) {
 
 	nn, err := body.WriteTo(w)
 	return n + int64(nn), err
+}
+
+// constBodyBinarySize returns the serialized size of a 1-element array without allocating.
+func constBodyBinarySize[T Integer | Float | String](value T) uint64 {
+	var zero T
+	switch any(zero).(type) {
+	case string:
+		slen := uint64(len(any(value).(string)))
+		var offsetWidth uint64
+		switch {
+		case slen <= ^uint64(uint8(0)):
+			offsetWidth = 1
+		case slen <= ^uint64(uint16(0)):
+			offsetWidth = 2
+		default:
+			offsetWidth = 4
+		}
+		return uint64(primitiveArrayHeaderSize) + 4 + 2*offsetWidth + slen
+	default:
+		return uint64(primitiveArrayHeaderSize) + uint64(pTypeForType[T]().ByteWidth())
+	}
 }
 
 func constBodyArray[T Integer | Float | String](value T) array.Array[T] {

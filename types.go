@@ -47,35 +47,7 @@ func cmpFloats[T Float](a, b T) bool {
 	}
 }
 
-func cmpIntegers[T Integer](a, b T) bool {
-	switch av := any(a).(type) {
-	case int:
-		return av == any(b).(int)
-	case int8:
-		return av == any(b).(int8)
-	case int16:
-		return av == any(b).(int16)
-	case int32:
-		return av == any(b).(int32)
-	case int64:
-		return av == any(b).(int64)
-	case uint:
-		return av == any(b).(uint)
-	case uint8:
-		return av == any(b).(uint8)
-	case uint16:
-		return av == any(b).(uint16)
-	case uint32:
-		return av == any(b).(uint32)
-	case uint64:
-		return av == any(b).(uint64)
-	default:
-		return false
-	}
-}
-
-func cmpStrings[T String](a, b T) bool {
-	return a == b
-}
+func cmpIntegers[T Integer](a, b T) bool { return a == b }
+func cmpStrings[T String](a, b T) bool   { return a == b }
 
 type cmpFn[T Integer | Float | String] func(a, b T) bool

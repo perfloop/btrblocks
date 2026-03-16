@@ -21,11 +21,7 @@ type BitpackingCodec[T UnsignedInteger] struct {
 	buf      []byte
 }
 
-func NewBitpackingCodec[T UnsignedInteger](data []T) *BitpackingCodec[T] {
-	return newBitpackingCodecFromArray(array.NewPrimitivesUnsafe(data))
-}
-
-func newBitpackingCodecFromArray[T UnsignedInteger](arr array.Array[T]) *BitpackingCodec[T] {
+func NewBitpackingCodec[T UnsignedInteger](arr array.Array[T]) *BitpackingCodec[T] {
 	codec := &BitpackingCodec[T]{length: arr.Length()}
 	if arr.Length() == 0 {
 		return codec

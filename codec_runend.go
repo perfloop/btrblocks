@@ -58,24 +58,16 @@ func newRunendCodecWithWidth[T Integer | Float | String, U UnsignedInteger](leng
 	return &RunendCodec[T, U]{length: length, runs: runsCodec, ends: endsCodec}, nil
 }
 
-func newRunendCodec[T Integer | Float | String](data []T, cmpFn cmpFn[T], depth int) (Codec[T], error) {
-	return newRunendCodecFromSource(uint64(len(data)), func(i uint64) T { return data[i] }, cmpFn, depth)
+func NewRunendIntegerCodec[T Integer](arr array.Array[T], depth int) (Codec[T], error) {
+	return newRunendCodecFromSource(arr.Length(), arr.ValueAt, cmpIntegers[T], depth)
 }
 
-func newRunendCodecFromArray[T Integer | Float | String](arr array.Array[T], cmpFn cmpFn[T], depth int) (Codec[T], error) {
-	return newRunendCodecFromSource(arr.Length(), arr.ValueAt, cmpFn, depth)
+func NewRunendStringCodec[T String](arr array.Array[T], depth int) (Codec[T], error) {
+	return newRunendCodecFromSource(arr.Length(), arr.ValueAt, cmpStrings[T], depth)
 }
 
-func NewRunendIntegerCodec[T Integer](data []T, depth int) (Codec[T], error) {
-	return newRunendCodec(data, cmpIntegers[T], depth)
-}
-
-func NewRunendStringCodec[T String](data []T, depth int) (Codec[T], error) {
-	return newRunendCodec(data, cmpStrings[T], depth)
-}
-
-func NewRunendFloatCodec[T Float](data []T, depth int) (Codec[T], error) {
-	return newRunendCodec(data, cmpFloats[T], depth)
+func NewRunendFloatCodec[T Float](arr array.Array[T], depth int) (Codec[T], error) {
+	return newRunendCodecFromSource(arr.Length(), arr.ValueAt, cmpFloats[T], depth)
 }
 
 // fillRun writes value into dst[start:end] without any extra allocation.
@@ -97,75 +89,30 @@ func fillRun[T Integer | Float | String](dst []T, start, end int, value T) {
 	}
 }
 
-// Decode expands run-end encoded data into dst in a single forward pass
-// without output-sized scratch.
+// Decode expands run-end encoded data into dst in a single forward pass.
 //
 // ends[i] is the exclusive upper bound for runs[i]. The final run does not
 // store an end; it implicitly extends to Length().
-//
-// Slice indices stay in int because that is what dst requires. Serialized
-// run-end offsets are validated against len(dst) before converting from U.
 func (r *RunendCodec[T, U]) Decode(dst []T) error {
 	if err := validateDecodeLength(r.length, len(dst)); err != nil {
 		return err
 	}
-	runCount := r.runs.Length()
-	endCount := r.ends.Length()
-	if runCount == 0 {
-		return fmt.Errorf("codec: runend runs length = 0")
-	}
-	if runCount != endCount+1 {
-		return fmt.Errorf("codec: runend runs length = %d, want %d", runCount, endCount+1)
-	}
-
-	runsScratch, haveRunsScratch, err := decodeWithOptionalScratch(r.runs, nil)
-	if err != nil {
+	runs := make([]T, r.runs.Length())
+	if err := r.runs.Decode(runs); err != nil {
 		return err
 	}
-	endsScratch, haveEndsScratch, err := decodeWithOptionalScratch(r.ends, nil)
-	if err != nil {
+	ends := make([]U, r.ends.Length())
+	if err := r.ends.Decode(ends); err != nil {
 		return err
 	}
 
 	pos := 0
-	limit := len(dst)
-	for i := uint64(0); i < endCount; i++ {
-		var run T
-		if haveRunsScratch {
-			run = runsScratch[i]
-		} else {
-			run, err = r.runs.ValueAt(i)
-			if err != nil {
-				return err
-			}
-		}
-		var rawEnd U
-		if haveEndsScratch {
-			rawEnd = endsScratch[i]
-		} else {
-			rawEnd, err = r.ends.ValueAt(i)
-			if err != nil {
-				return err
-			}
-		}
-		end64 := uint64(rawEnd)
-		if end64 <= uint64(pos) || end64 > uint64(limit) {
-			return fmt.Errorf("codec: runend end %d = %d out of range for length %d", i, end64, len(dst))
-		}
-		end := int(end64)
-		fillRun(dst, pos, end, run)
+	for i, rawEnd := range ends {
+		end := int(rawEnd)
+		fillRun(dst, pos, end, runs[i])
 		pos = end
 	}
-	var last T
-	if haveRunsScratch {
-		last = runsScratch[endCount]
-	} else {
-		last, err = r.runs.ValueAt(endCount)
-		if err != nil {
-			return err
-		}
-	}
-	fillRun(dst, pos, limit, last)
+	fillRun(dst, pos, len(dst), runs[len(ends)])
 	return nil
 }
 
@@ -230,38 +177,18 @@ func readRunendCodecWithEnds[T Integer | Float | String, U UnsignedInteger](r io
 	if err != nil {
 		return nil, err
 	}
-	if err := validateRunendCodec(header.Length, runs, ends); err != nil {
-		return nil, err
-	}
-	return &RunendCodec[T, U]{length: header.Length, runs: runs, ends: ends}, nil
-}
-
-func validateRunendCodec[T Integer | Float | String, U UnsignedInteger](length uint64, runs Codec[T], ends Codec[U]) error {
+	// O(1) structural checks only; per-element invariants are guaranteed by
+	// the encoder (matching Vortex's new_unchecked).
 	if runs.Length() == 0 {
-		return fmt.Errorf("codec: runend runs length = 0")
+		return nil, fmt.Errorf("codec: runend runs length = 0")
 	}
 	if runs.Length() != ends.Length()+1 {
-		return fmt.Errorf("codec: runend runs length = %d, want %d", runs.Length(), ends.Length()+1)
+		return nil, fmt.Errorf("codec: runend runs length = %d, want %d", runs.Length(), ends.Length()+1)
 	}
-	if runs.Length() > length {
-		return fmt.Errorf("codec: runend runs length = %d exceeds length %d", runs.Length(), length)
+	if runs.Length() > header.Length {
+		return nil, fmt.Errorf("codec: runend runs length = %d exceeds length %d", runs.Length(), header.Length)
 	}
-	var prev uint64
-	for i := uint64(0); i < ends.Length(); i++ {
-		end, err := ends.ValueAt(i)
-		if err != nil {
-			return err
-		}
-		value := uint64(end)
-		if value == 0 || value >= length {
-			return fmt.Errorf("codec: runend end %d = %d out of range for length %d", i, value, length)
-		}
-		if i > 0 && value <= prev {
-			return fmt.Errorf("codec: runend ends must be strictly increasing")
-		}
-		prev = value
-	}
-	return nil
+	return &RunendCodec[T, U]{length: header.Length, runs: runs, ends: ends}, nil
 }
 
 func readRunendCodec[T Integer | Float | String](r io.Reader, header Header) (Codec[T], error) {

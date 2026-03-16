@@ -9,6 +9,91 @@ import (
 
 const defaultDepth = 3
 
+type codecBuilder[T Integer | Float | String] func(array.Array[T], int) (Codec[T], error)
+
+type taggedBuilder[T Integer | Float | String] struct {
+	build codecBuilder[T]
+	kind  CodecType
+}
+
+func selectBest[T Integer | Float | String](arr array.Array[T], depth int, builders []taggedBuilder[T]) Codec[T] {
+	if arr.Length() < sampleThreshold {
+		return selectBestAll(arr, depth, builders)
+	}
+
+	// Stratified sample: evaluate all builders on ~1% of data.
+	sample := sampleArray(arr)
+	hints := computeSampleHints(sample)
+
+	var (
+		bestIdx  = -1
+		bestSize uint64
+		constIdx = -1
+	)
+	for i, tb := range builders {
+		// Const: skip on samples — false positive risk.
+		if tb.kind == CodecTypeConst {
+			constIdx = i
+			continue
+		}
+		// Stats-based rejection (Vortex Level 1).
+		if hints.shouldSkip(tb.kind) {
+			continue
+		}
+		c, err := tb.build(sample, depth)
+		if err != nil {
+			continue
+		}
+		s := c.BinarySize()
+		if bestIdx < 0 || s < bestSize {
+			bestIdx = i
+			bestSize = s
+		}
+	}
+
+	// Run the sample winner on full data.
+	var best Codec[T]
+	if bestIdx >= 0 {
+		if c, err := builders[bestIdx].build(arr, depth); err == nil {
+			best = c
+		}
+	}
+
+	// Always try Const on full data — it's an O(n) comparison scan with
+	// no heavy allocation, and sampling can't reliably detect it.
+	if constIdx >= 0 {
+		if c, err := builders[constIdx].build(arr, depth); err == nil {
+			if best == nil || c.BinarySize() < best.BinarySize() {
+				best = c
+			}
+		}
+	}
+
+	if best != nil {
+		return best
+	}
+	// Fallback: Raw never fails.
+	return NewRawCodec(arr)
+}
+
+// selectBestAll evaluates every builder on arr and returns the smallest codec.
+func selectBestAll[T Integer | Float | String](arr array.Array[T], depth int, builders []taggedBuilder[T]) Codec[T] {
+	var (
+		best     Codec[T]
+		bestSize uint64
+	)
+	for _, tb := range builders {
+		if c, err := tb.build(arr, depth); err == nil {
+			s := c.BinarySize()
+			if best == nil || s < bestSize {
+				best = c
+				bestSize = s
+			}
+		}
+	}
+	return best
+}
+
 func compress[T Integer | Float | String](data []T, depth int) Codec[T] {
 	var zero T
 	switch any(zero).(type) {

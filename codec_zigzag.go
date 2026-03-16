@@ -127,11 +127,7 @@ func newZigzagCodecWithWidthFromSource[T SignedInteger, U UnsignedInteger](lengt
 	return &ZigzagCodec[T, U]{data: inner}, nil
 }
 
-func NewZigzagCodec[T SignedInteger](vals []T, depth int) (Codec[T], error) {
-	return newZigzagCodecFromSource(uint64(len(vals)), func(i uint64) T { return vals[i] }, depth)
-}
-
-func newZigzagCodecFromArray[T SignedInteger](arr array.Array[T], depth int) (Codec[T], error) {
+func NewZigzagCodec[T SignedInteger](arr array.Array[T], depth int) (Codec[T], error) {
 	return newZigzagCodecFromSource(arr.Length(), arr.ValueAt, depth)
 }
 
@@ -177,21 +173,11 @@ func (z *ZigzagCodec[T, U]) Decode(dst []T) error {
 	if err := validateDecodeLength(z.data.Length(), len(dst)); err != nil {
 		return err
 	}
-	dataScratch, haveDataScratch, err := decodeWithOptionalScratch(z.data, nil)
-	if err != nil {
+	encoded := make([]U, z.data.Length())
+	if err := z.data.Decode(encoded); err != nil {
 		return err
 	}
-	if haveDataScratch {
-		for i, u := range dataScratch {
-			dst[i] = T(zigzagDecode64(uint64(u)))
-		}
-		return nil
-	}
-	for i := range dst {
-		u, err := z.data.ValueAt(uint64(i))
-		if err != nil {
-			return err
-		}
+	for i, u := range encoded {
 		dst[i] = T(zigzagDecode64(uint64(u)))
 	}
 	return nil

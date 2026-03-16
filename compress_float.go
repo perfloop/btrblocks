@@ -7,14 +7,14 @@ var (
 	_ Codec[float64] = (*RawCodec[float64])(nil)
 )
 
-func floatBuilders[T Float]() []codecBuilder[T] {
-	return []codecBuilder[T]{
-		func(arr array.Array[T], _ int) (Codec[T], error) { return NewRawCodec(arr), nil },
-		func(arr array.Array[T], _ int) (Codec[T], error) { return NewConstFloatCodec(arr) },
-		func(arr array.Array[T], depth int) (Codec[T], error) { return NewDictFloatCodec(arr, depth) },
-		func(arr array.Array[T], depth int) (Codec[T], error) {
-			return newRunendCodecFromArray(arr, cmpFloats[T], depth)
-		},
+func floatBuilders[T Float]() []taggedBuilder[T] {
+	return []taggedBuilder[T]{
+		{func(arr array.Array[T], _ int) (Codec[T], error) { return NewRawCodec(arr), nil }, CodecTypeRaw},
+		{func(arr array.Array[T], _ int) (Codec[T], error) { return NewConstFloatCodec(arr) }, CodecTypeConst},
+		{func(arr array.Array[T], depth int) (Codec[T], error) { return NewDictFloatCodec(arr, depth) }, CodecTypeDict},
+		{func(arr array.Array[T], depth int) (Codec[T], error) {
+			return NewRunendFloatCodec(arr, depth)
+		}, CodecTypeRunend},
 	}
 }
 

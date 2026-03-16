@@ -5,6 +5,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/axiomhq/btrblocks/array"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,7 +61,7 @@ func TestHeaderWriteToShortWrite(t *testing.T) {
 }
 
 func TestBitpackingCodecWriteToErrorPaths(t *testing.T) {
-	codec := NewBitpackingCodec([]uint8{0, 1, 2, 3, 4, 5, 6, 7})
+	codec := NewBitpackingCodec(array.NewPrimitivesUnsafe([]uint8{0, 1, 2, 3, 4, 5, 6, 7}))
 
 	t.Run("short write", func(t *testing.T) {
 		writer := &shortWriter{remaining: headerSize + 1 + len(codec.buf) - 1}

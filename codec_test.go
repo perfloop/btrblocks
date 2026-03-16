@@ -225,23 +225,6 @@ func (c *spyCodec[T]) Decode(dst []T) error {
 	return nil
 }
 
-type noDecodeCodec[T Integer | Float | String] struct {
-	spyCodec[T]
-}
-
-func (c *noDecodeCodec[T]) Decode(dst []T) error {
-	c.decodeCalls++
-	panic("Decode called")
-}
-
-type noValueAtCodec[T Integer | Float | String] struct {
-	spyCodec[T]
-}
-
-func (c *noValueAtCodec[T]) ValueAt(offset uint64) (T, error) {
-	c.valueAtCalls++
-	panic("ValueAt called")
-}
 
 func TestCompressPathsAvoidCopyTo(t *testing.T) {
 	t.Run("signed integer", func(t *testing.T) {
@@ -289,22 +272,22 @@ func TestCompressPathsAvoidCopyTo(t *testing.T) {
 	})
 }
 
-func TestNestedDecodeUsesBoundedChildScratch(t *testing.T) {
-	t.Run("dict indices", func(t *testing.T) {
+func TestNestedDecodeBulkDecodesChildren(t *testing.T) {
+	t.Run("dict", func(t *testing.T) {
 		values := &spyCodec[int64]{data: []int64{10, 20}, pType: PTypeInt64}
-		indices := &noDecodeCodec[uint8]{spyCodec: spyCodec[uint8]{data: []uint8{1, 0, 1, 1}, pType: PTypeUint8}}
+		indices := &spyCodec[uint8]{data: []uint8{1, 0, 1, 1}, pType: PTypeUint8}
 		codec := &DictCodec[int64, uint8]{values: values, indices: indices}
 		dst := make([]int64, 4)
 
 		require.NoError(t, codec.Decode(dst))
 		require.Equal(t, []int64{20, 10, 20, 20}, dst)
 		require.Equal(t, 1, values.decodeCalls)
-		require.Zero(t, indices.decodeCalls)
+		require.Equal(t, 1, indices.decodeCalls)
 	})
 
-	t.Run("runend children", func(t *testing.T) {
-		runs := &noValueAtCodec[uint64]{spyCodec: spyCodec[uint64]{data: []uint64{5, 8, 13}, pType: PTypeUint64}}
-		ends := &noValueAtCodec[uint8]{spyCodec: spyCodec[uint8]{data: []uint8{3, 5}, pType: PTypeUint8}}
+	t.Run("runend", func(t *testing.T) {
+		runs := &spyCodec[uint64]{data: []uint64{5, 8, 13}, pType: PTypeUint64}
+		ends := &spyCodec[uint8]{data: []uint8{3, 5}, pType: PTypeUint8}
 		codec := &RunendCodec[uint64, uint8]{length: 8, runs: runs, ends: ends}
 		dst := make([]uint64, 8)
 
@@ -314,8 +297,8 @@ func TestNestedDecodeUsesBoundedChildScratch(t *testing.T) {
 		require.Equal(t, 1, ends.decodeCalls)
 	})
 
-	t.Run("zigzag child", func(t *testing.T) {
-		child := &noValueAtCodec[uint8]{spyCodec: spyCodec[uint8]{data: []uint8{1, 0, 2, 3}, pType: PTypeUint8}}
+	t.Run("zigzag", func(t *testing.T) {
+		child := &spyCodec[uint8]{data: []uint8{1, 0, 2, 3}, pType: PTypeUint8}
 		codec := &ZigzagCodec[int64, uint8]{data: child}
 		dst := make([]int64, 4)
 
@@ -323,84 +306,4 @@ func TestNestedDecodeUsesBoundedChildScratch(t *testing.T) {
 		require.Equal(t, []int64{-1, 0, 1, -2}, dst)
 		require.Equal(t, 1, child.decodeCalls)
 	})
-}
-
-func TestNestedDecodeFallsBackToValueAtWhenLarge(t *testing.T) {
-	t.Run("runend children", func(t *testing.T) {
-		runCount := int(maxDecodeScratchBytes/4) + 2
-		runsData := make([]uint64, runCount)
-		endsData := make([]uint32, runCount-1)
-		for i := range runsData {
-			runsData[i] = uint64(i)
-			if i < len(endsData) {
-				endsData[i] = uint32(i + 1)
-			}
-		}
-		runs := &noDecodeCodec[uint64]{spyCodec: spyCodec[uint64]{data: runsData, pType: PTypeUint64}}
-		ends := &noDecodeCodec[uint32]{spyCodec: spyCodec[uint32]{data: endsData, pType: PTypeUint32}}
-		codec := &RunendCodec[uint64, uint32]{length: uint64(runCount), runs: runs, ends: ends}
-		dst := make([]uint64, runCount)
-
-		require.NoError(t, codec.Decode(dst))
-		require.Equal(t, runsData, dst)
-		require.Zero(t, runs.decodeCalls)
-		require.Zero(t, ends.decodeCalls)
-		require.NotZero(t, runs.valueAtCalls)
-		require.NotZero(t, ends.valueAtCalls)
-	})
-
-	t.Run("zigzag child", func(t *testing.T) {
-		length := int(maxDecodeScratchBytes/8) + 1
-		data := make([]uint64, length)
-		for i := range data {
-			data[i] = uint64(i)
-		}
-		child := &noDecodeCodec[uint64]{spyCodec: spyCodec[uint64]{data: data, pType: PTypeUint64}}
-		codec := &ZigzagCodec[int64, uint64]{data: child}
-		dst := make([]int64, length)
-
-		require.NoError(t, codec.Decode(dst))
-		require.Zero(t, child.decodeCalls)
-		require.NotZero(t, child.valueAtCalls)
-	})
-}
-
-func TestValidateDictCodecAvoidsChildBulkDecode(t *testing.T) {
-	values := NewRawCodec(array.NewPrimitivesUnsafe([]int64{10, 20}))
-	indices := &noDecodeCodec[uint8]{spyCodec: spyCodec[uint8]{data: []uint8{0, 1, 1}, pType: PTypeUint8}}
-
-	require.NoError(t, validateDictCodec[int64](3, values, indices))
-	require.Zero(t, indices.decodeCalls)
-}
-
-func TestDictDecodeFallsBackToValueAtForLargeCardinality(t *testing.T) {
-	valueCount := int(maxDecodeScratchBytes/8) + 1
-	valuesData := make([]int64, valueCount)
-	for i := range valuesData {
-		valuesData[i] = int64(i)
-	}
-	values := &noDecodeCodec[int64]{spyCodec: spyCodec[int64]{data: valuesData, pType: PTypeInt64}}
-	indices := &spyCodec[uint32]{data: []uint32{1, 3, 5, 7}, pType: PTypeUint32}
-	codec := &DictCodec[int64, uint32]{values: values, indices: indices}
-	dst := make([]int64, 4)
-
-	require.NoError(t, codec.Decode(dst))
-	require.Equal(t, []int64{1, 3, 5, 7}, dst)
-	require.Zero(t, values.decodeCalls)
-}
-
-func TestDictDecodeReusesValuesScratch(t *testing.T) {
-	values := &spyCodec[int64]{data: []int64{10, 20, 30}, pType: PTypeInt64}
-	indices := &spyCodec[uint8]{data: []uint8{2, 1, 0}, pType: PTypeUint8}
-	codec := &DictCodec[int64, uint8]{values: values, indices: indices}
-	dst := make([]int64, 3)
-	scratch := make([]int64, 0, 3)
-
-	reused, err := codec.decode(dst, scratch)
-	require.NoError(t, err)
-	require.Equal(t, []int64{30, 20, 10}, dst)
-	require.Equal(t, 1, values.decodeCalls)
-	require.Equal(t, 3, len(reused))
-	require.Equal(t, cap(scratch), cap(reused))
-	require.Equal(t, &scratch[:1][0], &reused[:1][0])
 }

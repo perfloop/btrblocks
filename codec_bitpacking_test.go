@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/axiomhq/btrblocks/array"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBitpackingCodecUint8CrossByteRoundTrip(t *testing.T) {
 	data := []uint8{0, 1, 2, 3, 4, 5, 6, 7}
-	codec := NewBitpackingCodec(data)
+	codec := NewBitpackingCodec(array.NewPrimitivesUnsafe(data))
 
 	assertCodecMetadata(t, codec, len(data), PTypeUint8, 0)
 	assertCodecRoundTrip(t, codec, data)
@@ -25,7 +26,7 @@ func TestBitpackingCodecUint8CrossByteRoundTrip(t *testing.T) {
 func TestBitpackingCodecZeroAndWideValues(t *testing.T) {
 	t.Run("all zero", func(t *testing.T) {
 		data := makeConstantCorpus(256, uint16(0))
-		codec := NewBitpackingCodec(data)
+		codec := NewBitpackingCodec(array.NewPrimitivesUnsafe(data))
 
 		assertCodecMetadata(t, codec, len(data), PTypeUint16, 0)
 		assertCodecRoundTrip(t, codec, data)
@@ -40,7 +41,7 @@ func TestBitpackingCodecZeroAndWideValues(t *testing.T) {
 
 	t.Run("max uint64", func(t *testing.T) {
 		data := []uint64{0, ^uint64(0), 1 << 63, 17}
-		codec := NewBitpackingCodec(data)
+		codec := NewBitpackingCodec(array.NewPrimitivesUnsafe(data))
 
 		assertCodecMetadata(t, codec, len(data), PTypeUint64, 0)
 		assertCodecRoundTrip(t, codec, data)
@@ -60,7 +61,7 @@ func TestBitpackingCodecLargeCorpus(t *testing.T) {
 		data[i] = uint32(i % 31)
 	}
 
-	codec := NewBitpackingCodec(data)
+	codec := NewBitpackingCodec(array.NewPrimitivesUnsafe(data))
 	assertCodecMetadata(t, codec, len(data), PTypeUint32, 0)
 	assertCodecRoundTrip(t, codec, data)
 
@@ -86,7 +87,7 @@ func FuzzBitpackingCodecRoundTrip(f *testing.F) {
 			values[i] = uint16(b) | uint16(i&3)<<8
 		}
 
-		codec := NewBitpackingCodec(values)
+		codec := NewBitpackingCodec(array.NewPrimitivesUnsafe(values))
 		assertCodecMetadata(t, codec, len(values), PTypeUint16, 0)
 		assertCodecRoundTrip(t, codec, values)
 	})
@@ -99,7 +100,7 @@ func BenchmarkBitpackingCodecBuildLarge(b *testing.B) {
 	}
 
 	benchmarkBuildLoop(b, "bitpacking", func(values []uint32) (Codec[uint32], error) {
-		return NewBitpackingCodec(values), nil
+		return NewBitpackingCodec(array.NewPrimitivesUnsafe(values)), nil
 	}, data)
 }
 
@@ -109,7 +110,7 @@ func BenchmarkBitpackingCodecValueAtLarge(b *testing.B) {
 		data[i] = uint32(i % 31)
 	}
 
-	codec := NewBitpackingCodec(data)
+	codec := NewBitpackingCodec(array.NewPrimitivesUnsafe(data))
 	benchmarkValueAtLoop(b, codec, len(data))
 }
 
@@ -152,7 +153,7 @@ func TestReadBitpackingCodecRejectsOversizedBitWidth(t *testing.T) {
 }
 
 func TestReadBitpackingCodecZeroLengthRoundTrip(t *testing.T) {
-	codec := NewBitpackingCodec([]uint8{})
+	codec := NewBitpackingCodec(array.NewPrimitivesUnsafe([]uint8{}))
 
 	var buf bytes.Buffer
 	_, err := codec.WriteTo(&buf)

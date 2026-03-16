@@ -12,7 +12,7 @@ import (
 func TestZigzagCodecInt64RoundTripAndWriteTo(t *testing.T) {
 	data := []int64{-1 << 63, -17, -1, 0, 1, 17, 1<<63 - 1}
 
-	codec, err := NewZigzagCodec(data, 1)
+	codec, err := NewZigzagCodec(array.NewPrimitivesUnsafe(data), 1)
 	require.NoError(t, err)
 
 	assertCodecMetadata(t, codec, len(data), PTypeInt64, 1)
@@ -67,7 +67,7 @@ func TestNewZigzagCodecChoosesSmallestUnsignedChildWidth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			codec, err := NewZigzagCodec(tt.data, 1)
+			codec, err := NewZigzagCodec(array.NewPrimitivesUnsafe(tt.data), 1)
 			require.NoError(t, err)
 
 			var buf bytes.Buffer
@@ -133,7 +133,7 @@ func TestReadZigzagCodecRejectsNonUnsignedChild(t *testing.T) {
 }
 
 func TestReadZigzagCodecZeroLengthRoundTrip(t *testing.T) {
-	codec, err := NewZigzagCodec([]int64{}, 1)
+	codec, err := NewZigzagCodec(array.NewPrimitivesUnsafe([]int64{}), 1)
 	require.NoError(t, err)
 
 	var buf bytes.Buffer
@@ -146,7 +146,7 @@ func TestReadZigzagCodecZeroLengthRoundTrip(t *testing.T) {
 }
 
 func TestReadZigzagCodecRejectsMismatchedOuterMetadata(t *testing.T) {
-	codec, err := NewZigzagCodec([]int64{-1, 0, 1}, 1)
+	codec, err := NewZigzagCodec(array.NewPrimitivesUnsafe([]int64{-1, 0, 1}), 1)
 	require.NoError(t, err)
 
 	var buf bytes.Buffer

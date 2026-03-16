@@ -201,7 +201,7 @@ func TestReadDictCodecZeroLengthRoundTrip(t *testing.T) {
 	assertCodecMetadata(t, decoded, 0, PTypeUint64, 2)
 }
 
-func TestReadDictCodecRejectsOutOfRangeIndices(t *testing.T) {
+func TestDictCodecDecodePanicsOnOutOfRangeIndices(t *testing.T) {
 	codec := &DictCodec[uint64, uint8]{
 		values:  NewRawCodec(array.NewPrimitivesUnsafe([]uint64{11})),
 		indices: NewRawCodec(array.NewPrimitivesUnsafe([]uint8{0, 1})),
@@ -211,8 +211,14 @@ func TestReadDictCodecRejectsOutOfRangeIndices(t *testing.T) {
 	_, err := codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	_, err = readCodec[uint64](bytes.NewReader(buf.Bytes()))
-	require.ErrorContains(t, err, "out of range")
+	decoded, err := readCodec[uint64](bytes.NewReader(buf.Bytes()))
+	require.NoError(t, err)
+
+	// Encoder invariants guarantee valid indices. Out-of-range indices from
+	// hand-crafted codecs panic on slice access, matching Vortex's unchecked
+	// behavior.
+	dst := make([]uint64, decoded.Length())
+	require.Panics(t, func() { _ = decoded.Decode(dst) })
 }
 
 func TestReadDictCodecRejectsMismatchedOuterMetadata(t *testing.T) {
@@ -261,4 +267,65 @@ func countUniqueFloat64Bits(data []float64) int {
 		seen[math.Float64bits(value)] = struct{}{}
 	}
 	return len(seen)
+}
+
+// BenchmarkDictDecode measures the full Decode path (bulk indices + no bounds checks).
+func BenchmarkDictDecode(b *testing.B) {
+	for _, size := range []int{1 << 16, 1 << 20} {
+		b.Run(sizeLabel(size), func(b *testing.B) {
+			data := makeLowCardinalityUint64Corpus(size, 16)
+			codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth)
+			if err != nil {
+				b.Fatal(err)
+			}
+			dst := make([]uint64, size)
+			b.SetBytes(int64(size) * 8)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if err := codec.Decode(dst); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkReadDictCodec measures the read (deserialize) path.
+func BenchmarkReadDictCodec(b *testing.B) {
+	for _, size := range []int{1 << 16, 1 << 20} {
+		b.Run(sizeLabel(size), func(b *testing.B) {
+			data := makeLowCardinalityUint64Corpus(size, 16)
+			codec, err := NewDictIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth)
+			if err != nil {
+				b.Fatal(err)
+			}
+			var buf bytes.Buffer
+			if _, err := codec.WriteTo(&buf); err != nil {
+				b.Fatal(err)
+			}
+			serialized := buf.Bytes()
+
+			b.SetBytes(int64(len(serialized)))
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, err := readCodec[uint64](bytes.NewReader(serialized))
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func sizeLabel(n int) string {
+	switch {
+	case n >= 1<<20:
+		return string(rune('0'+n>>20)) + "M"
+	case n >= 1<<10:
+		return string(rune('0'+n>>10)) + "K"
+	default:
+		return "small"
+	}
 }
