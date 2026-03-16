@@ -247,6 +247,25 @@ func BenchmarkFoRCodecBuildLarge(b *testing.B) {
 	}, data)
 }
 
+func BenchmarkFoRCodecDecodeLarge(b *testing.B) {
+	data := make([]uint32, largeCorpusSize)
+	for i := range data {
+		data[i] = 1_000_000 + uint32(i%1000)
+	}
+
+	codec, err := NewFoRCodec(array.NewPrimitivesUnsafe(data), defaultDepth, 0)
+	if err != nil {
+		b.Fatalf("NewFoRCodec() returned error: %v", err)
+	}
+
+	dst := make([]uint32, len(data))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		_ = codec.Decode(dst)
+	}
+}
+
 func BenchmarkFoRCodecValueAtLarge(b *testing.B) {
 	data := make([]uint32, largeCorpusSize)
 	for i := range data {
@@ -258,4 +277,23 @@ func BenchmarkFoRCodecValueAtLarge(b *testing.B) {
 		b.Fatalf("NewFoRCodec() returned error: %v", err)
 	}
 	benchmarkValueAtLoop(b, codec, len(data))
+}
+
+func BenchmarkFoRCodecWriteToLarge(b *testing.B) {
+	data := make([]uint32, largeCorpusSize)
+	for i := range data {
+		data[i] = 1_000_000 + uint32(i%1000)
+	}
+
+	codec, err := NewFoRCodec(array.NewPrimitivesUnsafe(data), defaultDepth, 0)
+	if err != nil {
+		b.Fatalf("NewFoRCodec() returned error: %v", err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		var buf bytes.Buffer
+		_, _ = codec.WriteTo(&buf)
+	}
 }

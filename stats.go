@@ -9,6 +9,7 @@ import (
 // arrayStats holds statistics computed from the full array for
 // stats-based builder rejection, matching Vortex's gen_stats approach.
 type arrayStats[T Integer | Float | String] struct {
+	isConst       bool    // true if every element is identical
 	distinctRatio float64 // distinctCount / length
 	avgRunLength  float64 // length / runCount
 	hasNegative   bool    // true if any signed integer value < 0
@@ -97,6 +98,7 @@ func computeArrayStats[T Integer | Float | String](arr array.Array[T]) arrayStat
 	}
 
 	return arrayStats[T]{
+		isConst:       len(counts) == 1 && topCount == n,
 		distinctRatio: float64(len(counts)) / float64(n),
 		avgRunLength:  float64(n) / float64(runs),
 		hasNegative:   hasNeg,

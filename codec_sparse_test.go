@@ -308,6 +308,29 @@ func BenchmarkSparseCodecBuildLarge(b *testing.B) {
 	}, data)
 }
 
+func BenchmarkSparseCodecDecodeLarge(b *testing.B) {
+	data := make([]uint32, largeCorpusSize)
+	for i := range data {
+		if i%100 == 0 {
+			data[i] = uint32(i)
+		} else {
+			data[i] = 42
+		}
+	}
+
+	codec, err := NewSparseIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth, 0)
+	if err != nil {
+		b.Fatalf("NewSparseIntegerCodec() returned error: %v", err)
+	}
+
+	dst := make([]uint32, len(data))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		_ = codec.Decode(dst)
+	}
+}
+
 func BenchmarkSparseCodecValueAtLarge(b *testing.B) {
 	data := make([]uint32, largeCorpusSize)
 	for i := range data {
@@ -323,4 +346,27 @@ func BenchmarkSparseCodecValueAtLarge(b *testing.B) {
 		b.Fatalf("NewSparseIntegerCodec() returned error: %v", err)
 	}
 	benchmarkValueAtLoop(b, codec, len(data))
+}
+
+func BenchmarkSparseCodecWriteToLarge(b *testing.B) {
+	data := make([]uint32, largeCorpusSize)
+	for i := range data {
+		if i%100 == 0 {
+			data[i] = uint32(i)
+		} else {
+			data[i] = 42
+		}
+	}
+
+	codec, err := NewSparseIntegerCodec(array.NewPrimitivesUnsafe(data), defaultDepth, 0)
+	if err != nil {
+		b.Fatalf("NewSparseIntegerCodec() returned error: %v", err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		var buf bytes.Buffer
+		_, _ = codec.WriteTo(&buf)
+	}
 }

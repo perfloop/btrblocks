@@ -21,65 +21,40 @@ func selectBest[T Integer | Float | String](arr array.Array[T], depth int, build
 		return selectBestAll(arr, depth, builders, excludes)
 	}
 
-	// Stats on full data for O(1) codec rejection (matching Vortex's gen_stats).
-	// Sampling only applies to trial compression below.
-	var (
-		hints  = computeArrayStats(arr)
-		sample = sampleArray(arr)
-		n      = arr.Length()
-	)
+	hints := computeArrayStats(arr)
 
+	// If stats say the array is constant, build Const and return immediately.
+	if hints.isConst && !excludes.has(CodecTypeConst) {
+		return &ConstCodec[T]{length: arr.Length(), value: hints.topValue}
+	}
+
+	// Trial-compress each candidate on a stratified sample.
 	var (
+		sample   = sampleArray(arr)
+		n        = arr.Length()
 		bestIdx  = -1
 		bestSize uint64
-		constIdx = -1
 	)
 	for i, tb := range builders {
-		if excludes.has(tb.kind) {
-			continue
-		}
-		// Const: skip on samples — false positive risk.
-		if tb.kind == CodecTypeConst {
-			constIdx = i
-			continue
-		}
-		// Stats-based rejection (Vortex Level 1).
-		if hints.shouldSkip(tb.kind, n) {
+		if excludes.has(tb.kind) || tb.kind == CodecTypeConst || hints.shouldSkip(tb.kind, n) {
 			continue
 		}
 		c, err := tb.build(sample, depth, excludes)
 		if err != nil {
 			continue
 		}
-		s := c.BinarySize()
-		if bestIdx < 0 || s < bestSize {
+		if s := c.BinarySize(); bestIdx < 0 || s < bestSize {
 			bestIdx = i
 			bestSize = s
 		}
 	}
 
 	// Run the sample winner on full data.
-	var best Codec[T]
 	if bestIdx >= 0 {
 		if c, err := builders[bestIdx].build(arr, depth, excludes); err == nil {
-			best = c
+			return c
 		}
 	}
-
-	// Always try Const on full data — it's an O(n) comparison scan with
-	// no heavy allocation, and sampling can't reliably detect it.
-	if constIdx >= 0 {
-		if c, err := builders[constIdx].build(arr, depth, excludes); err == nil {
-			if best == nil || c.BinarySize() < best.BinarySize() {
-				best = c
-			}
-		}
-	}
-
-	if best != nil {
-		return best
-	}
-	// Fallback: Raw never fails.
 	return NewRawCodec(arr)
 }
 

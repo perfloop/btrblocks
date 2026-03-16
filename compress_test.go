@@ -337,6 +337,95 @@ func TestCompressIntegerDictEncodable(t *testing.T) {
 	require.True(t, ok, "expected *DictCodec[int32, uint8], got %T", codec)
 }
 
+// FuzzCompressIntegerRoundTrip fuzz-tests the full Compress→WriteTo→Decompress
+// pipeline for signed integers.
+func FuzzCompressIntegerRoundTrip(f *testing.F) {
+	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7})
+	f.Add([]byte{42, 42, 42, 42, 42, 42})
+	f.Add([]byte{0, 255, 1, 254, 2, 253})
+	f.Add([]byte{128, 128, 128, 128}) // negative in int8
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) == 0 || len(raw) > 4096 {
+			return
+		}
+		// Interpret as []int8 (signed).
+		data := make([]int8, len(raw))
+		for i, b := range raw {
+			data[i] = int8(b)
+		}
+
+		codec := Compress(data)
+		require.NotNil(t, codec)
+		require.Equal(t, uint64(len(data)), codec.Length())
+
+		var buf bytes.Buffer
+		n, err := codec.WriteTo(&buf)
+		require.NoError(t, err)
+		require.Equal(t, int64(codec.BinarySize()), n)
+
+		got, err := Decompress[int8](bytes.NewReader(buf.Bytes()))
+		require.NoError(t, err)
+		require.Equal(t, data, got)
+	})
+}
+
+// FuzzCompressUnsignedIntegerRoundTrip fuzz-tests the full pipeline for
+// unsigned integers, exercising FoR and Bitpacking paths.
+func FuzzCompressUnsignedIntegerRoundTrip(f *testing.F) {
+	f.Add([]byte{100, 103, 105, 101, 107, 100})
+	f.Add([]byte{0, 0, 0, 0})
+	f.Add([]byte{255, 255, 255, 0})
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) == 0 || len(raw) > 4096 {
+			return
+		}
+		// Add a high base to exercise FoR.
+		data := make([]uint16, len(raw))
+		for i, b := range raw {
+			data[i] = uint16(b) + 50000
+		}
+
+		codec := Compress(data)
+		require.NotNil(t, codec)
+		require.Equal(t, uint64(len(data)), codec.Length())
+
+		var buf bytes.Buffer
+		n, err := codec.WriteTo(&buf)
+		require.NoError(t, err)
+		require.Equal(t, int64(codec.BinarySize()), n)
+
+		got, err := Decompress[uint16](bytes.NewReader(buf.Bytes()))
+		require.NoError(t, err)
+		require.Equal(t, data, got)
+	})
+}
+
+// FuzzCompressStringRoundTrip fuzz-tests the full pipeline for strings.
+func FuzzCompressStringRoundTrip(f *testing.F) {
+	f.Add("hello", "world", "hello", "hello")
+	f.Add("a", "a", "a", "a")
+	f.Add("foo", "bar", "baz", "qux")
+
+	f.Fuzz(func(t *testing.T, a, b, c, d string) {
+		data := []string{a, b, c, d}
+
+		codec := Compress(data)
+		require.NotNil(t, codec)
+		require.Equal(t, uint64(len(data)), codec.Length())
+
+		var buf bytes.Buffer
+		n, err := codec.WriteTo(&buf)
+		require.NoError(t, err)
+		require.Equal(t, int64(codec.BinarySize()), n)
+
+		got, err := Decompress[string](bytes.NewReader(buf.Bytes()))
+		require.NoError(t, err)
+		require.Equal(t, data, got)
+	})
+}
+
 // TestCompressNaNFloat verifies that compression and decompression of float
 // arrays containing special IEEE 754 values (NaN, ±Inf, ±0) round-trips
 // correctly by bit-pattern, mirroring vortex-btrblocks' test_sparse_compression.

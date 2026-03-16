@@ -37,6 +37,20 @@ This directly reduces wire size and decode-time memory.
 
 Codecs compress their children recursively up to a configurable depth (default 3). The `selectBest` function tries all applicable codecs and picks the one with the smallest `BinarySize()`. For example, dict indices might be further compressed via bitpacking, and run-end values via const encoding.
 
+### Cascade excludes
+
+When a codec compresses its children, it passes a bitmask of excluded codec types to prevent pathological or redundant nesting:
+
+| Codec | Children exclude | Why |
+|-------|-----------------|-----|
+| ZigZag | ZigZag, Dict, RunEnd, Sparse | Child is unsigned residuals — re-entering signed or complex codecs is wasteful |
+| RunEnd | RunEnd, Dict | Runs of runs don't compress; dict over run values adds overhead without benefit |
+| Dict | Dict (indices only) | Dict-of-dict indices is redundant; dict values are unrestricted |
+| FoR | FoR | FoR-of-FoR is a no-op (min of residuals is 0) |
+| Sparse | Sparse | Sparse-of-sparse is redundant |
+
+Excludes propagate additively — a child inherits its parent's excludes plus its own.
+
 ## What this library does NOT do
 
 - **No per-element validation on decode.** If you deserialize untrusted data, corrupt indices will panic, not error. Validate at your system boundary before decoding.
@@ -57,7 +71,7 @@ Every codec node is:
 | Field | Size | Description |
 |-------|------|-------------|
 | Version | 1 | Format version (currently 1) |
-| Kind | 1 | Codec type (const, raw, dict, runend, zigzag, bitpacking) |
+| Kind | 1 | Codec type (const, raw, dict, runend, zigzag, bitpacking, for, sparse) |
 | ElemType | 1 | Physical element type (int8..uint64, float32, float64, string) |
 | ChildCount | 1 | Number of child codec nodes following the body |
 | Flags | 4 | Reserved (must be 0) |
@@ -85,6 +99,8 @@ All integers are little-endian. No magic bytes — codec streams are only entere
 | Runend | 4 | 2 (runs, ends) | Run-length encoding |
 | Zigzag | 5 | 1 (unsigned data) | Signed-to-unsigned via zigzag encoding |
 | Bitpacking | 6 | 0 | Variable bit-width packing for unsigned integers |
+| FoR | 7 | 1 (residuals) | Frame of Reference — subtract min, compress residuals (unsigned only) |
+| Sparse | 8 | 2 (values, offsets) | Store dominant filler once, compress exceptions and their positions |
 
 ## Package Structure
 
