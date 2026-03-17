@@ -7,14 +7,14 @@ import (
 const (
 	// sampleThreshold is the minimum array length before sampling kicks in.
 	// Below this, selectBest evaluates all builders on the full data.
-	sampleThreshold = 2048
+	sampleThreshold = 1024
 
 	sampleChunks   = 16
 	samplePerChunk = 64
 	sampleSize     = sampleChunks * samplePerChunk // 1024
 
 	// LCG parameters for deterministic pseudo-random chunk offsets.
-	// Seed matches Vortex's StdRng::seed_from_u64(1234567890).
+	// Deterministic seed for reproducible sampling.
 	sampleSeed   = 1234567890
 	sampleLCGMul = 6364136223846793005
 	sampleLCGInc = 1442695040888963407
@@ -22,8 +22,8 @@ const (
 
 // sampleArray returns a stratified sample of arr: sampleChunks evenly-spaced
 // chunks of samplePerChunk consecutive elements each, with a deterministic
-// pseudo-random offset within each chunk (matching Vortex's seeded RNG
-// approach). The caller must ensure arr.Length() >= sampleThreshold.
+// pseudo-random offset within each chunk (using deterministic pseudo-random
+// offsets). The caller must ensure arr.Length() >= sampleThreshold.
 func sampleArray[T Integer | Float | String](arr array.Array[T]) array.Array[T] {
 	var (
 		n           = arr.Length()

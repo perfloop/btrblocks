@@ -181,7 +181,7 @@ func readRunendCodecWithEnds[T Integer | Float | String, U UnsignedInteger](r io
 		return nil, err
 	}
 	// O(1) structural checks only; per-element invariants are guaranteed by
-	// the encoder (matching Vortex's new_unchecked).
+	// the encoder (no per-element validation on decode).
 	if runs.Length() == 0 {
 		return nil, fmt.Errorf("codec: runend runs length = 0")
 	}

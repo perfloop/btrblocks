@@ -8,9 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Vortex test_sparse_compressed: 1000 i32 values where 95% are 1_000_000
+// 1000 i32 values where 95% are 1_000_000
 // (fill value) and 5% are varying (2_000_000 + (i*7) % 1000).
-func TestSparseCodecVortexDominantValue(t *testing.T) {
+func TestSparseCodecDominantValue(t *testing.T) {
 	data := make([]uint32, 1000)
 	for i := range data {
 		if i%20 == 0 {
@@ -27,8 +27,7 @@ func TestSparseCodecVortexDominantValue(t *testing.T) {
 	assertCodecRoundTrip(t, codec, data)
 }
 
-// Vortex sparse_with_nulls adapted: since we don't have nulls, test with
-// a dominant value and a few exceptions (same pattern).
+// Since we don't have nulls, test with a dominant value and a few exceptions.
 func TestSparseCodecSmallArray(t *testing.T) {
 	data := []uint8{189, 189, 189, 189, 46}
 

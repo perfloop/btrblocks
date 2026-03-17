@@ -78,7 +78,7 @@ func newSparseCodecWithWidth[T Integer | Float | String, U UnsignedInteger](
 	for i, off := range offsets {
 		narrow[i] = U(off)
 	}
-	childExcl := excludes.with(CodecTypeSparse)
+	childExcl := excludes.with(CodecTypeSparse, CodecTypeDict)
 	valuesCodec := compress(values, depth-1, childExcl)
 	offsetsCodec := CompressInteger(array.NewPrimitivesUnsafe(narrow), depth-1, childExcl)
 	return &SparseCodec[T, U]{length: length, filler: filler, values: valuesCodec, offsets: offsetsCodec}, nil

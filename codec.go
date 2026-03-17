@@ -24,6 +24,8 @@ const (
 	CodecTypeBitpacking
 	CodecTypeFoR
 	CodecTypeSparse
+	CodecTypeSequence
+	CodecTypeALP
 )
 
 // codecExcludes is a bitmask of CodecType values to skip during compression.
@@ -93,6 +95,10 @@ func readCodecWithHeader[T Integer | Float | String](r io.Reader, header Header)
 		return readAnyFoRCodec[T](r, header)
 	case CodecTypeSparse:
 		return readSparseCodec[T](r, header)
+	case CodecTypeSequence:
+		return readAnySequenceCodec[T](r, header)
+	case CodecTypeALP:
+		return readAnyALPCodec[T](r, header)
 	default:
 		return nil, fmt.Errorf("codec: unknown codec type = %d", header.Kind)
 	}

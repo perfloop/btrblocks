@@ -170,8 +170,7 @@ func makeLowCardinalityFloat64Corpus(n, cardinality int) []float64 {
 }
 
 // TestSchemeSelectionInteger verifies that CompressInteger selects the expected
-// encoding for various data patterns, mirroring vortex-btrblocks
-// scheme_selection_tests for integer compression.
+// encoding for various data patterns.
 func TestSchemeSelectionInteger(t *testing.T) {
 	t.Run("constant", func(t *testing.T) {
 		values := make([]int32, 100)
@@ -218,11 +217,49 @@ func TestSchemeSelectionInteger(t *testing.T) {
 		_, ok := codec.(*RunendCodec[int32, uint16])
 		require.True(t, ok, "expected *RunendCodec[int32, uint16], got %T", codec)
 	})
+
+	t.Run("for", func(t *testing.T) {
+		// Unsigned values clustered around a high base: FoR subtracts the min,
+		// reducing bit width so bitpacking compresses the residuals well.
+		values := make([]uint32, 1000)
+		for i := range values {
+			values[i] = 1_000_000 + uint32((i*37)%100)
+		}
+		codec := CompressUnsignedInteger[uint32](array.NewPrimitivesUnsafe(values), defaultDepth, 0)
+		require.IsType(t, (*FoRCodec[uint32])(nil), codec)
+	})
+
+	t.Run("sparse", func(t *testing.T) {
+		// One dominant value (1_000_000) with rare outliers every 20th element.
+		values := make([]int32, 1000)
+		for i := range values {
+			if i%20 == 0 {
+				values[i] = 2_000_000 + int32((i*7)%1000)
+			} else {
+				values[i] = 1_000_000
+			}
+		}
+		codec := CompressInteger[int32](array.NewPrimitivesUnsafe(values), defaultDepth, 0)
+		switch codec.(type) {
+		case *SparseCodec[int32, uint16], *SparseCodec[int32, uint8]:
+		default:
+			t.Fatalf("expected *SparseCodec, got %T", codec)
+		}
+	})
+
+	t.Run("sequence", func(t *testing.T) {
+		// Perfect arithmetic progression: base=0, step=7.
+		values := make([]int32, 1000)
+		for i := range values {
+			values[i] = int32(i) * 7
+		}
+		codec := CompressInteger[int32](array.NewPrimitivesUnsafe(values), defaultDepth, 0)
+		require.IsType(t, (*SequenceCodec[int32])(nil), codec)
+	})
 }
 
 // TestSchemeSelectionFloat verifies that CompressFloat selects the expected
-// encoding for various data patterns, mirroring vortex-btrblocks
-// scheme_selection_tests for float compression.
+// encoding for various data patterns.
 func TestSchemeSelectionFloat(t *testing.T) {
 	t.Run("constant", func(t *testing.T) {
 		values := make([]float64, 100)
@@ -233,6 +270,17 @@ func TestSchemeSelectionFloat(t *testing.T) {
 		require.IsType(t, (*ConstCodec[float64])(nil), codec)
 	})
 
+	t.Run("alp", func(t *testing.T) {
+		// Decimal-friendly floats: ALP can encode these as integers with
+		// small exponents.
+		values := make([]float64, 1000)
+		for i := range values {
+			values[i] = float64(i) * 0.01
+		}
+		codec := CompressFloat[float64](array.NewPrimitivesUnsafe(values), defaultDepth, 0)
+		require.IsType(t, (*ALPCodec64)(nil), codec)
+	})
+
 	t.Run("dict", func(t *testing.T) {
 		// Five distinct float64 values interleaved so run-end loses.
 		distinct := []float64{1.1, 2.2, 3.3, 4.4, 5.5}
@@ -241,14 +289,17 @@ func TestSchemeSelectionFloat(t *testing.T) {
 			values[i] = distinct[i%len(distinct)]
 		}
 		codec := CompressFloat[float64](array.NewPrimitivesUnsafe(values), defaultDepth, 0)
-		_, ok := codec.(*DictCodec[float64, uint8])
-		require.True(t, ok, "expected *DictCodec[float64, uint8], got %T", codec)
+		switch codec.(type) {
+		case *DictCodec[float64, uint8], *ALPCodec64:
+			// Both valid — ALP can win for simple decimal values.
+		default:
+			t.Fatalf("expected *DictCodec[float64, uint8] or *ALPCodec64, got %T", codec)
+		}
 	})
 }
 
 // TestSchemeSelectionString verifies that CompressString selects the expected
-// encoding for various data patterns, mirroring vortex-btrblocks
-// scheme_selection_tests for string compression.
+// encoding for various data patterns.
 func TestSchemeSelectionString(t *testing.T) {
 	t.Run("constant", func(t *testing.T) {
 		values := make([]string, 100)
@@ -273,7 +324,7 @@ func TestSchemeSelectionString(t *testing.T) {
 }
 
 // TestCompressEmptyArray verifies that compressing an empty array succeeds and
-// produces a codec with length 0, mirroring vortex-btrblocks' test_empty.
+// produces a codec with length 0.
 func TestCompressEmptyArray(t *testing.T) {
 	t.Run("integer", func(t *testing.T) {
 		codec := CompressInteger[int32](array.NewPrimitivesUnsafe([]int32{}), defaultDepth, 0)
@@ -289,22 +340,24 @@ func TestCompressEmptyArray(t *testing.T) {
 }
 
 // TestCompressFloatCyclingValues verifies that 1024 float32 values cycling
-// through 50 distinct entries are dict-compressed, mirroring vortex-btrblocks'
-// test_compress.
+// through 50 distinct entries are compressed with a suitable codec.
 func TestCompressFloatCyclingValues(t *testing.T) {
 	values := make([]float32, 1024)
 	for i := range values {
 		values[i] = float32(i % 50)
 	}
 	codec := CompressFloat[float32](array.NewPrimitivesUnsafe(values), defaultDepth, 0)
-	_, ok := codec.(*DictCodec[float32, uint8])
-	require.True(t, ok, "expected *DictCodec[float32, uint8], got %T", codec)
+	switch codec.(type) {
+	case *DictCodec[float32, uint8]:
+	case *ALPCodec32:
+	default:
+		t.Fatalf("expected *DictCodec[float32, uint8] or *ALPCodec32, got %T", codec)
+	}
 	require.Equal(t, uint64(1024), codec.Length())
 }
 
 // TestCompressStringsDict verifies that low-cardinality interleaved strings are
-// dict-compressed, mirroring vortex-btrblocks' test_strings and
-// scheme_selection_tests/test_dict_compressed.
+// dict-compressed.
 func TestCompressStringsDict(t *testing.T) {
 	distinct := []string{"hello-world-1234", "hello-world-56789", "hello-world-99999"}
 	values := make([]string, 3000)
@@ -319,7 +372,7 @@ func TestCompressStringsDict(t *testing.T) {
 
 // TestCompressIntegerDictEncodable verifies that integer arrays with a small
 // number of distinct large values in short random-length runs are compressed
-// with dict encoding, mirroring vortex-btrblocks' test_dict_encodable.
+// with dict encoding.
 func TestCompressIntegerDictEncodable(t *testing.T) {
 	numbers := []int32{0, 123400, 617000, 1234000, 12340000, 37020000}
 	values := make([]int32, 0, 64000)
@@ -428,7 +481,7 @@ func FuzzCompressStringRoundTrip(f *testing.F) {
 
 // TestCompressNaNFloat verifies that compression and decompression of float
 // arrays containing special IEEE 754 values (NaN, ±Inf, ±0) round-trips
-// correctly by bit-pattern, mirroring vortex-btrblocks' test_sparse_compression.
+// correctly by bit-pattern.
 func TestCompressNaNFloat(t *testing.T) {
 	special := []float32{
 		float32(math.NaN()),

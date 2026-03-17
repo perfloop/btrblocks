@@ -215,8 +215,7 @@ func TestDictCodecDecodePanicsOnOutOfRangeIndices(t *testing.T) {
 	require.NoError(t, err)
 
 	// Encoder invariants guarantee valid indices. Out-of-range indices from
-	// hand-crafted codecs panic on slice access, matching Vortex's unchecked
-	// behavior.
+	// hand-crafted codecs panic on slice access (no bounds check on decode).
 	dst := make([]uint64, decoded.Length())
 	require.Panics(t, func() { _ = decoded.Decode(dst) })
 }

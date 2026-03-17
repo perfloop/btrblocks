@@ -19,7 +19,7 @@ func newDictCodecWithWidth[T Integer | Float | String, U UnsignedInteger](values
 		narrow[i] = U(index)
 	}
 	valuesCodec := compress(values, depth-1, excludes)
-	indicesCodec := CompressInteger(array.NewPrimitivesUnsafe(narrow), depth-1, excludes.with(CodecTypeDict))
+	indicesCodec := CompressInteger(array.NewPrimitivesUnsafe(narrow), depth-1, excludes.with(CodecTypeDict, CodecTypeSequence))
 	return &DictCodec[T, U]{values: valuesCodec, indices: indicesCodec}, nil
 }
 

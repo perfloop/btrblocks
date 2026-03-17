@@ -20,7 +20,11 @@ func BenchmarkSelectBest(b *testing.B) {
 		label := fmt.Sprintf("%dK", size/1000)
 
 		b.Run("sampled/"+label, func(b *testing.B) {
-			builders := append(integerBuilders[int32](), signedIntegerBuilders[int32]()...)
+			builders := append(integerBaseBuilders[int32](),
+				taggedBuilder[int32]{kind: CodecTypeZigzag, build: func(arr array.Array[int32], depth int, excl codecExcludes) (Codec[int32], error) {
+					return NewZigzagCodec(arr, depth, excl)
+				}})
+			builders = append(builders, integerTailBuilders[int32]()...)
 			b.ResetTimer()
 			for range b.N {
 				selectBest(arr, defaultDepth, builders, 0)
@@ -28,7 +32,11 @@ func BenchmarkSelectBest(b *testing.B) {
 		})
 
 		b.Run("full/"+label, func(b *testing.B) {
-			builders := append(integerBuilders[int32](), signedIntegerBuilders[int32]()...)
+			builders := append(integerBaseBuilders[int32](),
+				taggedBuilder[int32]{kind: CodecTypeZigzag, build: func(arr array.Array[int32], depth int, excl codecExcludes) (Codec[int32], error) {
+					return NewZigzagCodec(arr, depth, excl)
+				}})
+			builders = append(builders, integerTailBuilders[int32]()...)
 			b.ResetTimer()
 			for range b.N {
 				selectBestAll(arr, defaultDepth, builders, 0)

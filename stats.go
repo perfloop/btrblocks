@@ -7,7 +7,7 @@ import (
 )
 
 // arrayStats holds statistics computed from the full array for
-// stats-based builder rejection, matching Vortex's gen_stats approach.
+// stats-based builder rejection.
 type arrayStats[T Integer | Float | String] struct {
 	isConst       bool    // true if every element is identical
 	distinctRatio float64 // distinctCount / length
@@ -24,10 +24,10 @@ type arrayStats[T Integer | Float | String] struct {
 func (h arrayStats[T]) shouldSkip(kind CodecType, n uint64) bool {
 	switch kind {
 	case CodecTypeDict:
-		// Vortex: skip if >50% distinct values.
+		// Skip if >50% distinct values.
 		return h.distinctRatio > 0.5
 	case CodecTypeRunend:
-		// Vortex: skip if average run length < 4.
+		// Skip if average run length < 4.
 		return h.avgRunLength < 4.0
 	case CodecTypeZigzag:
 		// Zigzag only helps when there are negative values to fold.
@@ -38,13 +38,18 @@ func (h arrayStats[T]) shouldSkip(kind CodecType, n uint64) bool {
 	case CodecTypeSparse:
 		// Sparse only helps when one value dominates ≥90% of the array.
 		return n == 0 || float64(h.topCount)/float64(n) < 0.9
+	case CodecTypeSequence:
+		// Sequence only works for perfect arithmetic progressions (all distinct, constant stride).
+		return h.distinctRatio < 1.0
+	case CodecTypeALP:
+		return h.isConst
 	default:
 		return false
 	}
 }
 
 // computeArrayStats scans the full array once to compute stats
-// used for O(1) codec rejection, matching Vortex's gen_stats approach.
+// used for O(1) codec rejection.
 func computeArrayStats[T Integer | Float | String](arr array.Array[T]) arrayStats[T] {
 	n := arr.Length()
 	if n == 0 {

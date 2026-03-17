@@ -13,7 +13,9 @@ var (
 	_ Codec[uint64] = (*RawCodec[uint64])(nil)
 )
 
-func integerBuilders[T Integer]() []taggedBuilder[T] {
+// integerBaseBuilders returns the shared head builders (Raw, Const) that
+// precede type-specific codecs in trial order.
+func integerBaseBuilders[T Integer]() []taggedBuilder[T] {
 	return []taggedBuilder[T]{
 		{
 			kind:  CodecTypeRaw,
@@ -22,6 +24,23 @@ func integerBuilders[T Integer]() []taggedBuilder[T] {
 		{
 			kind:  CodecTypeConst,
 			build: func(arr array.Array[T], _ int, _ codecExcludes) (Codec[T], error) { return NewConstIntegerCodec(arr) },
+		},
+		{
+			kind:  CodecTypeSequence,
+			build: func(arr array.Array[T], depth int, excl codecExcludes) (Codec[T], error) { return NewSequenceCodec(arr, depth, excl) },
+		},
+	}
+}
+
+// integerTailBuilders returns the shared tail builders that follow
+// type-specific codecs in trial order: Delta→Sparse→Dict→RunEnd.
+func integerTailBuilders[T Integer]() []taggedBuilder[T] {
+	return []taggedBuilder[T]{
+		{
+			kind: CodecTypeSparse,
+			build: func(arr array.Array[T], depth int, excl codecExcludes) (Codec[T], error) {
+				return NewSparseIntegerCodec(arr, depth, excl)
+			},
 		},
 		{
 			kind: CodecTypeDict,
@@ -35,41 +54,39 @@ func integerBuilders[T Integer]() []taggedBuilder[T] {
 				return NewRunendIntegerCodec(arr, depth, excl)
 			},
 		},
-		{
-			kind: CodecTypeSparse,
-			build: func(arr array.Array[T], depth int, excl codecExcludes) (Codec[T], error) {
-				return NewSparseIntegerCodec(arr, depth, excl)
-			},
-		},
 	}
 }
 
-func signedIntegerBuilders[T SignedInteger]() []taggedBuilder[T] {
-	return []taggedBuilder[T]{
-		{func(arr array.Array[T], depth int, excl codecExcludes) (Codec[T], error) {
-			return NewZigzagCodec(arr, depth, excl)
-		}, CodecTypeZigzag},
-	}
-}
-
-func unsignedIntegerBuilders[T UnsignedInteger]() []taggedBuilder[T] {
-	return []taggedBuilder[T]{
-		{func(arr array.Array[T], _ int, _ codecExcludes) (Codec[T], error) {
-			return NewBitpackingCodec(arr), nil
-		}, CodecTypeBitpacking},
-		{func(arr array.Array[T], depth int, excl codecExcludes) (Codec[T], error) {
-			return NewFoRCodec(arr, depth, excl)
-		}, CodecTypeFoR},
-	}
-}
-
+// CompressSignedInteger builds codecs in trial order:
+// Constant→ZigZag→Sparse→Dict→RunEnd (Raw as baseline).
 func CompressSignedInteger[T SignedInteger](arr array.Array[T], depth int, excludes codecExcludes) Codec[T] {
-	builders := append(integerBuilders[T](), signedIntegerBuilders[T]()...)
+	builders := integerBaseBuilders[T]()
+	builders = append(builders, taggedBuilder[T]{
+		kind: CodecTypeZigzag,
+		build: func(arr array.Array[T], depth int, excl codecExcludes) (Codec[T], error) {
+			return NewZigzagCodec(arr, depth, excl)
+		},
+	})
+	builders = append(builders, integerTailBuilders[T]()...)
 	return selectBest(arr, depth, builders, excludes)
 }
 
+// CompressUnsignedInteger builds codecs in trial order:
+// Constant→FoR→BitPacking→Sparse→Dict→RunEnd (Raw as baseline).
 func CompressUnsignedInteger[T UnsignedInteger](arr array.Array[T], depth int, excludes codecExcludes) Codec[T] {
-	builders := append(integerBuilders[T](), unsignedIntegerBuilders[T]()...)
+	builders := integerBaseBuilders[T]()
+	builders = append(builders, taggedBuilder[T]{
+		kind: CodecTypeFoR,
+		build: func(arr array.Array[T], depth int, excl codecExcludes) (Codec[T], error) {
+			return NewFoRCodec(arr, depth, excl)
+		},
+	}, taggedBuilder[T]{
+		kind: CodecTypeBitpacking,
+		build: func(arr array.Array[T], _ int, _ codecExcludes) (Codec[T], error) {
+			return NewBitpackingCodec(arr), nil
+		},
+	})
+	builders = append(builders, integerTailBuilders[T]()...)
 	return selectBest(arr, depth, builders, excludes)
 }
 

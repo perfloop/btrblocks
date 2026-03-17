@@ -152,7 +152,7 @@ func TestReadRunendCodecRejectsInvalidRunStructure(t *testing.T) {
 			want: "runs length",
 		},
 		// Non-monotonic ends are an encoder invariant violation — not checked
-		// on the read path (matching Vortex's unchecked approach).
+		// on the read path (no per-element validation on decode).
 	}
 
 	for _, tt := range tests {
@@ -184,7 +184,7 @@ func TestReadRunendCodecRejectsUnexpectedBodySize(t *testing.T) {
 
 func TestRunendDecodePanicsOnZeroLengthRun(t *testing.T) {
 	// Zero-length runs (duplicate ends) are an encoder invariant violation.
-	// Decode does not bounds-check ends — matching Vortex's unchecked approach.
+	// Decode does not bounds-check ends — no per-element validation on decode.
 	codec := &RunendCodec[uint64, uint8]{
 		length: 8,
 		runs:   NewRawCodec(array.NewPrimitivesUnsafe([]uint64{5, 8, 13})),

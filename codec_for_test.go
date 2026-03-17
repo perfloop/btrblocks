@@ -9,10 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Vortex test_for_compressed: 1000 i32 values at 1_000_000 + ((i*37) % 100).
+// 1000 i32 values at 1_000_000 + ((i*37) % 100).
 // FoR should be selected because the range (0-99) is much narrower than the
 // absolute values (~1M), so subtracting min drastically reduces bit width.
-func TestFoRCodecVortexHighBaseSmallDelta(t *testing.T) {
+func TestFoRCodecHighBaseSmallDelta(t *testing.T) {
 	data := make([]uint32, 1000)
 	for i := range data {
 		data[i] = 1_000_000 + uint32((i*37)%100)
