@@ -16,16 +16,14 @@ type taggedBuilder[T Integer | Float | String] struct {
 	kind  CodecType
 }
 
-func selectBest[T Integer | Float | String](arr array.Array[T], depth int, builders []taggedBuilder[T], excludes codecExcludes) Codec[T] {
+func selectBest[T Integer | Float | String](arr array.Array[T], depth int, builders []taggedBuilder[T], excludes codecExcludes, stats baseStats[T]) Codec[T] {
 	if arr.Length() < sampleThreshold {
 		return selectBestAll(arr, depth, builders, excludes)
 	}
 
-	hints := computeArrayStats(arr)
-
 	// If stats say the array is constant, build Const and return immediately.
-	if hints.isConst && !excludes.has(CodecTypeConst) {
-		return &ConstCodec[T]{length: arr.Length(), value: hints.topValue}
+	if stats.isConst && !excludes.has(CodecTypeConst) {
+		return &ConstCodec[T]{length: arr.Length(), value: stats.topValue}
 	}
 
 	// Trial-compress each candidate on a stratified sample.
@@ -36,7 +34,7 @@ func selectBest[T Integer | Float | String](arr array.Array[T], depth int, build
 		bestSize uint64
 	)
 	for i, tb := range builders {
-		if excludes.has(tb.kind) || tb.kind == CodecTypeConst || hints.shouldSkip(tb.kind, n) {
+		if excludes.has(tb.kind) || tb.kind == CodecTypeConst || stats.shouldSkip(tb.kind, n) {
 			continue
 		}
 		c, err := tb.build(sample, depth, excludes)

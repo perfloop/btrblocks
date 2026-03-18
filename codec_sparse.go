@@ -27,12 +27,12 @@ func newSparseCodecFromSource[T Integer | Float | String](
 	}
 
 	// Find the most frequent value.
-	counts := make(map[any]uint64, 256)
+	counts := make(map[T]uint64, 256)
 	for i := uint64(0); i < arr.Length(); i++ {
-		counts[any(arr.ValueAt(i))]++
+		counts[arr.ValueAt(i)]++
 	}
 	var (
-		fillerKey   any
+		fillerKey   T
 		fillerCount uint64
 	)
 	for k, c := range counts {
@@ -41,7 +41,6 @@ func newSparseCodecFromSource[T Integer | Float | String](
 			fillerCount = c
 		}
 	}
-	filler := fillerKey.(T)
 
 	// Collect non-filler values and their offsets.
 	var (
@@ -49,8 +48,8 @@ func newSparseCodecFromSource[T Integer | Float | String](
 		offsets   = make([]uint64, 0, arr.Length()-fillerCount)
 	)
 	for i := uint64(0); i < arr.Length(); i++ {
-		if !cmpFn(arr.ValueAt(i), filler) {
-			nonFiller = append(nonFiller, arr.ValueAt(i))
+		if val := arr.ValueAt(i); !cmpFn(val, fillerKey) {
+			nonFiller = append(nonFiller, val)
 			offsets = append(offsets, i)
 		}
 	}
@@ -61,13 +60,13 @@ func newSparseCodecFromSource[T Integer | Float | String](
 	}
 	switch {
 	case maxOffset <= uint64(^uint8(0)):
-		return newSparseCodecWithWidth[T, uint8](arr.Length(), filler, nonFiller, offsets, depth, excludes)
+		return newSparseCodecWithWidth[T, uint8](arr.Length(), fillerKey, nonFiller, offsets, depth, excludes)
 	case maxOffset <= uint64(^uint16(0)):
-		return newSparseCodecWithWidth[T, uint16](arr.Length(), filler, nonFiller, offsets, depth, excludes)
+		return newSparseCodecWithWidth[T, uint16](arr.Length(), fillerKey, nonFiller, offsets, depth, excludes)
 	case maxOffset <= uint64(^uint32(0)):
-		return newSparseCodecWithWidth[T, uint32](arr.Length(), filler, nonFiller, offsets, depth, excludes)
+		return newSparseCodecWithWidth[T, uint32](arr.Length(), fillerKey, nonFiller, offsets, depth, excludes)
 	default:
-		return newSparseCodecWithWidth[T, uint64](arr.Length(), filler, nonFiller, offsets, depth, excludes)
+		return newSparseCodecWithWidth[T, uint64](arr.Length(), fillerKey, nonFiller, offsets, depth, excludes)
 	}
 }
 

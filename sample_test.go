@@ -25,9 +25,10 @@ func BenchmarkSelectBest(b *testing.B) {
 					return NewZigzagCodec(arr, depth, excl)
 				}})
 			builders = append(builders, integerTailBuilders[int32]()...)
+			stats := computeSignedIntStats(arr)
 			b.ResetTimer()
 			for range b.N {
-				selectBest(arr, defaultDepth, builders, 0)
+				selectBest(arr, defaultDepth, builders, 0, stats.baseStats)
 			}
 		})
 

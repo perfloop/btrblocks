@@ -47,5 +47,6 @@ func floatBuilders[T Float]() []taggedBuilder[T] {
 }
 
 func CompressFloat[T Float](arr array.Array[T], depth int, excludes codecExcludes) Codec[T] {
-	return selectBest(arr, depth, floatBuilders[T](), excludes)
+	stats := computeFloatStats(arr)
+	return selectBest(arr, depth, floatBuilders[T](), excludes, stats)
 }

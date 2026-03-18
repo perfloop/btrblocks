@@ -1,6 +1,10 @@
 package btrblocks
 
-import "github.com/axiomhq/btrblocks/array"
+import (
+	"math/bits"
+
+	"github.com/axiomhq/btrblocks/array"
+)
 
 var (
 	_ Codec[int8]   = (*RawCodec[int8])(nil)
@@ -60,6 +64,10 @@ func integerTailBuilders[T Integer]() []taggedBuilder[T] {
 // CompressSignedInteger builds codecs in trial order:
 // Constant→ZigZag→Sparse→Dict→RunEnd (Raw as baseline).
 func CompressSignedInteger[T SignedInteger](arr array.Array[T], depth int, excludes codecExcludes) Codec[T] {
+	stats := computeSignedIntStats(arr)
+	if !stats.hasNegative {
+		excludes = excludes.with(CodecTypeZigzag)
+	}
 	builders := integerBaseBuilders[T]()
 	builders = append(builders, taggedBuilder[T]{
 		kind: CodecTypeZigzag,
@@ -68,12 +76,16 @@ func CompressSignedInteger[T SignedInteger](arr array.Array[T], depth int, exclu
 		},
 	})
 	builders = append(builders, integerTailBuilders[T]()...)
-	return selectBest(arr, depth, builders, excludes)
+	return selectBest(arr, depth, builders, excludes, stats.baseStats)
 }
 
 // CompressUnsignedInteger builds codecs in trial order:
 // Constant→FoR→BitPacking→Sparse→Dict→RunEnd (Raw as baseline).
 func CompressUnsignedInteger[T UnsignedInteger](arr array.Array[T], depth int, excludes codecExcludes) Codec[T] {
+	stats := computeUnsignedIntStats(arr)
+	if bits.Len64(uint64(stats.max-stats.min)) >= bits.Len64(uint64(stats.max)) {
+		excludes = excludes.with(CodecTypeFoR)
+	}
 	builders := integerBaseBuilders[T]()
 	builders = append(builders, taggedBuilder[T]{
 		kind: CodecTypeFoR,
@@ -87,7 +99,7 @@ func CompressUnsignedInteger[T UnsignedInteger](arr array.Array[T], depth int, e
 		},
 	})
 	builders = append(builders, integerTailBuilders[T]()...)
-	return selectBest(arr, depth, builders, excludes)
+	return selectBest(arr, depth, builders, excludes, stats.baseStats)
 }
 
 func CompressInteger[T Integer](arr array.Array[T], depth int, excludes codecExcludes) Codec[T] {

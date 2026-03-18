@@ -40,5 +40,6 @@ func stringBuilders() []taggedBuilder[string] {
 }
 
 func CompressString(arr array.Array[string], depth int, excludes codecExcludes) Codec[string] {
-	return selectBest(arr, depth, stringBuilders(), excludes)
+	stats := computeStringStats(arr)
+	return selectBest(arr, depth, stringBuilders(), excludes, stats)
 }
