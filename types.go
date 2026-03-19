@@ -12,7 +12,6 @@ type (
 	UnsignedInteger = array.UnsignedInteger
 	Float           = array.Float
 	String          = array.String
-	PrimitiveType   = array.PrimitiveType
 )
 
 type PType = array.PType
@@ -32,6 +31,62 @@ const (
 	PTypeString  = array.PTypeString
 )
 
+type CodeType uint8
+
+const (
+	CodecTypeUnknown CodeType = iota
+	CodecTypeConst
+	CodecTypeRaw
+	CodecTypeDict
+	CodecTypeRunEnd
+	CodecTypeZigZag
+	CodecTypeBitpack
+	CodecTypeFor
+	CodecTypeSparse
+	CodecTypeSequence
+	CodecTypeALP
+)
+
+func (k CodeType) String() string {
+	switch k {
+	case CodecTypeConst:
+		return "const"
+	case CodecTypeRaw:
+		return "raw"
+	case CodecTypeDict:
+		return "dict"
+	case CodecTypeRunEnd:
+		return "runend"
+	case CodecTypeZigZag:
+		return "zigzag"
+	case CodecTypeBitpack:
+		return "bitpack"
+	case CodecTypeFor:
+		return "for"
+	case CodecTypeSparse:
+		return "sparse"
+	case CodecTypeSequence:
+		return "sequence"
+	case CodecTypeALP:
+		return "alp"
+	default:
+		return "unknown"
+	}
+}
+
+type Options struct {
+	MaxDepth int
+}
+
+const defaultMaxDepth = 3
+
+func normalizeOptions(opts Options) Options {
+	if opts.MaxDepth <= 0 {
+		opts.MaxDepth = defaultMaxDepth
+	}
+	return opts
+}
+
 func pTypeForType[T Integer | Float | String]() PType {
 	return array.PTypeForType[T]()
 }
@@ -47,7 +102,7 @@ func cmpFloats[T Float](a, b T) bool {
 	}
 }
 
+type cmpFn[T Integer | Float | String] func(T, T) bool
+
 func cmpIntegers[T Integer](a, b T) bool { return a == b }
 func cmpStrings[T String](a, b T) bool   { return a == b }
-
-type cmpFn[T Integer | Float | String] func(a, b T) bool

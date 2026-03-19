@@ -7,75 +7,36 @@ import (
 	"github.com/axiomhq/btrblocks/array"
 )
 
-type RunendCodec[T Integer | Float | String, U UnsignedInteger] struct {
+type runEndCodec[T Integer | Float | String, U UnsignedInteger] struct {
 	length uint64
 	runs   Codec[T]
 	ends   Codec[U]
 }
 
-func newRunendCodecFromSource[T Integer | Float | String](length uint64, valueAt func(uint64) T, cmpFn cmpFn[T], depth int, excludes codecExcludes) (Codec[T], error) {
-	if length == 0 {
-		return nil, errDataEmpty
+func (r *runEndCodec[T, U]) Kind() CodeType { return CodecTypeRunEnd }
+func (r *runEndCodec[T, U]) Length() uint64 { return r.length }
+func (r *runEndCodec[T, U]) PType() PType   { return pTypeForType[T]() }
+
+func (r *runEndCodec[T, U]) BinarySize() uint64 {
+	return uint64(headerSize) + r.runs.BinarySize() + r.ends.BinarySize()
+}
+
+func (r *runEndCodec[T, U]) ValueAt(offset uint64) T {
+	if offset >= r.length {
+		panic(errOffsetOutOfRange)
 	}
-	if depth <= 0 {
-		return nil, errDepthExhausted
-	}
-	var (
-		runs = make([]T, 0)
-		ends = make([]uint64, 0)
-		prev = valueAt(0)
-	)
-	runs = append(runs, prev)
-	for i := uint64(1); i < length; i++ {
-		val := valueAt(i)
-		if !cmpFn(prev, val) {
-			ends = append(ends, i)
-			runs = append(runs, val)
-			prev = val
+	lo, hi := uint64(0), r.ends.Length()
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		if offset < uint64(r.ends.ValueAt(mid)) {
+			hi = mid
+			continue
 		}
+		lo = mid + 1
 	}
-	maxEnd := uint64(0)
-	if len(ends) > 0 {
-		maxEnd = ends[len(ends)-1]
-	}
-	switch {
-	case maxEnd <= uint64(^uint8(0)):
-		return newRunendCodecWithWidth[T, uint8](length, runs, ends, depth, excludes)
-	case maxEnd <= uint64(^uint16(0)):
-		return newRunendCodecWithWidth[T, uint16](length, runs, ends, depth, excludes)
-	case maxEnd <= uint64(^uint32(0)):
-		return newRunendCodecWithWidth[T, uint32](length, runs, ends, depth, excludes)
-	default:
-		return newRunendCodecWithWidth[T, uint64](length, runs, ends, depth, excludes)
-	}
+	return r.runs.ValueAt(lo)
 }
 
-func newRunendCodecWithWidth[T Integer | Float | String, U UnsignedInteger](length uint64, runs []T, ends []uint64, depth int, excludes codecExcludes) (Codec[T], error) {
-	narrow := make([]U, len(ends))
-	for i, end := range ends {
-		narrow[i] = U(end)
-	}
-	childExcl := excludes.with(CodecTypeRunend, CodecTypeDict)
-	runsCodec := compress(runs, depth-1, childExcl)
-	endsCodec := CompressInteger(array.NewPrimitivesUnsafe(narrow), depth-1, childExcl)
-	return &RunendCodec[T, U]{length: length, runs: runsCodec, ends: endsCodec}, nil
-}
-
-func NewRunendIntegerCodec[T Integer](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
-	return newRunendCodecFromSource(arr.Length(), arr.ValueAt, cmpIntegers[T], depth, excludes)
-}
-
-func NewRunendStringCodec[T String](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
-	return newRunendCodecFromSource(arr.Length(), arr.ValueAt, cmpStrings[T], depth, excludes)
-}
-
-func NewRunendFloatCodec[T Float](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
-	return newRunendCodecFromSource(arr.Length(), arr.ValueAt, cmpFloats[T], depth, excludes)
-}
-
-// fillRun writes value into dst[start:end] without any extra allocation.
-// It seeds the first slot and then doubles the initialized prefix with copy,
-// which is noticeably cheaper than one assignment per decoded value on long runs.
 func fillRun[T Integer | Float | String](dst []T, start, end int, value T) {
 	if start >= end {
 		return
@@ -92,11 +53,7 @@ func fillRun[T Integer | Float | String](dst []T, start, end int, value T) {
 	}
 }
 
-// Decode expands run-end encoded data into dst in a single forward pass.
-//
-// ends[i] is the exclusive upper bound for runs[i]. The final run does not
-// store an end; it implicitly extends to Length().
-func (r *RunendCodec[T, U]) Decode(dst []T) error {
+func (r *runEndCodec[T, U]) Decode(dst []T) error {
 	if err := validateDecodeLength(r.length, len(dst)); err != nil {
 		return err
 	}
@@ -119,89 +76,31 @@ func (r *RunendCodec[T, U]) Decode(dst []T) error {
 	return nil
 }
 
-func (r *RunendCodec[T, U]) Children() []Scheme { return []Scheme{r.runs.(Scheme), r.ends.(Scheme)} }
-
-func (r *RunendCodec[T, U]) ValueAt(offset uint64) (T, error) {
-	var zero T
-	if offset >= r.length {
-		return zero, errOffsetOutOfRange
-	}
-
-	lo, hi := uint64(0), r.ends.Length()
-	for lo < hi {
-		mid := lo + (hi-lo)/2
-		end, err := r.ends.ValueAt(mid)
-		if err != nil {
-			return zero, err
-		}
-		if offset < uint64(end) {
-			hi = mid
-			continue
-		}
-		lo = mid + 1
-	}
-
-	return r.runs.ValueAt(lo)
-}
-
-func (r *RunendCodec[T, U]) WriteTo(w io.Writer) (n int64, err error) {
-	n, err = Header{
-		Version:    1,
-		Kind:       CodecTypeRunend,
-		ElemType:   pTypeForType[T](),
-		ChildCount: 2,
-		Flags:      0,
-		Length:     r.length,
-		BodySize:   0,
+func (r *runEndCodec[T, U]) WriteTo(w io.Writer) (int64, error) {
+	n, err := header{
+		Version:  versionNumber,
+		Kind:     CodecTypeRunEnd,
+		ElemType: pTypeForType[T](),
+		Length:   r.length,
+		BodySize: 0,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
 	}
-
 	nn, err := r.runs.WriteTo(w)
+	n += nn
 	if err != nil {
-		return n + int64(nn), err
+		return n, err
 	}
-
-	n += int64(nn)
-
 	nn, err = r.ends.WriteTo(w)
-	return n + int64(nn), err
+	return n + nn, err
 }
 
-func (r *RunendCodec[T, U]) BinarySize() uint64 {
-	return uint64(headerSize) + r.runs.BinarySize() + r.ends.BinarySize()
-}
-func (r *RunendCodec[T, U]) Length() uint64 { return r.length }
-func (r *RunendCodec[T, U]) PType() PType   { return pTypeForType[T]() }
-
-func readRunendCodecWithEnds[T Integer | Float | String, U UnsignedInteger](r io.Reader, header Header, runs Codec[T], childHeader Header) (Codec[T], error) {
-	ends, err := readCodecWithHeader[U](r, childHeader)
-	if err != nil {
-		return nil, err
+func readRunEndCodec[T Integer | Float | String](r io.Reader, h header) (Codec[T], error) {
+	if h.BodySize != 0 {
+		return nil, fmt.Errorf("codec: runend body size = %d, want 0", h.BodySize)
 	}
-	// O(1) structural checks only; per-element invariants are guaranteed by
-	// the encoder (no per-element validation on decode).
-	if runs.Length() == 0 {
-		return nil, fmt.Errorf("codec: runend runs length = 0")
-	}
-	if runs.Length() != ends.Length()+1 {
-		return nil, fmt.Errorf("codec: runend runs length = %d, want %d", runs.Length(), ends.Length()+1)
-	}
-	if runs.Length() > header.Length {
-		return nil, fmt.Errorf("codec: runend runs length = %d exceeds length %d", runs.Length(), header.Length)
-	}
-	return &RunendCodec[T, U]{length: header.Length, runs: runs, ends: ends}, nil
-}
-
-func readRunendCodec[T Integer | Float | String](r io.Reader, header Header) (Codec[T], error) {
-	if header.ChildCount != 2 {
-		return nil, fmt.Errorf("codec: runend child count = %d, want 2", header.ChildCount)
-	}
-	if header.BodySize != 0 {
-		return nil, fmt.Errorf("codec: runend body size = %d, want 0", header.BodySize)
-	}
-	if header.Length == 0 {
+	if h.Length == 0 {
 		return nil, fmt.Errorf("codec: runend length = 0")
 	}
 	runs, err := readCodec[T](r)
@@ -214,14 +113,125 @@ func readRunendCodec[T Integer | Float | String](r io.Reader, header Header) (Co
 	}
 	switch childHeader.ElemType {
 	case PTypeUint8:
-		return readRunendCodecWithEnds[T, uint8](r, header, runs, childHeader)
+		ends, err := readCodecWithHeader[uint8](r, childHeader)
+		if err != nil {
+			return nil, err
+		}
+		if runs.Length() != ends.Length()+1 {
+			return nil, fmt.Errorf("codec: runend runs length = %d, want %d", runs.Length(), ends.Length()+1)
+		}
+		return &runEndCodec[T, uint8]{length: h.Length, runs: runs, ends: ends}, nil
 	case PTypeUint16:
-		return readRunendCodecWithEnds[T, uint16](r, header, runs, childHeader)
+		ends, err := readCodecWithHeader[uint16](r, childHeader)
+		if err != nil {
+			return nil, err
+		}
+		if runs.Length() != ends.Length()+1 {
+			return nil, fmt.Errorf("codec: runend runs length = %d, want %d", runs.Length(), ends.Length()+1)
+		}
+		return &runEndCodec[T, uint16]{length: h.Length, runs: runs, ends: ends}, nil
 	case PTypeUint32:
-		return readRunendCodecWithEnds[T, uint32](r, header, runs, childHeader)
+		ends, err := readCodecWithHeader[uint32](r, childHeader)
+		if err != nil {
+			return nil, err
+		}
+		if runs.Length() != ends.Length()+1 {
+			return nil, fmt.Errorf("codec: runend runs length = %d, want %d", runs.Length(), ends.Length()+1)
+		}
+		return &runEndCodec[T, uint32]{length: h.Length, runs: runs, ends: ends}, nil
 	case PTypeUint64:
-		return readRunendCodecWithEnds[T, uint64](r, header, runs, childHeader)
+		ends, err := readCodecWithHeader[uint64](r, childHeader)
+		if err != nil {
+			return nil, err
+		}
+		if runs.Length() != ends.Length()+1 {
+			return nil, fmt.Errorf("codec: runend runs length = %d, want %d", runs.Length(), ends.Length()+1)
+		}
+		return &runEndCodec[T, uint64]{length: h.Length, runs: runs, ends: ends}, nil
 	default:
-		return nil, fmt.Errorf("codec: runend end element type = %v, want unsigned integer", childHeader.ElemType)
+		return nil, fmt.Errorf("codec: runend end type = %v, want unsigned integer", childHeader.ElemType)
+	}
+}
+
+func buildRunEndCodec[T Integer | Float | String](arr array.Array[T], ctx planContext, cmp cmpFn[T]) (Codec[T], error) {
+	if ctx.depth <= 0 {
+		return nil, errDepthExhausted
+	}
+	if arr.Length() == 0 {
+		return nil, errDataEmpty
+	}
+
+	runs := make([]T, 0)
+	ends := make([]uint64, 0)
+	prev := arr.ValueAt(0)
+	runs = append(runs, prev)
+	for i := uint64(1); i < arr.Length(); i++ {
+		value := arr.ValueAt(i)
+		if !cmp(prev, value) {
+			ends = append(ends, i)
+			runs = append(runs, value)
+			prev = value
+		}
+	}
+
+	childCtx := ctx.descend().withExcludes(CodecTypeRunEnd, CodecTypeDict)
+	runsCodec, err := compressArray(buildArray(runs), childCtx)
+	if err != nil {
+		return nil, err
+	}
+	maxEnd := uint64(0)
+	if len(ends) > 0 {
+		maxEnd = ends[len(ends)-1]
+	}
+	switch {
+	case maxEnd <= uint64(^uint8(0)):
+		narrow := make([]uint8, len(ends))
+		for i, end := range ends {
+			narrow[i] = uint8(end)
+		}
+		endsCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		if err != nil {
+			return nil, err
+		}
+		return &runEndCodec[T, uint8]{length: arr.Length(), runs: runsCodec, ends: endsCodec}, nil
+	case maxEnd <= uint64(^uint16(0)):
+		narrow := make([]uint16, len(ends))
+		for i, end := range ends {
+			narrow[i] = uint16(end)
+		}
+		endsCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		if err != nil {
+			return nil, err
+		}
+		return &runEndCodec[T, uint16]{length: arr.Length(), runs: runsCodec, ends: endsCodec}, nil
+	case maxEnd <= uint64(^uint32(0)):
+		narrow := make([]uint32, len(ends))
+		for i, end := range ends {
+			narrow[i] = uint32(end)
+		}
+		endsCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		if err != nil {
+			return nil, err
+		}
+		return &runEndCodec[T, uint32]{length: arr.Length(), runs: runsCodec, ends: endsCodec}, nil
+	default:
+		narrow := make([]uint64, len(ends))
+		copy(narrow, ends)
+		endsCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		if err != nil {
+			return nil, err
+		}
+		return &runEndCodec[T, uint64]{length: arr.Length(), runs: runsCodec, ends: endsCodec}, nil
+	}
+}
+
+func estimateRunEnd[T Integer | Float | String](avgRunLength float64, cmp cmpFn[T]) func(array.Array[T], planContext) (float64, bool) {
+	return func(arr array.Array[T], ctx planContext) (float64, bool) {
+		if ctx.depth <= 0 || avgRunLength < 4 {
+			return 0, false
+		}
+		return estimateBySample(arr, ctx, func(arr array.Array[T], ctx planContext) (Codec[T], error) {
+			return buildRunEndCodec(arr, ctx, cmp)
+		})
 	}
 }

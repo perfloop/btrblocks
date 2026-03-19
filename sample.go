@@ -1,53 +1,94 @@
 package btrblocks
 
-import (
-	"github.com/axiomhq/btrblocks/array"
-)
+import "github.com/axiomhq/btrblocks/array"
 
 const (
-	// sampleThreshold is the minimum array length before sampling kicks in.
-	// Below this, selectBest evaluates all builders on the full data.
-	sampleThreshold = 1024
+	sampleWindow  = 64
+	minSampleRuns = 16
 
-	sampleChunks   = 16
-	samplePerChunk = 64
-	sampleSize     = sampleChunks * samplePerChunk // 1024
-
-	// LCG parameters for deterministic pseudo-random chunk offsets.
-	// Deterministic seed for reproducible sampling.
 	sampleSeed   = 1234567890
 	sampleLCGMul = 6364136223846793005
 	sampleLCGInc = 1442695040888963407
 )
 
-// sampleArray returns a stratified sample of arr: sampleChunks evenly-spaced
-// chunks of samplePerChunk consecutive elements each, with a deterministic
-// pseudo-random offset within each chunk (using deterministic pseudo-random
-// offsets). The caller must ensure arr.Length() >= sampleThreshold.
-func sampleArray[T Integer | Float | String](arr array.Array[T]) array.Array[T] {
-	var (
-		n           = arr.Length()
-		chunkStride = n / sampleChunks
-		sampled     = make([]T, 0, sampleSize)
-		rng         = uint64(sampleSeed)
-	)
+type indexRange struct {
+	start uint64
+	end   uint64
+}
 
-	for chunk := range uint64(sampleChunks) {
-		maxOffset := chunkStride - samplePerChunk
+func sampleCountApproxOnePercent(length uint64) uint64 {
+	if length == 0 {
+		return minSampleRuns
+	}
+	approx := (length / 100) / sampleWindow
+	if approx == 0 {
+		approx = minSampleRuns
+	}
+	if approx%16 != 0 {
+		approx += 16 - (approx % 16)
+	}
+	if approx < minSampleRuns {
+		return minSampleRuns
+	}
+	return approx
+}
+
+func partitionIndices(length, partitions uint64) []indexRange {
+	if partitions == 0 {
+		return nil
+	}
+	longParts := length % partitions
+	shortStep := length / partitions
+	longStep := shortStep + 1
+	longStop := longParts * longStep
+
+	ranges := make([]indexRange, 0, partitions)
+	for off := uint64(0); off < longStop; off += longStep {
+		ranges = append(ranges, indexRange{start: off, end: off + longStep})
+	}
+	if shortStep == 0 {
+		return ranges
+	}
+	for off := longStop; off < length; off += shortStep {
+		ranges = append(ranges, indexRange{start: off, end: off + shortStep})
+	}
+	return ranges
+}
+
+func sampleArray[T Integer | Float | String](arr array.Array[T]) array.Array[T] {
+	length := arr.Length()
+	sampleRuns := sampleCountApproxOnePercent(length)
+	totalSample := uint64(sampleWindow) * sampleRuns
+	if totalSample >= length {
+		return arr
+	}
+
+	partitions := partitionIndices(length, sampleRuns)
+	sampled := make([]T, 0, totalSample)
+	rng := uint64(sampleSeed)
+
+	for _, part := range partitions {
+		partLen := part.end - part.start
+		if partLen == 0 {
+			continue
+		}
+		take := uint64(sampleWindow)
+		if partLen < take {
+			take = partLen
+		}
 		rng = rng*sampleLCGMul + sampleLCGInc
 		offset := uint64(0)
-		if maxOffset > 0 {
-			offset = (rng >> 33) % maxOffset
+		if partLen > take {
+			offset = (rng >> 33) % (partLen - take + 1)
 		}
-		start := chunk*chunkStride + offset
-		for j := range uint64(samplePerChunk) {
-			sampled = append(sampled, arr.ValueAt(start+j))
+		start := part.start + offset
+		for i := uint64(0); i < take; i++ {
+			sampled = append(sampled, arr.ValueAt(start+i))
 		}
 	}
 	return buildArray(sampled)
 }
 
-// buildArray wraps a []T into the appropriate array.Array[T].
 func buildArray[T Integer | Float | String](data []T) array.Array[T] {
 	var zero T
 	switch any(zero).(type) {

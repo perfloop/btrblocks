@@ -4,17 +4,17 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math/bits"
 	"unsafe"
 
 	"github.com/axiomhq/btrblocks/array"
 )
 
-type FoRCodec[T UnsignedInteger] struct {
-	min  T
-	data Codec[T] // compressed residuals (value - min)
+type forCodec[T UnsignedInteger] struct {
+	min   T
+	child Codec[T]
 }
 
-// forEncodedArray is a lazy array adapter that subtracts min from each element.
 type forEncodedArray[T UnsignedInteger] struct {
 	length  uint64
 	min     T
@@ -41,7 +41,7 @@ func (a forEncodedArray[T]) PType() PType   { return pTypeForType[T]() }
 func (a forEncodedArray[T]) WriteTo(w io.Writer) (int64, error) {
 	bodySize := a.length * uint64(pTypeForType[T]().ByteWidth())
 	n, err := array.Header{
-		Version:  1,
+		Version:  versionNumber,
 		PType:    array.PTypeForType[T](),
 		Length:   a.length,
 		BodySize: bodySize,
@@ -54,15 +54,12 @@ func (a forEncodedArray[T]) WriteTo(w io.Writer) (int64, error) {
 	}
 
 	const chunkElems = 1024
-	var (
-		buf     = make([]T, chunkElems)
-		width   = int(unsafe.Sizeof(T(0)))
-		written int64
-	)
+	buf := make([]T, chunkElems)
+	width := int(unsafe.Sizeof(T(0)))
+	var written int64
 	for offset := uint64(0); offset < a.length; {
 		chunk := len(buf)
-		remaining := a.length - offset
-		if remaining < uint64(chunk) {
+		if remaining := a.length - offset; remaining < uint64(chunk) {
 			chunk = int(remaining)
 		}
 		for i := 0; i < chunk; i++ {
@@ -82,41 +79,23 @@ func (a forEncodedArray[T]) WriteTo(w io.Writer) (int64, error) {
 	return n + written, nil
 }
 
-func NewFoRCodec[T UnsignedInteger](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
-	if depth <= 0 {
-		return nil, errDepthExhausted
-	}
-	if arr.Length() == 0 {
-		return nil, errDataEmpty
-	}
+func (f *forCodec[T]) Kind() CodeType { return CodecTypeFor }
+func (f *forCodec[T]) Length() uint64 { return f.child.Length() }
+func (f *forCodec[T]) PType() PType   { return pTypeForType[T]() }
 
-	min := arr.ValueAt(0)
-	for i := uint64(1); i < arr.Length(); i++ {
-		if v := arr.ValueAt(i); v < min {
-			min = v
-		}
-	}
-
-	childExcl := excludes.with(CodecTypeFoR)
-	inner := CompressUnsignedInteger(forEncodedArray[T]{
-		length: arr.Length(), min: min, valueAt: arr.ValueAt,
-	}, depth-1, childExcl)
-	return &FoRCodec[T]{min: min, data: inner}, nil
+func (f *forCodec[T]) BinarySize() uint64 {
+	return uint64(headerSize) + uint64(unsafe.Sizeof(f.min)) + f.child.BinarySize()
 }
 
-func (f *FoRCodec[T]) ValueAt(offset uint64) (T, error) {
-	v, err := f.data.ValueAt(offset)
-	if err != nil {
-		return 0, err
-	}
-	return v + f.min, nil
+func (f *forCodec[T]) ValueAt(offset uint64) T {
+	return f.child.ValueAt(offset) + f.min
 }
 
-func (f *FoRCodec[T]) Decode(dst []T) error {
-	if err := validateDecodeLength(f.data.Length(), len(dst)); err != nil {
+func (f *forCodec[T]) Decode(dst []T) error {
+	if err := validateDecodeLength(f.child.Length(), len(dst)); err != nil {
 		return err
 	}
-	if err := f.data.Decode(dst); err != nil {
+	if err := f.child.Decode(dst); err != nil {
 		return err
 	}
 	for i := range dst {
@@ -125,24 +104,14 @@ func (f *FoRCodec[T]) Decode(dst []T) error {
 	return nil
 }
 
-func (f *FoRCodec[T]) Children() []Scheme { return []Scheme{f.data} }
-func (f *FoRCodec[T]) Length() uint64     { return f.data.Length() }
-func (f *FoRCodec[T]) PType() PType       { return pTypeForType[T]() }
-
-func (f *FoRCodec[T]) BinarySize() uint64 {
-	return uint64(headerSize) + uint64(unsafe.Sizeof(f.min)) + f.data.BinarySize()
-}
-
-func (f *FoRCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
+func (f *forCodec[T]) WriteTo(w io.Writer) (int64, error) {
 	minSize := uint64(unsafe.Sizeof(f.min))
-	n, err = Header{
-		Version:    1,
-		Kind:       CodecTypeFoR,
-		ElemType:   pTypeForType[T](),
-		ChildCount: 1,
-		Flags:      0,
-		Length:     f.data.Length(),
-		BodySize:   minSize,
+	n, err := header{
+		Version:  versionNumber,
+		Kind:     CodecTypeFor,
+		ElemType: pTypeForType[T](),
+		Length:   f.child.Length(),
+		BodySize: minSize,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
@@ -180,73 +149,103 @@ func (f *FoRCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
 		}
 	}
 
-	nn, err := f.data.WriteTo(w)
-	return n + int64(nn), err
+	nn, err := f.child.WriteTo(w)
+	return n + nn, err
 }
 
-func readAnyFoRCodec[T Integer | Float | String](r io.Reader, header Header) (Codec[T], error) {
+func readAnyFoRCodec[T Integer | Float | String](r io.Reader, h header) (Codec[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case uint8:
-		c, err := readFoRCodec[uint8](r, header)
+		c, err := readFoRCodec[uint8](r, h)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(Codec[T]), nil
 	case uint16:
-		c, err := readFoRCodec[uint16](r, header)
+		c, err := readFoRCodec[uint16](r, h)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(Codec[T]), nil
 	case uint32:
-		c, err := readFoRCodec[uint32](r, header)
+		c, err := readFoRCodec[uint32](r, h)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(Codec[T]), nil
 	case uint64:
-		c, err := readFoRCodec[uint64](r, header)
+		c, err := readFoRCodec[uint64](r, h)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(Codec[T]), nil
 	default:
-		return nil, fmt.Errorf("codec: FoR not supported for type %v", header.ElemType)
+		return nil, fmt.Errorf("codec: for not supported for %v", h.ElemType)
 	}
 }
 
-func readFoRCodec[T UnsignedInteger](r io.Reader, header Header) (Codec[T], error) {
-	if header.ChildCount != 1 {
-		return nil, fmt.Errorf("codec: FoR child count = %d, want 1", header.ChildCount)
-	}
+func readFoRCodec[T UnsignedInteger](r io.Reader, h header) (Codec[T], error) {
 	minSize := uint64(unsafe.Sizeof(T(0)))
-	if header.BodySize != minSize {
-		return nil, fmt.Errorf("codec: FoR body size = %d, want %d", header.BodySize, minSize)
+	if h.BodySize != minSize {
+		return nil, fmt.Errorf("codec: for body size = %d, want %d", h.BodySize, minSize)
 	}
 
 	var buf [8]byte
 	if _, err := io.ReadFull(r, buf[:minSize]); err != nil {
 		return nil, err
 	}
-	var min T
-	switch unsafe.Sizeof(min) {
+	var minValue T
+	switch unsafe.Sizeof(T(0)) {
 	case 1:
-		min = T(buf[0])
+		minValue = T(buf[0])
 	case 2:
-		min = T(binary.LittleEndian.Uint16(buf[:2]))
+		minValue = T(binary.LittleEndian.Uint16(buf[:2]))
 	case 4:
-		min = T(binary.LittleEndian.Uint32(buf[:4]))
+		minValue = T(binary.LittleEndian.Uint32(buf[:4]))
 	case 8:
-		min = T(binary.LittleEndian.Uint64(buf[:8]))
+		minValue = T(binary.LittleEndian.Uint64(buf[:8]))
 	}
 
-	data, err := readCodec[T](r)
+	child, err := readCodec[T](r)
 	if err != nil {
 		return nil, err
 	}
-	if header.Length != data.Length() {
-		return nil, fmt.Errorf("codec: FoR length = %d, want %d", header.Length, data.Length())
+	if child.Length() != h.Length {
+		return nil, fmt.Errorf("codec: for length = %d, want %d", h.Length, child.Length())
 	}
-	return &FoRCodec[T]{min: min, data: data}, nil
+	return &forCodec[T]{min: minValue, child: child}, nil
+}
+
+func buildFoRCodec[T UnsignedInteger](arr array.Array[T], ctx planContext) (Codec[T], error) {
+	if ctx.depth <= 0 {
+		return nil, errDepthExhausted
+	}
+	if arr.Length() == 0 {
+		return nil, errDataEmpty
+	}
+	minValue := arr.ValueAt(0)
+	for i := uint64(1); i < arr.Length(); i++ {
+		if value := arr.ValueAt(i); value < minValue {
+			minValue = value
+		}
+	}
+
+	child := newBitpackCodec(forEncodedArray[T]{
+		length:  arr.Length(),
+		min:     minValue,
+		valueAt: arr.ValueAt,
+	})
+	return &forCodec[T]{min: minValue, child: child}, nil
+}
+
+func estimateFoR[T UnsignedInteger](minValue, maxValue T) func(array.Array[T], planContext) (float64, bool) {
+	return func(arr array.Array[T], ctx planContext) (float64, bool) {
+		fullWidth := bits.Len64(uint64(maxValue))
+		rangeWidth := bits.Len64(uint64(maxValue - minValue))
+		if ctx.depth <= 0 || minValue == 0 || rangeWidth >= fullWidth {
+			return 0, false
+		}
+		return estimateBySample(arr, ctx, buildFoRCodec[T])
+	}
 }

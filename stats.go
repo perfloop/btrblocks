@@ -1,78 +1,51 @@
 package btrblocks
 
 import (
+	"math"
+
 	"github.com/axiomhq/btrblocks/array"
 )
 
-// baseStats holds statistics computed from the full array for
-// stats-based builder rejection. All fields are meaningful for
-// every element type.
 type baseStats[T Integer | Float | String] struct {
-	isConst       bool    // true if every element is identical
-	distinctRatio float64 // distinctCount / length
-	avgRunLength  float64 // length / runCount
-	topValue      T       // most frequent value
-	topCount      uint64  // occurrence count of topValue
+	isConst       bool
+	distinctRatio float64
+	avgRunLength  float64
+	topValue      T
+	topCount      uint64
 }
 
-// shouldSkip returns true if a builder of the given kind should be skipped
-// based on universal array statistics. Type-specific skips (FoR, Zigzag)
-// are handled by the type-specific compress functions via codecExcludes.
-func (s baseStats[T]) shouldSkip(kind CodecType, n uint64) bool {
-	switch kind {
-	case CodecTypeDict:
-		return s.distinctRatio > 0.5
-	case CodecTypeRunend:
-		return s.avgRunLength < 4.0
-	case CodecTypeSparse:
-		return n == 0 || float64(s.topCount)/float64(n) < 0.9
-	case CodecTypeSequence:
-		return s.distinctRatio < 1.0
-	case CodecTypeALP:
-		return s.isConst
-	default:
-		return false
-	}
+type unsignedStats[T UnsignedInteger] struct {
+	base baseStats[T]
+	min  T
+	max  T
 }
 
-// unsignedIntStats extends baseStats with unsigned-integer-specific fields.
-type unsignedIntStats[T UnsignedInteger] struct {
-	baseStats[T]
-	min T
-	max T
-}
-
-// signedIntStats extends baseStats with signed-integer-specific fields.
-type signedIntStats[T SignedInteger] struct {
-	baseStats[T]
+type signedStats[T SignedInteger] struct {
+	base        baseStats[T]
 	hasNegative bool
 }
 
-// computeUnsignedIntStats scans the array once to compute base stats
-// plus native min/max without any interface boxing.
-func computeUnsignedIntStats[T UnsignedInteger](arr array.Array[T]) unsignedIntStats[T] {
+func computeUnsignedStats[T UnsignedInteger](arr array.Array[T]) unsignedStats[T] {
 	n := arr.Length()
 	if n == 0 {
-		return unsignedIntStats[T]{}
+		return unsignedStats[T]{}
 	}
 
-	var (
-		counts = make(map[T]uint64, 256)
-		runs   = uint64(1)
-		prev   = arr.ValueAt(0)
-		min    = prev
-		max    = prev
-	)
+	counts := make(map[T]uint64, 256)
+	runs := uint64(1)
+	prev := arr.ValueAt(0)
+	minValue := prev
+	maxValue := prev
 	counts[prev]++
 
 	for i := uint64(1); i < n; i++ {
 		v := arr.ValueAt(i)
 		counts[v]++
-		if v < min {
-			min = v
+		if v < minValue {
+			minValue = v
 		}
-		if v > max {
-			max = v
+		if v > maxValue {
+			maxValue = v
 		}
 		if v != prev {
 			runs++
@@ -80,51 +53,45 @@ func computeUnsignedIntStats[T UnsignedInteger](arr array.Array[T]) unsignedIntS
 		}
 	}
 
-	var (
-		topVal   T
-		topCount uint64
-	)
-	for v, c := range counts {
-		if c > topCount {
-			topVal = v
-			topCount = c
+	var topValue T
+	var topCount uint64
+	for v, count := range counts {
+		if count > topCount {
+			topValue = v
+			topCount = count
 		}
 	}
 
-	return unsignedIntStats[T]{
-		baseStats: baseStats[T]{
+	return unsignedStats[T]{
+		base: baseStats[T]{
 			isConst:       len(counts) == 1 && topCount == n,
 			distinctRatio: float64(len(counts)) / float64(n),
 			avgRunLength:  float64(n) / float64(runs),
-			topValue:      topVal,
+			topValue:      topValue,
 			topCount:      topCount,
 		},
-		min: min,
-		max: max,
+		min: minValue,
+		max: maxValue,
 	}
 }
 
-// computeSignedIntStats scans the array once to compute base stats
-// plus native negativity tracking without any interface boxing.
-func computeSignedIntStats[T SignedInteger](arr array.Array[T]) signedIntStats[T] {
+func computeSignedStats[T SignedInteger](arr array.Array[T]) signedStats[T] {
 	n := arr.Length()
 	if n == 0 {
-		return signedIntStats[T]{}
+		return signedStats[T]{}
 	}
 
-	var (
-		counts = make(map[T]uint64, 256)
-		runs   = uint64(1)
-		prev   = arr.ValueAt(0)
-		hasNeg = prev < 0
-	)
+	counts := make(map[T]uint64, 256)
+	runs := uint64(1)
+	prev := arr.ValueAt(0)
+	hasNegative := prev < 0
 	counts[prev]++
 
 	for i := uint64(1); i < n; i++ {
 		v := arr.ValueAt(i)
 		counts[v]++
-		if !hasNeg && v < 0 {
-			hasNeg = true
+		if !hasNegative && v < 0 {
+			hasNegative = true
 		}
 		if v != prev {
 			runs++
@@ -132,61 +99,74 @@ func computeSignedIntStats[T SignedInteger](arr array.Array[T]) signedIntStats[T
 		}
 	}
 
-	var (
-		topVal   T
-		topCount uint64
-	)
-	for v, c := range counts {
-		if c > topCount {
-			topVal = v
-			topCount = c
+	var topValue T
+	var topCount uint64
+	for v, count := range counts {
+		if count > topCount {
+			topValue = v
+			topCount = count
 		}
 	}
 
-	return signedIntStats[T]{
-		baseStats: baseStats[T]{
+	return signedStats[T]{
+		base: baseStats[T]{
 			isConst:       len(counts) == 1 && topCount == n,
 			distinctRatio: float64(len(counts)) / float64(n),
 			avgRunLength:  float64(n) / float64(runs),
-			topValue:      topVal,
+			topValue:      topValue,
 			topCount:      topCount,
 		},
-		hasNegative: hasNeg,
+		hasNegative: hasNegative,
 	}
 }
 
-// computeFloatStats scans the array once to compute base stats using
-// bitwise comparison for run boundaries (correct for NaN).
+func floatKey[T Float](value T) uint64 {
+	switch v := any(value).(type) {
+	case float32:
+		return uint64(math.Float32bits(v))
+	case float64:
+		return math.Float64bits(v)
+	default:
+		return 0
+	}
+}
+
 func computeFloatStats[T Float](arr array.Array[T]) baseStats[T] {
 	n := arr.Length()
 	if n == 0 {
 		return baseStats[T]{}
 	}
 
-	var (
-		counts = make(map[T]uint64, 256)
-		runs   = uint64(1)
-		prev   = arr.ValueAt(0)
-	)
-	counts[prev]++
+	type entry struct {
+		value T
+		count uint64
+	}
+
+	counts := make(map[uint64]entry, 256)
+	runs := uint64(1)
+	prev := arr.ValueAt(0)
+	firstKey := floatKey(prev)
+	counts[firstKey] = entry{value: prev, count: 1}
 
 	for i := uint64(1); i < n; i++ {
 		v := arr.ValueAt(i)
-		counts[v]++
+		key := floatKey(v)
+		item := counts[key]
+		item.value = v
+		item.count++
+		counts[key] = item
 		if !cmpFloats(v, prev) {
 			runs++
 			prev = v
 		}
 	}
 
-	var (
-		topVal   T
-		topCount uint64
-	)
-	for v, c := range counts {
-		if c > topCount {
-			topVal = v
-			topCount = c
+	var topValue T
+	var topCount uint64
+	for _, item := range counts {
+		if item.count > topCount {
+			topValue = item.value
+			topCount = item.count
 		}
 	}
 
@@ -194,23 +174,20 @@ func computeFloatStats[T Float](arr array.Array[T]) baseStats[T] {
 		isConst:       len(counts) == 1 && topCount == n,
 		distinctRatio: float64(len(counts)) / float64(n),
 		avgRunLength:  float64(n) / float64(runs),
-		topValue:      topVal,
+		topValue:      topValue,
 		topCount:      topCount,
 	}
 }
 
-// computeStringStats scans the array once to compute base stats for strings.
 func computeStringStats(arr array.Array[string]) baseStats[string] {
 	n := arr.Length()
 	if n == 0 {
 		return baseStats[string]{}
 	}
 
-	var (
-		counts = make(map[string]uint64, 256)
-		runs   = uint64(1)
-		prev   = arr.ValueAt(0)
-	)
+	counts := make(map[string]uint64, 256)
+	runs := uint64(1)
+	prev := arr.ValueAt(0)
 	counts[prev]++
 
 	for i := uint64(1); i < n; i++ {
@@ -222,14 +199,12 @@ func computeStringStats(arr array.Array[string]) baseStats[string] {
 		}
 	}
 
-	var (
-		topVal   string
-		topCount uint64
-	)
-	for v, c := range counts {
-		if c > topCount {
-			topVal = v
-			topCount = c
+	var topValue string
+	var topCount uint64
+	for v, count := range counts {
+		if count > topCount {
+			topValue = v
+			topCount = count
 		}
 	}
 
@@ -237,7 +212,7 @@ func computeStringStats(arr array.Array[string]) baseStats[string] {
 		isConst:       len(counts) == 1 && topCount == n,
 		distinctRatio: float64(len(counts)) / float64(n),
 		avgRunLength:  float64(n) / float64(runs),
-		topValue:      topVal,
+		topValue:      topValue,
 		topCount:      topCount,
 	}
 }

@@ -8,114 +8,24 @@ import (
 	"github.com/axiomhq/btrblocks/array"
 )
 
-type DictCodec[T Integer | Float | String, U UnsignedInteger] struct {
+type dictCodec[T Integer | Float | String, U UnsignedInteger] struct {
 	values  Codec[T]
 	indices Codec[U]
 }
 
-func newDictCodecWithWidth[T Integer | Float | String, U UnsignedInteger](values []T, indices []uint64, depth int, excludes codecExcludes) (Codec[T], error) {
-	narrow := make([]U, len(indices))
-	for i, index := range indices {
-		narrow[i] = U(index)
-	}
-	valuesCodec := compress(values, depth-1, excludes)
-	indicesCodec := CompressInteger(array.NewPrimitivesUnsafe(narrow), depth-1, excludes.with(CodecTypeDict, CodecTypeSequence))
-	return &DictCodec[T, U]{values: valuesCodec, indices: indicesCodec}, nil
+func (d *dictCodec[T, U]) Kind() CodeType { return CodecTypeDict }
+func (d *dictCodec[T, U]) Length() uint64 { return d.indices.Length() }
+func (d *dictCodec[T, U]) PType() PType   { return pTypeForType[T]() }
+
+func (d *dictCodec[T, U]) BinarySize() uint64 {
+	return uint64(headerSize) + d.values.BinarySize() + d.indices.BinarySize()
 }
 
-func newDictCodec[T Integer | String](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
-	if depth <= 0 {
-		return nil, errDepthExhausted
-	}
-	var (
-		dict    = make(map[T]uint64)
-		indices = make([]uint64, arr.Length())
-		values  = make([]T, 0, arr.Length())
-	)
-
-	for i := uint64(0); i < arr.Length(); i++ {
-		val := arr.ValueAt(i)
-		idx, ok := dict[val]
-		if !ok {
-			idx = uint64(len(values))
-			dict[val] = idx
-			values = append(values, val)
-		}
-		indices[i] = idx
-	}
-
-	maxIndex := uint64(0)
-	if len(values) > 0 {
-		maxIndex = uint64(len(values) - 1)
-	}
-	switch {
-	case maxIndex <= uint64(^uint8(0)):
-		return newDictCodecWithWidth[T, uint8](values, indices, depth, excludes)
-	case maxIndex <= uint64(^uint16(0)):
-		return newDictCodecWithWidth[T, uint16](values, indices, depth, excludes)
-	case maxIndex <= uint64(^uint32(0)):
-		return newDictCodecWithWidth[T, uint32](values, indices, depth, excludes)
-	default:
-		return newDictCodecWithWidth[T, uint64](values, indices, depth, excludes)
-	}
+func (d *dictCodec[T, U]) ValueAt(offset uint64) T {
+	return d.values.ValueAt(uint64(d.indices.ValueAt(offset)))
 }
 
-func NewDictFloatCodec[T Float](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
-	if depth <= 0 {
-		return nil, errDepthExhausted
-	}
-	var (
-		dict    = make(map[uint64]uint64)
-		indices = make([]uint64, arr.Length())
-		values  = make([]T, 0, arr.Length())
-	)
-
-	for i := uint64(0); i < arr.Length(); i++ {
-		val := arr.ValueAt(i)
-		key := floatDictKey(val)
-		idx, ok := dict[key]
-		if !ok {
-			idx = uint64(len(values))
-			dict[key] = idx
-			values = append(values, val)
-		}
-		indices[i] = idx
-	}
-
-	maxIndex := uint64(0)
-	if len(values) > 0 {
-		maxIndex = uint64(len(values) - 1)
-	}
-	switch {
-	case maxIndex <= uint64(^uint8(0)):
-		return newDictCodecWithWidth[T, uint8](values, indices, depth, excludes)
-	case maxIndex <= uint64(^uint16(0)):
-		return newDictCodecWithWidth[T, uint16](values, indices, depth, excludes)
-	case maxIndex <= uint64(^uint32(0)):
-		return newDictCodecWithWidth[T, uint32](values, indices, depth, excludes)
-	default:
-		return newDictCodecWithWidth[T, uint64](values, indices, depth, excludes)
-	}
-}
-
-func NewDictIntegerCodec[T Integer](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
-	return newDictCodec(arr, depth, excludes)
-}
-
-func NewDictStringCodec[T String](arr array.Array[T], depth int, excludes codecExcludes) (Codec[T], error) {
-	return newDictCodec(arr, depth, excludes)
-}
-
-func (d *DictCodec[T, U]) ValueAt(offset uint64) (T, error) {
-	var zero T
-	id, err := d.indices.ValueAt(offset)
-	if err != nil {
-		return zero, err
-	}
-	return d.values.ValueAt(uint64(id))
-}
-
-func (d *DictCodec[T, U]) Decode(dst []T) error {
+func (d *dictCodec[T, U]) Decode(dst []T) error {
 	if err := validateDecodeLength(d.indices.Length(), len(dst)); err != nil {
 		return err
 	}
@@ -127,46 +37,34 @@ func (d *DictCodec[T, U]) Decode(dst []T) error {
 	if err := d.indices.Decode(indices); err != nil {
 		return err
 	}
-	for i, idx := range indices {
-		dst[i] = values[idx]
+	for i, index := range indices {
+		dst[i] = values[int(index)]
 	}
 	return nil
 }
 
-func (d *DictCodec[T, U]) WriteTo(w io.Writer) (n int64, err error) {
-	n, err = Header{
-		Version:    1,
-		Kind:       CodecTypeDict,
-		ElemType:   pTypeForType[T](),
-		ChildCount: 2,
-		Flags:      0,
-		Length:     d.indices.Length(),
-		BodySize:   0,
+func (d *dictCodec[T, U]) WriteTo(w io.Writer) (int64, error) {
+	n, err := header{
+		Version:  versionNumber,
+		Kind:     CodecTypeDict,
+		ElemType: pTypeForType[T](),
+		Length:   d.indices.Length(),
+		BodySize: 0,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
 	}
-
 	nn, err := d.values.WriteTo(w)
+	n += nn
 	if err != nil {
-		return n + int64(nn), err
+		return n, err
 	}
-	n += int64(nn)
-
 	nn, err = d.indices.WriteTo(w)
-	return n + int64(nn), err
+	return n + nn, err
 }
 
-func (d *DictCodec[T, U]) Children() []Scheme { return []Scheme{d.values.(Scheme), d.indices.(Scheme)} }
-func (d *DictCodec[T, U]) Length() uint64     { return d.indices.Length() }
-func (d *DictCodec[T, U]) PType() PType       { return pTypeForType[T]() }
-
-func (d *DictCodec[T, U]) BinarySize() uint64 {
-	return uint64(headerSize) + d.values.BinarySize() + d.indices.BinarySize()
-}
-
-func floatDictKey[T Float](val T) uint64 {
-	switch v := any(val).(type) {
+func floatDictKey[T Float](value T) uint64 {
+	switch v := any(value).(type) {
 	case float32:
 		return uint64(math.Float32bits(v))
 	case float64:
@@ -176,23 +74,9 @@ func floatDictKey[T Float](val T) uint64 {
 	}
 }
 
-func readDictCodecWithIndices[T Integer | Float | String, U UnsignedInteger](r io.Reader, header Header, values Codec[T], childHeader Header) (Codec[T], error) {
-	indices, err := readCodecWithHeader[U](r, childHeader)
-	if err != nil {
-		return nil, err
-	}
-	if indices.Length() != header.Length {
-		return nil, fmt.Errorf("codec: dict length = %d, want %d", header.Length, indices.Length())
-	}
-	return &DictCodec[T, U]{values: values, indices: indices}, nil
-}
-
-func readDictCodec[T Integer | Float | String](r io.Reader, header Header) (Codec[T], error) {
-	if header.ChildCount != 2 {
-		return nil, fmt.Errorf("codec: dict child count = %d, want 2", header.ChildCount)
-	}
-	if header.BodySize != 0 {
-		return nil, fmt.Errorf("codec: dict body size = %d, want 0", header.BodySize)
+func readDictCodec[T Integer | Float | String](r io.Reader, h header) (Codec[T], error) {
+	if h.BodySize != 0 {
+		return nil, fmt.Errorf("codec: dict body size = %d, want 0", h.BodySize)
 	}
 	values, err := readCodec[T](r)
 	if err != nil {
@@ -204,14 +88,194 @@ func readDictCodec[T Integer | Float | String](r io.Reader, header Header) (Code
 	}
 	switch childHeader.ElemType {
 	case PTypeUint8:
-		return readDictCodecWithIndices[T, uint8](r, header, values, childHeader)
+		indices, err := readCodecWithHeader[uint8](r, childHeader)
+		if err != nil {
+			return nil, err
+		}
+		if indices.Length() != h.Length {
+			return nil, fmt.Errorf("codec: dict length = %d, want %d", h.Length, indices.Length())
+		}
+		return &dictCodec[T, uint8]{values: values, indices: indices}, nil
 	case PTypeUint16:
-		return readDictCodecWithIndices[T, uint16](r, header, values, childHeader)
+		indices, err := readCodecWithHeader[uint16](r, childHeader)
+		if err != nil {
+			return nil, err
+		}
+		if indices.Length() != h.Length {
+			return nil, fmt.Errorf("codec: dict length = %d, want %d", h.Length, indices.Length())
+		}
+		return &dictCodec[T, uint16]{values: values, indices: indices}, nil
 	case PTypeUint32:
-		return readDictCodecWithIndices[T, uint32](r, header, values, childHeader)
+		indices, err := readCodecWithHeader[uint32](r, childHeader)
+		if err != nil {
+			return nil, err
+		}
+		if indices.Length() != h.Length {
+			return nil, fmt.Errorf("codec: dict length = %d, want %d", h.Length, indices.Length())
+		}
+		return &dictCodec[T, uint32]{values: values, indices: indices}, nil
 	case PTypeUint64:
-		return readDictCodecWithIndices[T, uint64](r, header, values, childHeader)
+		indices, err := readCodecWithHeader[uint64](r, childHeader)
+		if err != nil {
+			return nil, err
+		}
+		if indices.Length() != h.Length {
+			return nil, fmt.Errorf("codec: dict length = %d, want %d", h.Length, indices.Length())
+		}
+		return &dictCodec[T, uint64]{values: values, indices: indices}, nil
 	default:
-		return nil, fmt.Errorf("codec: dict index element type = %v, want unsigned integer", childHeader.ElemType)
+		return nil, fmt.Errorf("codec: dict index type = %v, want unsigned integer", childHeader.ElemType)
+	}
+}
+
+func buildIntegerDictCodec[T Integer](arr array.Array[T], ctx planContext) (Codec[T], error) {
+	if ctx.depth <= 0 {
+		return nil, errDepthExhausted
+	}
+	dict := make(map[T]uint64)
+	values := make([]T, 0, arr.Length())
+	indices := make([]uint64, arr.Length())
+	for i := uint64(0); i < arr.Length(); i++ {
+		value := arr.ValueAt(i)
+		index, ok := dict[value]
+		if !ok {
+			index = uint64(len(values))
+			dict[value] = index
+			values = append(values, value)
+		}
+		indices[i] = index
+	}
+
+	valuesCodec := newRawCodec(buildArray(values))
+	return buildDictIndicesCodec(valuesCodec, indices, ctx)
+}
+
+func buildFloatDictCodec[T Float](arr array.Array[T], ctx planContext) (Codec[T], error) {
+	if ctx.depth <= 0 {
+		return nil, errDepthExhausted
+	}
+	dict := make(map[uint64]uint64)
+	values := make([]T, 0, arr.Length())
+	indices := make([]uint64, arr.Length())
+	for i := uint64(0); i < arr.Length(); i++ {
+		value := arr.ValueAt(i)
+		key := floatDictKey(value)
+		index, ok := dict[key]
+		if !ok {
+			index = uint64(len(values))
+			dict[key] = index
+			values = append(values, value)
+		}
+		indices[i] = index
+	}
+
+	valuesCodec, err := compressArray(buildArray(values), ctx.descend().withExcludes(CodecTypeDict))
+	if err != nil {
+		return nil, err
+	}
+	return buildDictIndicesCodec(valuesCodec, indices, ctx)
+}
+
+func buildStringDictCodec[T String](arr array.Array[T], ctx planContext) (Codec[T], error) {
+	if ctx.depth <= 0 {
+		return nil, errDepthExhausted
+	}
+	dict := make(map[T]uint64)
+	values := make([]T, 0, arr.Length())
+	indices := make([]uint64, arr.Length())
+	for i := uint64(0); i < arr.Length(); i++ {
+		value := arr.ValueAt(i)
+		index, ok := dict[value]
+		if !ok {
+			index = uint64(len(values))
+			dict[value] = index
+			values = append(values, value)
+		}
+		indices[i] = index
+	}
+
+	valuesCodec, err := compressArray(buildArray(values), ctx.descend().withExcludes(CodecTypeDict))
+	if err != nil {
+		return nil, err
+	}
+	return buildDictIndicesCodec(valuesCodec, indices, ctx)
+}
+
+func buildDictIndicesCodec[T Integer | Float | String](valuesCodec Codec[T], indices []uint64, ctx planContext) (Codec[T], error) {
+	maxIndex := uint64(0)
+	if len(indices) > 0 {
+		for _, idx := range indices {
+			if idx > maxIndex {
+				maxIndex = idx
+			}
+		}
+	}
+	childCtx := ctx.descend().withExcludes(CodecTypeDict, CodecTypeSequence)
+	switch {
+	case maxIndex <= uint64(^uint8(0)):
+		narrow := make([]uint8, len(indices))
+		for i, idx := range indices {
+			narrow[i] = uint8(idx)
+		}
+		indicesCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		if err != nil {
+			return nil, err
+		}
+		return &dictCodec[T, uint8]{values: valuesCodec, indices: indicesCodec}, nil
+	case maxIndex <= uint64(^uint16(0)):
+		narrow := make([]uint16, len(indices))
+		for i, idx := range indices {
+			narrow[i] = uint16(idx)
+		}
+		indicesCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		if err != nil {
+			return nil, err
+		}
+		return &dictCodec[T, uint16]{values: valuesCodec, indices: indicesCodec}, nil
+	case maxIndex <= uint64(^uint32(0)):
+		narrow := make([]uint32, len(indices))
+		for i, idx := range indices {
+			narrow[i] = uint32(idx)
+		}
+		indicesCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		if err != nil {
+			return nil, err
+		}
+		return &dictCodec[T, uint32]{values: valuesCodec, indices: indicesCodec}, nil
+	default:
+		narrow := make([]uint64, len(indices))
+		copy(narrow, indices)
+		indicesCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		if err != nil {
+			return nil, err
+		}
+		return &dictCodec[T, uint64]{values: valuesCodec, indices: indicesCodec}, nil
+	}
+}
+
+func estimateIntegerDict[T Integer](distinctRatio float64) func(array.Array[T], planContext) (float64, bool) {
+	return func(arr array.Array[T], ctx planContext) (float64, bool) {
+		if ctx.depth <= 0 || distinctRatio > 0.5 {
+			return 0, false
+		}
+		return estimateBySample(arr, ctx, buildIntegerDictCodec[T])
+	}
+}
+
+func estimateStringDict[T String](distinctRatio float64) func(array.Array[T], planContext) (float64, bool) {
+	return func(arr array.Array[T], ctx planContext) (float64, bool) {
+		if ctx.depth <= 0 || distinctRatio > 0.5 {
+			return 0, false
+		}
+		return estimateBySample(arr, ctx, buildStringDictCodec[T])
+	}
+}
+
+func estimateFloatDict[T Float](distinctRatio float64) func(array.Array[T], planContext) (float64, bool) {
+	return func(arr array.Array[T], ctx planContext) (float64, bool) {
+		if ctx.depth <= 0 || distinctRatio > 0.5 {
+			return 0, false
+		}
+		return estimateBySample(arr, ctx, buildFloatDictCodec[T])
 	}
 }

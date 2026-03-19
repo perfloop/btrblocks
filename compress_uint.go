@@ -2,8 +2,9 @@ package btrblocks
 
 import "github.com/axiomhq/btrblocks/array"
 
-func compressSignedArray[T SignedInteger](arr array.Array[T], ctx planContext) (Codec[T], error) {
-	stats := computeSignedStats(arr)
+func compressUnsignedArray[T UnsignedInteger](arr array.Array[T], ctx planContext) (Codec[T], error) {
+	stats := computeUnsignedStats(arr)
+
 	candidates := []candidate[T]{
 		{
 			kind:     CodecTypeConst,
@@ -20,13 +21,20 @@ func compressSignedArray[T SignedInteger](arr array.Array[T], ctx planContext) (
 			},
 		},
 		{
-			kind:     CodecTypeZigZag,
-			estimate: estimateZigZag[T](stats.hasNegative),
-			build:    buildZigZagCodec[T],
+			kind:     CodecTypeBitpack,
+			estimate: estimateBitpack[T],
+			build: func(arr array.Array[T], _ planContext) (Codec[T], error) {
+				return newBitpackCodec(arr), nil
+			},
+		},
+		{
+			kind:     CodecTypeFor,
+			estimate: estimateFoR[T](stats.min, stats.max),
+			build:    buildFoRCodec[T],
 		},
 		{
 			kind:     CodecTypeSparse,
-			estimate: estimateSparse(stats.base.isConst, stats.base.topCount, stats.base.topValue, cmpIntegers[T]),
+			estimate: estimateSparse[T](stats.base.isConst, stats.base.topCount, stats.base.topValue, cmpIntegers[T]),
 			build: func(arr array.Array[T], ctx planContext) (Codec[T], error) {
 				return buildSparseCodec(arr, ctx, stats.base.topValue, cmpIntegers[T])
 			},
@@ -38,7 +46,7 @@ func compressSignedArray[T SignedInteger](arr array.Array[T], ctx planContext) (
 		},
 		{
 			kind:     CodecTypeRunEnd,
-			estimate: estimateRunEnd(stats.base.avgRunLength, cmpIntegers[T]),
+			estimate: estimateRunEnd[T](stats.base.avgRunLength, cmpIntegers[T]),
 			build: func(arr array.Array[T], ctx planContext) (Codec[T], error) {
 				return buildRunEndCodec(arr, ctx, cmpIntegers[T])
 			},

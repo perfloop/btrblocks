@@ -7,42 +7,27 @@ import (
 	"github.com/axiomhq/btrblocks/array"
 )
 
-// compile-time type assertions
-var (
-	_ Codec[int8]    = (*RawCodec[int8])(nil)
-	_ Codec[int16]   = (*RawCodec[int16])(nil)
-	_ Codec[int32]   = (*RawCodec[int32])(nil)
-	_ Codec[int64]   = (*RawCodec[int64])(nil)
-	_ Codec[uint8]   = (*RawCodec[uint8])(nil)
-	_ Codec[uint16]  = (*RawCodec[uint16])(nil)
-	_ Codec[uint32]  = (*RawCodec[uint32])(nil)
-	_ Codec[uint64]  = (*RawCodec[uint64])(nil)
-	_ Codec[float32] = (*RawCodec[float32])(nil)
-	_ Codec[float64] = (*RawCodec[float64])(nil)
-	_ Codec[string]  = (*RawCodec[string])(nil)
-)
-
-type RawCodec[T Integer | Float | String] struct {
+type rawCodec[T Integer | Float | String] struct {
 	arr array.Array[T]
 }
 
-func NewRawCodec[T Integer | Float | String](arr array.Array[T]) *RawCodec[T] {
-	return &RawCodec[T]{arr: arr}
+func newRawCodec[T Integer | Float | String](arr array.Array[T]) *rawCodec[T] {
+	return &rawCodec[T]{arr: arr}
 }
 
-func (r *RawCodec[T]) Children() []Scheme {
-	return nil
-}
+func (r *rawCodec[T]) Kind() CodeType     { return CodecTypeRaw }
+func (r *rawCodec[T]) Length() uint64     { return r.arr.Length() }
+func (r *rawCodec[T]) PType() PType       { return pTypeForType[T]() }
+func (r *rawCodec[T]) BinarySize() uint64 { return uint64(headerSize) + r.arr.BinarySize() }
 
-func (r *RawCodec[T]) ValueAt(offset uint64) (T, error) {
-	var zero T
+func (r *rawCodec[T]) ValueAt(offset uint64) T {
 	if offset >= r.arr.Length() {
-		return zero, errOffsetOutOfRange
+		panic(errOffsetOutOfRange)
 	}
-	return r.arr.ValueAt(offset), nil
+	return r.arr.ValueAt(offset)
 }
 
-func (r *RawCodec[T]) Decode(dst []T) error {
+func (r *rawCodec[T]) Decode(dst []T) error {
 	if err := validateDecodeLength(r.arr.Length(), len(dst)); err != nil {
 		return err
 	}
@@ -50,50 +35,31 @@ func (r *RawCodec[T]) Decode(dst []T) error {
 	return nil
 }
 
-func (r *RawCodec[T]) WriteTo(w io.Writer) (n int64, err error) {
-	n, err = Header{
-		Version:    1,
-		Kind:       CodecTypeRaw,
-		ElemType:   pTypeForType[T](),
-		ChildCount: 0,
-		Flags:      0,
-		Length:     r.arr.Length(),
-		BodySize:   r.arr.BinarySize(),
+func (r *rawCodec[T]) WriteTo(w io.Writer) (int64, error) {
+	n, err := header{
+		Version:  versionNumber,
+		Kind:     CodecTypeRaw,
+		ElemType: pTypeForType[T](),
+		Length:   r.arr.Length(),
+		BodySize: r.arr.BinarySize(),
 	}.WriteTo(w)
-
 	if err != nil {
 		return n, err
 	}
-
 	nn, err := r.arr.WriteTo(w)
 	return n + int64(nn), err
 }
 
-func (r *RawCodec[T]) BinarySize() uint64 {
-	return uint64(headerSize) + r.arr.BinarySize()
-}
-
-func (r *RawCodec[T]) Length() uint64 {
-	return r.arr.Length()
-}
-
-func (r *RawCodec[T]) PType() PType {
-	return pTypeForType[T]()
-}
-
-func readRawCodec[T Integer | Float | String](r io.Reader, header Header) (Codec[T], error) {
-	if header.ChildCount != 0 {
-		return nil, fmt.Errorf("codec: raw child count = %d, want 0", header.ChildCount)
-	}
+func readRawCodec[T Integer | Float | String](r io.Reader, h header) (Codec[T], error) {
 	arr, err := array.ReadArray[T](r)
 	if err != nil {
 		return nil, err
 	}
-	if header.Length != arr.Length() {
-		return nil, fmt.Errorf("codec: raw length = %d, want %d", header.Length, arr.Length())
+	if h.Length != arr.Length() {
+		return nil, fmt.Errorf("codec: raw length = %d, want %d", h.Length, arr.Length())
 	}
-	if header.BodySize != arr.BinarySize() {
-		return nil, fmt.Errorf("codec: raw body size = %d, want %d", header.BodySize, arr.BinarySize())
+	if h.BodySize != arr.BinarySize() {
+		return nil, fmt.Errorf("codec: raw body size = %d, want %d", h.BodySize, arr.BinarySize())
 	}
-	return &RawCodec[T]{arr: arr}, nil
+	return &rawCodec[T]{arr: arr}, nil
 }
