@@ -17,6 +17,7 @@ const (
 	versionNumber                   = 1
 	headerSize                      = 24
 	primitiveArrayHeaderSize        = 20
+	flagBitpackHasPatches    uint32 = 1 << 0
 	flagALPHasPatches        uint32 = 1 << 0
 	maxDecompressLength             = 1 << 30
 )
@@ -174,7 +175,11 @@ func validateHeaderForType[T Integer | Float | String](h header) error {
 	default:
 		return fmt.Errorf("codec: unknown kind = %d", h.Kind)
 	}
-	if h.Kind == CodecTypeALP {
+	if h.Kind == CodecTypeBitpack {
+		if h.Flags&^flagBitpackHasPatches != 0 {
+			return fmt.Errorf("codec: unsupported bitpack flags = 0x%x", h.Flags)
+		}
+	} else if h.Kind == CodecTypeALP {
 		if h.Flags&^flagALPHasPatches != 0 {
 			return fmt.Errorf("codec: unsupported ALP flags = 0x%x", h.Flags)
 		}

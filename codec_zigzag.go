@@ -248,25 +248,25 @@ func buildZigZagCodec[T SignedInteger](arr array.Array[T], ctx planContext) (Cod
 	max := zigzagMaxEncoded(arr.Length(), arr.ValueAt)
 	switch {
 	case max <= uint64(^uint8(0)):
-		child, err := compressArray[uint8](zigzagEncodedArray[T, uint8]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
+		child, err := compressDenseArray[uint8](zigzagEncodedArray[T, uint8]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
 		if err != nil {
 			return nil, err
 		}
 		return &zigzagCodec[T, uint8]{child: child}, nil
 	case max <= uint64(^uint16(0)):
-		child, err := compressArray[uint16](zigzagEncodedArray[T, uint16]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
+		child, err := compressDenseArray[uint16](zigzagEncodedArray[T, uint16]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
 		if err != nil {
 			return nil, err
 		}
 		return &zigzagCodec[T, uint16]{child: child}, nil
 	case max <= uint64(^uint32(0)):
-		child, err := compressArray[uint32](zigzagEncodedArray[T, uint32]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
+		child, err := compressDenseArray[uint32](zigzagEncodedArray[T, uint32]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
 		if err != nil {
 			return nil, err
 		}
 		return &zigzagCodec[T, uint32]{child: child}, nil
 	default:
-		child, err := compressArray[uint64](zigzagEncodedArray[T, uint64]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
+		child, err := compressDenseArray[uint64](zigzagEncodedArray[T, uint64]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
 		if err != nil {
 			return nil, err
 		}

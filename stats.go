@@ -9,6 +9,7 @@ import (
 type baseStats[T Integer | Float | String] struct {
 	src           array.Array[T]
 	isConst       bool
+	distinctCount uint64
 	distinctRatio float64
 	avgRunLength  float64
 	topValue      T
@@ -98,6 +99,7 @@ func computeUnsignedStats[T UnsignedInteger](arr array.Array[T]) unsignedStats[T
 		base: baseStats[T]{
 			src:           arr,
 			isConst:       len(counts) == 1 && topCount == n,
+			distinctCount: uint64(len(counts)),
 			distinctRatio: float64(len(counts)) / float64(n),
 			avgRunLength:  float64(n) / float64(runs),
 			topValue:      topValue,
@@ -149,6 +151,7 @@ func computeSignedStats[T SignedInteger](arr array.Array[T]) signedStats[T] {
 		base: baseStats[T]{
 			src:           arr,
 			isConst:       len(counts) == 1 && topCount == n,
+			distinctCount: uint64(len(counts)),
 			distinctRatio: float64(len(counts)) / float64(n),
 			avgRunLength:  float64(n) / float64(runs),
 			topValue:      topValue,
@@ -211,6 +214,7 @@ func computeFloatStats[T Float](arr array.Array[T]) baseStats[T] {
 	return baseStats[T]{
 		src:           arr,
 		isConst:       len(counts) == 1 && topCount == n,
+		distinctCount: uint64(len(counts)),
 		distinctRatio: float64(len(counts)) / float64(n),
 		avgRunLength:  float64(n) / float64(runs),
 		topValue:      topValue,
@@ -250,6 +254,7 @@ func computeStringStats(arr array.Array[string]) baseStats[string] {
 	return baseStats[string]{
 		src:           arr,
 		isConst:       len(counts) == 1 && topCount == n,
+		distinctCount: uint64(len(counts)),
 		distinctRatio: float64(len(counts)) / float64(n),
 		avgRunLength:  float64(n) / float64(runs),
 		topValue:      topValue,

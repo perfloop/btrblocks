@@ -169,7 +169,7 @@ func buildFloatDictCodec[T Float](arr array.Array[T], ctx planContext) (Codec[T]
 		indices[i] = index
 	}
 
-	valuesCodec, err := compressArray(buildArray(values), ctx.descend().withFloatExcludes(CodecTypeDict))
+	valuesCodec, err := compressDenseArray(buildArray(values), ctx.descend().withFloatExcludes(CodecTypeDict))
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +194,7 @@ func buildStringDictCodec[T String](arr array.Array[T], ctx planContext) (Codec[
 		indices[i] = index
 	}
 
-	valuesCodec, err := compressArray(buildArray(values), ctx.descend().withStringExcludes(CodecTypeDict))
+	valuesCodec, err := compressDenseArray(buildArray(values), ctx.descend().withStringExcludes(CodecTypeDict))
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +217,7 @@ func buildDictIndicesCodec[T Integer | Float | String](valuesCodec Codec[T], ind
 		for i, idx := range indices {
 			narrow[i] = uint8(idx)
 		}
-		indicesCodec, err := compressArray[uint8](array.NewPrimitivesUnsafe(narrow), childCtx)
+		indicesCodec, err := compressDenseArray[uint8](array.NewPrimitivesUnsafe(narrow), childCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -227,7 +227,7 @@ func buildDictIndicesCodec[T Integer | Float | String](valuesCodec Codec[T], ind
 		for i, idx := range indices {
 			narrow[i] = uint16(idx)
 		}
-		indicesCodec, err := compressArray[uint16](array.NewPrimitivesUnsafe(narrow), childCtx)
+		indicesCodec, err := compressDenseArray[uint16](array.NewPrimitivesUnsafe(narrow), childCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -237,7 +237,7 @@ func buildDictIndicesCodec[T Integer | Float | String](valuesCodec Codec[T], ind
 		for i, idx := range indices {
 			narrow[i] = uint32(idx)
 		}
-		indicesCodec, err := compressArray[uint32](array.NewPrimitivesUnsafe(narrow), childCtx)
+		indicesCodec, err := compressDenseArray[uint32](array.NewPrimitivesUnsafe(narrow), childCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -245,7 +245,7 @@ func buildDictIndicesCodec[T Integer | Float | String](valuesCodec Codec[T], ind
 	default:
 		narrow := make([]uint64, len(indices))
 		copy(narrow, indices)
-		indicesCodec, err := compressArray[uint64](array.NewPrimitivesUnsafe(narrow), childCtx)
+		indicesCodec, err := compressDenseArray[uint64](array.NewPrimitivesUnsafe(narrow), childCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -253,12 +253,50 @@ func buildDictIndicesCodec[T Integer | Float | String](valuesCodec Codec[T], ind
 	}
 }
 
-func estimateIntegerDict[T Integer, S statsSource[T]](distinctRatio float64) func(S, planContext) (float64, bool) {
+func estimateIntegerDict[T Integer, S statsSource[T]](distinctCount uint64, avgRunLength float64) func(S, planContext) (float64, bool) {
 	return func(stats S, ctx planContext) (float64, bool) {
-		if ctx.depth <= 0 || distinctRatio > 0.5 {
+		if ctx.depth <= 0 {
 			return 0, false
 		}
-		return estimateBySample(stats, ctx, buildIntegerDictCodec[T])
+
+		n := stats.Source().Length()
+		if n == 0 || distinctCount <= 1 || distinctCount > n/2 {
+			return 0, false
+		}
+
+		elemWidth := uint64(pTypeForType[T]().ByteWidth())
+		valuesSize := uint64(headerSize) + uint64(primitiveArrayHeaderSize) + distinctCount*elemWidth
+
+		codesWidth := bitWidthForUnsigned(distinctCount - 1)
+		codesSize, ok := bitpackEncodedSize(n, codesWidth)
+		if !ok {
+			return 0, false
+		}
+
+		if avgRunLength >= 4 {
+			runCount := uint64(float64(n)/avgRunLength + 0.5)
+			if runCount == 0 {
+				runCount = 1
+			}
+			runsSize, ok := bitpackEncodedSize(runCount, codesWidth)
+			if ok {
+				endsWidth := bitWidthForUnsigned(n - 1)
+				endsSize, ok := bitpackEncodedSize(runCount-1, endsWidth)
+				if ok {
+					runEndSize := uint64(headerSize) + runsSize + endsSize
+					if runEndSize < codesSize {
+						codesSize = runEndSize
+					}
+				}
+			}
+		}
+
+		after := uint64(headerSize) + valuesSize + codesSize
+		before := rawBinarySize(stats.Source())
+		if after >= before {
+			return 0, false
+		}
+		return float64(before) / float64(after), true
 	}
 }
 

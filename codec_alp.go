@@ -616,6 +616,17 @@ func readALPCodec32(r io.Reader, h header) (Codec[float32], error) {
 	return codec, nil
 }
 
+func alpChildContext(ctx planContext) planContext {
+	childCtx := ctx.descend()
+	if ctx.excludesFloat(CodecTypeDict) {
+		childCtx = childCtx.withIntegerExcludes(CodecTypeDict)
+	}
+	if ctx.excludesFloat(CodecTypeRunEnd) {
+		childCtx = childCtx.withIntegerExcludes(CodecTypeRunEnd)
+	}
+	return childCtx
+}
+
 func buildALPCodec[T Float](arr array.Array[T], ctx planContext) (Codec[T], error) {
 	if ctx.depth <= 0 {
 		return nil, errDepthExhausted
@@ -627,6 +638,7 @@ func buildALPCodec[T Float](arr array.Array[T], ctx planContext) (Codec[T], erro
 	var zero T
 	switch any(zero).(type) {
 	case float64:
+		childCtx := alpChildContext(ctx)
 		e, f := findBestExponents64(any(arr).(array.Array[float64]))
 		n := arr.Length()
 		patchIdx := make([]uint32, 0)
@@ -641,12 +653,12 @@ func buildALPCodec[T Float](arr array.Array[T], ctx planContext) (Codec[T], erro
 		if uint64(len(patchIdx))*2 > n {
 			return nil, errALPHighPatchRatio
 		}
-		child, err := compressArray[int64](alpEncodedArray64{
+		child, err := compressDenseArray[int64](alpEncodedArray64{
 			length:  n,
 			expE:    e,
 			expF:    f,
 			valueAt: any(arr).(array.Array[float64]).ValueAt,
-		}, ctx.descend())
+		}, childCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -661,6 +673,7 @@ func buildALPCodec[T Float](arr array.Array[T], ctx planContext) (Codec[T], erro
 		}
 		return any(codec).(Codec[T]), nil
 	case float32:
+		childCtx := alpChildContext(ctx)
 		e, f := findBestExponents32(any(arr).(array.Array[float32]))
 		n := arr.Length()
 		patchIdx := make([]uint32, 0)
@@ -675,12 +688,12 @@ func buildALPCodec[T Float](arr array.Array[T], ctx planContext) (Codec[T], erro
 		if uint64(len(patchIdx))*2 > n {
 			return nil, errALPHighPatchRatio
 		}
-		child, err := compressArray[int32](alpEncodedArray32{
+		child, err := compressDenseArray[int32](alpEncodedArray32{
 			length:  n,
 			expE:    e,
 			expF:    f,
 			valueAt: any(arr).(array.Array[float32]).ValueAt,
-		}, ctx.descend())
+		}, childCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -700,7 +713,7 @@ func buildALPCodec[T Float](arr array.Array[T], ctx planContext) (Codec[T], erro
 }
 
 func buildALPPatches64(patchIdx []uint32, patchVals []float64, ctx planContext) (Codec[uint32], Codec[float64], error) {
-	patchIdxCodec, err := compressArray[uint32](array.NewPrimitivesUnsafe(patchIdx), ctx.descend().withIntegerExcludes(CodecTypeDict, CodecTypeRunEnd))
+	patchIdxCodec, err := compressDenseArray[uint32](array.NewPrimitivesUnsafe(patchIdx), ctx.descend().withIntegerExcludes(CodecTypeDict, CodecTypeRunEnd))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -715,7 +728,7 @@ func buildALPPatches64(patchIdx []uint32, patchVals []float64, ctx planContext) 
 }
 
 func buildALPPatches32(patchIdx []uint32, patchVals []float32, ctx planContext) (Codec[uint32], Codec[float32], error) {
-	patchIdxCodec, err := compressArray[uint32](array.NewPrimitivesUnsafe(patchIdx), ctx.descend().withIntegerExcludes(CodecTypeDict, CodecTypeRunEnd))
+	patchIdxCodec, err := compressDenseArray[uint32](array.NewPrimitivesUnsafe(patchIdx), ctx.descend().withIntegerExcludes(CodecTypeDict, CodecTypeRunEnd))
 	if err != nil {
 		return nil, nil, err
 	}

@@ -459,3 +459,122 @@ func TestCompressWithKeepsRawWhenWinnerDoesNotBeatIt(t *testing.T) {
 	require.Equal(t, CodecTypeRaw, codec.Kind())
 	require.Equal(t, rawSize, codec.BinarySize())
 }
+
+func TestCompressCanonicalNullableIntsRoundTrip(t *testing.T) {
+	codec, err := CompressCanonical([]int32{7, 0, 9, 0, 7}, []bool{true, false, true, false, true}, Options{})
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), codec.NullCount())
+
+	values, valid, err := DecompressCanonical(codec)
+	require.NoError(t, err)
+	require.Equal(t, []bool{true, false, true, false, true}, valid)
+	require.Equal(t, []int32{7, 0, 9, 0, 7}, values)
+}
+
+func TestCompressCanonicalNullableStringsRoundTrip(t *testing.T) {
+	codec, err := CompressCanonical([]string{"aa", "", "bb", ""}, []bool{true, false, true, false}, Options{})
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), codec.NullCount())
+
+	values, valid, err := DecompressCanonical(codec)
+	require.NoError(t, err)
+	require.Equal(t, []bool{true, false, true, false}, valid)
+	require.Equal(t, []string{"aa", "", "bb", ""}, values)
+}
+
+func TestCompressCanonicalAllNullsRoundTrip(t *testing.T) {
+	codec, err := CompressCanonical[int64](nil, []bool{false, false, false}, Options{})
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), codec.NullCount())
+
+	values, valid, err := DecompressCanonical(codec)
+	require.NoError(t, err)
+	require.Equal(t, []bool{false, false, false}, valid)
+	require.Equal(t, []int64{0, 0, 0}, values)
+}
+
+func TestUnsignedOffsetRangeChoosesFoRWhenBitpackIsExcludedByCost(t *testing.T) {
+	values := make([]uint32, 512)
+	pattern := []uint32{1000, 1007, 1001, 1006, 1002, 1005, 1003, 1004}
+	for i := range values {
+		values[i] = pattern[i%len(pattern)]
+	}
+
+	codec, err := compressWith(
+		array.NewPrimitivesUnsafe(values),
+		newPlanContext(Options{MaxDepth: 3}).withIntegerExcludes(CodecTypeDict, CodecTypeSequence, CodecTypeRunEnd),
+		unsignedIntCompressor[uint32]{},
+	)
+	require.NoError(t, err)
+	require.Equal(t, CodecTypeFor, codec.Kind())
+}
+
+func TestUnsignedSmallOffsetRangeKeepsBitpackWhenFoROverheadIsTooHigh(t *testing.T) {
+	values := []uint32{1000, 1007, 1001, 1006}
+
+	codec, err := compressWith(
+		array.NewPrimitivesUnsafe(values),
+		newPlanContext(Options{MaxDepth: 3}).withIntegerExcludes(CodecTypeDict, CodecTypeSequence, CodecTypeRunEnd),
+		unsignedIntCompressor[uint32]{},
+	)
+	require.NoError(t, err)
+	require.Equal(t, CodecTypeBitpack, codec.Kind())
+}
+
+func TestUnsignedLowCardinalityLargeValuesChooseDict(t *testing.T) {
+	values := make([]uint32, 512)
+	pattern := []uint32{1_000_000, 2_000_000, 3_000_000}
+	for i := range values {
+		values[i] = pattern[i%len(pattern)]
+	}
+
+	codec, err := compressWith(
+		array.NewPrimitivesUnsafe(values),
+		newPlanContext(Options{MaxDepth: 3}).withIntegerExcludes(CodecTypeSequence, CodecTypeRunEnd),
+		unsignedIntCompressor[uint32]{},
+	)
+	require.NoError(t, err)
+	require.Equal(t, CodecTypeDict, codec.Kind())
+}
+
+func TestUnsignedOutliersChoosePatchedBitpack(t *testing.T) {
+	values := make([]uint32, 1024)
+	for i := range values {
+		values[i] = uint32(i % 16)
+	}
+	values[100] = 1 << 20
+	values[400] = 1<<20 + 7
+	values[900] = 1 << 19
+
+	codec, err := compressWith(
+		array.NewPrimitivesUnsafe(values),
+		newPlanContext(Options{MaxDepth: 3}).withIntegerExcludes(CodecTypeDict, CodecTypeSequence, CodecTypeRunEnd, CodecTypeFor),
+		unsignedIntCompressor[uint32]{},
+	)
+	require.NoError(t, err)
+	require.Equal(t, CodecTypeBitpack, codec.Kind())
+
+	bitpack, ok := codec.(*bitpackCodec[uint32])
+	require.True(t, ok)
+	require.NotNil(t, bitpack.patchIdxC)
+	require.NotNil(t, bitpack.patchValC)
+	require.Less(t, bitpack.bitWidth, bitWidthForUnsigned(uint64(values[400])))
+}
+
+func TestALPPropagatesFloatDictExcludesToIntegerChild(t *testing.T) {
+	values := make([]float64, 256)
+	pattern := []float64{12.34, 56.78}
+	for i := range values {
+		values[i] = pattern[i%len(pattern)]
+	}
+
+	codec, err := buildALPCodec(
+		array.NewPrimitivesUnsafe(values),
+		newPlanContext(Options{MaxDepth: 3}).withFloatExcludes(CodecTypeDict),
+	)
+	require.NoError(t, err)
+
+	alp, ok := codec.(*alpCodec64)
+	require.True(t, ok)
+	require.NotEqual(t, CodecTypeDict, alp.encoded.Kind())
+}

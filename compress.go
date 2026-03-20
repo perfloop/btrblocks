@@ -8,19 +8,19 @@ import (
 )
 
 func CompressInts[T SignedInteger](values []T, opts Options) (Codec[T], error) {
-	return compressArray[T](array.NewPrimitivesUnsafe(values), newPlanContext(opts))
+	return compressDenseArray[T](array.NewPrimitivesUnsafe(values), newPlanContext(opts))
 }
 
 func CompressUints[T UnsignedInteger](values []T, opts Options) (Codec[T], error) {
-	return compressArray[T](array.NewPrimitivesUnsafe(values), newPlanContext(opts))
+	return compressDenseArray[T](array.NewPrimitivesUnsafe(values), newPlanContext(opts))
 }
 
 func CompressFloats[T Float](values []T, opts Options) (Codec[T], error) {
-	return compressArray[T](array.NewPrimitivesUnsafe(values), newPlanContext(opts))
+	return compressDenseArray[T](array.NewPrimitivesUnsafe(values), newPlanContext(opts))
 }
 
 func CompressStrings(values []string, opts Options) (Codec[string], error) {
-	return compressArray[string](array.NewStrings(values), newPlanContext(opts))
+	return compressDenseArray[string](array.NewStrings(values), newPlanContext(opts))
 }
 
 func Read[T Integer | Float | String](r io.Reader) (Codec[T], error) {

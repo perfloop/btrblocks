@@ -38,7 +38,7 @@ func (signedIntCompressor[T]) Schemes() []scheme[T, signedStats[T]] {
 		registeredScheme[T, signedStats[T]]{
 			kind: CodecTypeDict,
 			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
-				return estimateIntegerDict[T, signedStats[T]](stats.base.distinctRatio)(stats, ctx)
+				return estimateIntegerDict[T, signedStats[T]](stats.base.distinctCount, stats.base.avgRunLength)(stats, ctx)
 			},
 			build: buildIntegerDictCodec[T],
 		},

@@ -9,28 +9,60 @@ import (
 )
 
 type bitpackCodec[T UnsignedInteger] struct {
-	length   uint64
-	bitWidth uint
-	buf      []byte
+	length    uint64
+	bitWidth  uint
+	buf       []byte
+	patchIdxC patchIndexCodec
+	patchValC Codec[T]
 }
 
-func newBitpackCodec[T UnsignedInteger](arr interface {
+type patchIndexCodec interface {
+	io.WriterTo
+	BinarySize() uint64
+	Length() uint64
+	ValueAt(offset uint64) uint64
+}
+
+type patchIndexView[T UnsignedInteger] struct {
+	codec Codec[T]
+}
+
+func (p patchIndexView[T]) WriteTo(w io.Writer) (int64, error) {
+	return p.codec.WriteTo(w)
+}
+
+func (p patchIndexView[T]) BinarySize() uint64 {
+	return p.codec.BinarySize()
+}
+
+func (p patchIndexView[T]) Length() uint64 {
+	return p.codec.Length()
+}
+
+func (p patchIndexView[T]) ValueAt(offset uint64) uint64 {
+	return uint64(p.codec.ValueAt(offset))
+}
+
+func bitWidthForUnsigned(value uint64) uint {
+	return uint(bits.Len64(value))
+}
+
+func bitpackEncodedSize(length uint64, bitWidth uint) (uint64, bool) {
+	bodySize, err := checkedPackedByteSize(length, bitWidth)
+	if err != nil {
+		return 0, false
+	}
+	return uint64(headerSize) + 1 + uint64(bodySize), true
+}
+
+func newBitpackCodecAtWidth[T UnsignedInteger](arr interface {
 	Length() uint64
 	ValueAt(uint64) T
-}) *bitpackCodec[T] {
-	codec := &bitpackCodec[T]{length: arr.Length()}
+}, bitWidth uint) *bitpackCodec[T] {
+	codec := &bitpackCodec[T]{length: arr.Length(), bitWidth: bitWidth}
 	if arr.Length() == 0 {
 		return codec
 	}
-
-	var max uint64
-	for i := uint64(0); i < arr.Length(); i++ {
-		if value := uint64(arr.ValueAt(i)); value > max {
-			max = value
-		}
-	}
-
-	codec.bitWidth = uint(bits.Len64(max))
 	if codec.bitWidth == 0 {
 		return codec
 	}
@@ -42,14 +74,178 @@ func newBitpackCodec[T UnsignedInteger](arr interface {
 	return codec
 }
 
-func (c *bitpackCodec[T]) Kind() CodeType     { return CodecTypeBitpack }
-func (c *bitpackCodec[T]) Length() uint64     { return c.length }
-func (c *bitpackCodec[T]) PType() PType       { return pTypeForType[T]() }
-func (c *bitpackCodec[T]) BinarySize() uint64 { return uint64(headerSize) + 1 + uint64(len(c.buf)) }
+func newBitpackCodec[T UnsignedInteger](arr interface {
+	Length() uint64
+	ValueAt(uint64) T
+}) *bitpackCodec[T] {
+	var max uint64
+	for i := uint64(0); i < arr.Length(); i++ {
+		if value := uint64(arr.ValueAt(i)); value > max {
+			max = value
+		}
+	}
+	return newBitpackCodecAtWidth(arr, bitWidthForUnsigned(max))
+}
+
+func unsignedBitWidthHistogram[T UnsignedInteger](arr interface {
+	Length() uint64
+	ValueAt(uint64) T
+}) []uint64 {
+	histogram := make([]uint64, pTypeForType[T]().ByteWidth()*8+1)
+	for i := uint64(0); i < arr.Length(); i++ {
+		histogram[bitWidthForUnsigned(uint64(arr.ValueAt(i)))]++
+	}
+	return histogram
+}
+
+func bytesPerBitpackException[T UnsignedInteger]() uint64 {
+	return uint64(pTypeForType[T]().ByteWidth() + 4)
+}
+
+func findBestBitpackWidth[T UnsignedInteger](histogram []uint64) uint {
+	length := uint64(0)
+	for _, freq := range histogram {
+		length += freq
+	}
+
+	numPacked := uint64(0)
+	bestCost := length * bytesPerBitpackException[T]()
+	bestWidth := uint(0)
+	for bitWidth, freq := range histogram {
+		packedCost := (uint64(bitWidth)*length + 7) / 8
+		numPacked += freq
+		exceptionsCost := (length - numPacked) * bytesPerBitpackException[T]()
+		if cost := packedCost + exceptionsCost; cost < bestCost {
+			bestCost = cost
+			bestWidth = uint(bitWidth)
+		}
+	}
+	return bestWidth
+}
+
+func buildBitpackCodec[T UnsignedInteger](arr array.Array[T], _ planContext) (Codec[T], error) {
+	bitWidth := findBestBitpackWidth[T](unsignedBitWidthHistogram(arr))
+	codec := newBitpackCodecAtWidth(arr, bitWidth)
+
+	patchCount := uint64(0)
+	for i := uint64(0); i < arr.Length(); i++ {
+		if bitWidthForUnsigned(uint64(arr.ValueAt(i))) > bitWidth {
+			patchCount++
+		}
+	}
+	if patchCount == 0 {
+		return codec, nil
+	}
+
+	patchIdx := make([]uint64, 0, patchCount)
+	patchVals := make([]T, 0, patchCount)
+	for i := uint64(0); i < arr.Length(); i++ {
+		value := arr.ValueAt(i)
+		if bitWidthForUnsigned(uint64(value)) <= bitWidth {
+			continue
+		}
+		patchIdx = append(patchIdx, i)
+		patchVals = append(patchVals, value)
+	}
+
+	patchIdxCodec, err := buildBitpackPatchIndices(patchIdx)
+	if err != nil {
+		return nil, err
+	}
+	patchValCodec, err := buildBitpackPatchValues(patchVals)
+	if err != nil {
+		return nil, err
+	}
+	codec.patchIdxC = patchIdxCodec
+	codec.patchValC = patchValCodec
+	return codec, nil
+}
+
+func buildBitpackPatchIndices(indices []uint64) (patchIndexCodec, error) {
+	last := indices[len(indices)-1]
+	switch {
+	case last <= uint64(^uint8(0)):
+		narrow := make([]uint8, len(indices))
+		for i, idx := range indices {
+			narrow[i] = uint8(idx)
+		}
+		return patchIndexView[uint8]{codec: newRawCodec(array.NewPrimitivesUnsafe(narrow))}, nil
+	case last <= uint64(^uint16(0)):
+		narrow := make([]uint16, len(indices))
+		for i, idx := range indices {
+			narrow[i] = uint16(idx)
+		}
+		return patchIndexView[uint16]{codec: newRawCodec(array.NewPrimitivesUnsafe(narrow))}, nil
+	case last <= uint64(^uint32(0)):
+		narrow := make([]uint32, len(indices))
+		for i, idx := range indices {
+			narrow[i] = uint32(idx)
+		}
+		return patchIndexView[uint32]{codec: newRawCodec(array.NewPrimitivesUnsafe(narrow))}, nil
+	default:
+		narrow := make([]uint64, len(indices))
+		copy(narrow, indices)
+		return patchIndexView[uint64]{codec: newRawCodec(array.NewPrimitivesUnsafe(narrow))}, nil
+	}
+}
+
+func buildBitpackPatchValues[T UnsignedInteger](values []T) (Codec[T], error) {
+	arr := array.NewPrimitivesUnsafe(values)
+	if isAllSameUnsigned(values) {
+		return newConstIntegerCodec(arr)
+	}
+	return newRawCodec(arr), nil
+}
+
+func isAllSameUnsigned[T UnsignedInteger](values []T) bool {
+	if len(values) == 0 {
+		return true
+	}
+	first := values[0]
+	for _, value := range values[1:] {
+		if value != first {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *bitpackCodec[T]) Kind() CodeType { return CodecTypeBitpack }
+func (c *bitpackCodec[T]) Length() uint64 { return c.length }
+func (c *bitpackCodec[T]) PType() PType   { return pTypeForType[T]() }
+func (c *bitpackCodec[T]) BinarySize() uint64 {
+	size := uint64(headerSize) + 1 + uint64(len(c.buf))
+	if c.patchIdxC != nil {
+		size += c.patchIdxC.BinarySize() + c.patchValC.BinarySize()
+	}
+	return size
+}
+
+func findBitpackPatchIndex(idxCodec patchIndexCodec, offset uint64) (uint64, bool) {
+	if idxCodec == nil {
+		return 0, false
+	}
+	lo, hi := uint64(0), idxCodec.Length()
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		if idxCodec.ValueAt(mid) < offset {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo < idxCodec.Length() && idxCodec.ValueAt(lo) == offset {
+		return lo, true
+	}
+	return 0, false
+}
 
 func (c *bitpackCodec[T]) ValueAt(offset uint64) T {
 	if offset >= c.length {
 		panic(errOffsetOutOfRange)
+	}
+	if idx, ok := findBitpackPatchIndex(c.patchIdxC, offset); ok {
+		return c.patchValC.ValueAt(idx)
 	}
 	if c.bitWidth == 0 {
 		var zero T
@@ -72,14 +268,24 @@ func (c *bitpackCodec[T]) Decode(dst []T) error {
 	for i := range dst {
 		dst[i] = T(unpackUnsigned(c.buf, uint64(i)*uint64(c.bitWidth), c.bitWidth))
 	}
+	if c.patchIdxC != nil {
+		for i := uint64(0); i < c.patchIdxC.Length(); i++ {
+			dst[int(c.patchIdxC.ValueAt(i))] = c.patchValC.ValueAt(i)
+		}
+	}
 	return nil
 }
 
 func (c *bitpackCodec[T]) WriteTo(w io.Writer) (int64, error) {
+	flags := uint32(0)
+	if c.patchIdxC != nil {
+		flags |= flagBitpackHasPatches
+	}
 	n, err := header{
 		Version:  versionNumber,
 		Kind:     CodecTypeBitpack,
 		ElemType: pTypeForType[T](),
+		Flags:    flags,
 		Length:   c.length,
 		BodySize: 1 + uint64(len(c.buf)),
 	}.WriteTo(w)
@@ -105,6 +311,18 @@ func (c *bitpackCodec[T]) WriteTo(w io.Writer) (int64, error) {
 	}
 	if nn != len(c.buf) {
 		return n, io.ErrShortWrite
+	}
+	if c.patchIdxC != nil {
+		nn64, err := c.patchIdxC.WriteTo(w)
+		n += nn64
+		if err != nil {
+			return n, err
+		}
+		nn64, err = c.patchValC.WriteTo(w)
+		n += nn64
+		if err != nil {
+			return n, err
+		}
 	}
 	return n, nil
 }
@@ -141,6 +359,41 @@ func readAnyBitpackCodec[T Integer | Float | String](r io.Reader, h header) (Cod
 	}
 }
 
+func readBitpackPatchIndexCodec(r io.Reader) (patchIndexCodec, error) {
+	h, err := readHeader(r)
+	if err != nil {
+		return nil, err
+	}
+	switch h.ElemType {
+	case PTypeUint8:
+		c, err := readCodecWithHeader[uint8](r, h)
+		if err != nil {
+			return nil, err
+		}
+		return patchIndexView[uint8]{codec: c}, nil
+	case PTypeUint16:
+		c, err := readCodecWithHeader[uint16](r, h)
+		if err != nil {
+			return nil, err
+		}
+		return patchIndexView[uint16]{codec: c}, nil
+	case PTypeUint32:
+		c, err := readCodecWithHeader[uint32](r, h)
+		if err != nil {
+			return nil, err
+		}
+		return patchIndexView[uint32]{codec: c}, nil
+	case PTypeUint64:
+		c, err := readCodecWithHeader[uint64](r, h)
+		if err != nil {
+			return nil, err
+		}
+		return patchIndexView[uint64]{codec: c}, nil
+	default:
+		return nil, fmt.Errorf("codec: bitpack patch index type = %v, want unsigned integer", h.ElemType)
+	}
+}
+
 func readBitpackCodec[T UnsignedInteger](r io.Reader, h header) (Codec[T], error) {
 	if h.BodySize < 1 {
 		return nil, fmt.Errorf("codec: bitpack body too small")
@@ -171,7 +424,37 @@ func readBitpackCodec[T UnsignedInteger](r io.Reader, h header) (Codec[T], error
 			return nil, err
 		}
 	}
-	return &bitpackCodec[T]{length: h.Length, bitWidth: bitWidth, buf: buf}, nil
+	codec := &bitpackCodec[T]{length: h.Length, bitWidth: bitWidth, buf: buf}
+	if h.Flags&flagBitpackHasPatches != 0 {
+		idxCodec, err := readBitpackPatchIndexCodec(r)
+		if err != nil {
+			return nil, err
+		}
+		valCodec, err := readCodec[T](r)
+		if err != nil {
+			return nil, err
+		}
+		if idxCodec.Length() != valCodec.Length() {
+			return nil, fmt.Errorf("codec: bitpack patch length mismatch %d vs %d", idxCodec.Length(), valCodec.Length())
+		}
+		if idxCodec.Length() == 0 {
+			return nil, fmt.Errorf("codec: bitpack patches length = 0")
+		}
+		var prev uint64
+		for i := uint64(0); i < idxCodec.Length(); i++ {
+			idx := idxCodec.ValueAt(i)
+			if idx >= h.Length {
+				return nil, fmt.Errorf("codec: bitpack patch index = %d, want < %d", idx, h.Length)
+			}
+			if i > 0 && idx <= prev {
+				return nil, fmt.Errorf("codec: bitpack patch index = %d, want > %d", idx, prev)
+			}
+			prev = idx
+		}
+		codec.patchIdxC = idxCodec
+		codec.patchValC = valCodec
+	}
+	return codec, nil
 }
 
 func packedByteSize(length uint64, bitWidth uint) int {
@@ -237,10 +520,6 @@ func minUint(a, b uint) uint {
 	return b
 }
 
-func estimateBitpack[T UnsignedInteger](arr array.Array[T], _ planContext) (float64, bool) {
-	codec := newBitpackCodec(arr)
-	if codec.BinarySize() >= rawBinarySize(arr) {
-		return 0, false
-	}
-	return float64(rawBinarySize(arr)) / float64(codec.BinarySize()), true
+func estimateBitpack[T UnsignedInteger, S statsSource[T]](stats S, ctx planContext) (float64, bool) {
+	return estimateBySample(stats, ctx, buildBitpackCodec[T])
 }

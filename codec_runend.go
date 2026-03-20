@@ -192,7 +192,7 @@ func buildRunEndCodec[T Integer | Float | String](arr array.Array[T], ctx planCo
 	}
 
 	runsChildCtx := withTypeExcludes[T](ctx.descend(), CodecTypeRunEnd, CodecTypeDict)
-	runsCodec, err := compressArray(buildArray(runs), runsChildCtx)
+	runsCodec, err := compressDenseArray(buildArray(runs), runsChildCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +207,7 @@ func buildRunEndCodec[T Integer | Float | String](arr array.Array[T], ctx planCo
 		for i, end := range ends {
 			narrow[i] = uint8(end)
 		}
-		endsCodec, err := compressArray[uint8](array.NewPrimitivesUnsafe(narrow), endsChildCtx)
+		endsCodec, err := compressDenseArray[uint8](array.NewPrimitivesUnsafe(narrow), endsChildCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -217,7 +217,7 @@ func buildRunEndCodec[T Integer | Float | String](arr array.Array[T], ctx planCo
 		for i, end := range ends {
 			narrow[i] = uint16(end)
 		}
-		endsCodec, err := compressArray[uint16](array.NewPrimitivesUnsafe(narrow), endsChildCtx)
+		endsCodec, err := compressDenseArray[uint16](array.NewPrimitivesUnsafe(narrow), endsChildCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -227,7 +227,7 @@ func buildRunEndCodec[T Integer | Float | String](arr array.Array[T], ctx planCo
 		for i, end := range ends {
 			narrow[i] = uint32(end)
 		}
-		endsCodec, err := compressArray[uint32](array.NewPrimitivesUnsafe(narrow), endsChildCtx)
+		endsCodec, err := compressDenseArray[uint32](array.NewPrimitivesUnsafe(narrow), endsChildCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -235,7 +235,7 @@ func buildRunEndCodec[T Integer | Float | String](arr array.Array[T], ctx planCo
 	default:
 		narrow := make([]uint64, len(ends))
 		copy(narrow, ends)
-		endsCodec, err := compressArray[uint64](array.NewPrimitivesUnsafe(narrow), endsChildCtx)
+		endsCodec, err := compressDenseArray[uint64](array.NewPrimitivesUnsafe(narrow), endsChildCtx)
 		if err != nil {
 			return nil, err
 		}

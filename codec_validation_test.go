@@ -5,6 +5,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/axiomhq/btrblocks/array"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,6 +68,67 @@ func TestReadRunEndRejectsTerminalEndAtLength(t *testing.T) {
 	_, err := Read[uint32](bytes.NewReader(data))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "runend last end = 3, want < 3")
+}
+
+func TestReadBitpackRejectsEmptyPatches(t *testing.T) {
+	data := mustEncodeCodec(t, &bitpackCodec[uint32]{
+		length:    3,
+		bitWidth:  1,
+		buf:       []byte{0},
+		patchIdxC: patchIndexView[uint8]{codec: newRawCodec(buildArray([]uint8{}))},
+		patchValC: newRawCodec(buildArray([]uint32{})),
+	})
+
+	_, err := Read[uint32](bytes.NewReader(data))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "bitpack patches length = 0")
+}
+
+func TestReadBitpackRejectsOutOfRangePatchIndex(t *testing.T) {
+	data := mustEncodeCodec(t, &bitpackCodec[uint32]{
+		length:    3,
+		bitWidth:  1,
+		buf:       []byte{0},
+		patchIdxC: patchIndexView[uint8]{codec: newRawCodec(buildArray([]uint8{3}))},
+		patchValC: newRawCodec(buildArray([]uint32{42})),
+	})
+
+	_, err := Read[uint32](bytes.NewReader(data))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "bitpack patch index = 3, want < 3")
+}
+
+func TestReadBitpackKeepsPatchesEncodedUntilDecode(t *testing.T) {
+	values := make([]uint32, 256)
+	for i := range values {
+		values[i] = uint32(i % 16)
+	}
+	values[17] = 1 << 20
+	values[199] = 1<<21 + 3
+
+	codec, err := buildBitpackCodec(array.NewPrimitivesUnsafe(values), newPlanContext(Options{}))
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	_, err = codec.WriteTo(&buf)
+	require.NoError(t, err)
+
+	readCodec, err := Read[uint32](&buf)
+	require.NoError(t, err)
+
+	bitpack, ok := readCodec.(*bitpackCodec[uint32])
+	require.True(t, ok)
+	require.NotNil(t, bitpack.patchIdxC)
+	require.NotNil(t, bitpack.patchValC)
+	require.Less(t, bitpack.bitWidth, bitWidthForUnsigned(uint64(values[199])))
+
+	require.Equal(t, values[0], bitpack.ValueAt(0))
+	require.Equal(t, values[17], bitpack.ValueAt(17))
+	require.Equal(t, values[199], bitpack.ValueAt(199))
+
+	decoded := make([]uint32, len(values))
+	require.NoError(t, bitpack.Decode(decoded))
+	require.Equal(t, values, decoded)
 }
 
 func TestReadALP64RejectsEmptyPatches(t *testing.T) {

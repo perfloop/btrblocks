@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"math/bits"
 	"unsafe"
 
 	"github.com/axiomhq/btrblocks/array"
@@ -231,21 +230,53 @@ func buildFoRCodec[T UnsignedInteger](arr array.Array[T], ctx planContext) (Code
 		}
 	}
 
-	child := newBitpackCodec(forEncodedArray[T]{
+	rangeWidth := bitWidthForUnsigned(uint64(arr.ValueAt(0) - minValue))
+	for i := uint64(1); i < arr.Length(); i++ {
+		if width := bitWidthForUnsigned(uint64(arr.ValueAt(i) - minValue)); width > rangeWidth {
+			rangeWidth = width
+		}
+	}
+
+	child, err := buildBitpackCodec(forEncodedArray[T]{
 		length:  arr.Length(),
 		min:     minValue,
 		valueAt: arr.ValueAt,
-	})
-	return &forCodec[T]{min: minValue, child: child}, nil
+	}, ctx.descend())
+	if err != nil {
+		return nil, err
+	}
+	bitpackChild, ok := child.(*bitpackCodec[T])
+	if !ok {
+		return nil, fmt.Errorf("codec: FoR child kind = %s, want bitpack", child.Kind())
+	}
+	if bitpackChild.bitWidth > rangeWidth {
+		return nil, fmt.Errorf("codec: FoR child bit width = %d, want <= %d", bitpackChild.bitWidth, rangeWidth)
+	}
+	return &forCodec[T]{min: minValue, child: bitpackChild}, nil
 }
 
 func estimateFoR[T UnsignedInteger, S statsSource[T]](minValue, maxValue T) func(S, planContext) (float64, bool) {
 	return func(stats S, ctx planContext) (float64, bool) {
-		fullWidth := bits.Len64(uint64(maxValue))
-		rangeWidth := bits.Len64(uint64(maxValue - minValue))
-		if ctx.depth <= 0 || minValue == 0 || rangeWidth >= fullWidth {
+		if ctx.depth <= 0 || minValue == 0 {
 			return 0, false
 		}
-		return estimateBySample(stats, ctx, buildFoRCodec[T])
+
+		bitpackWidth := bitWidthForUnsigned(uint64(maxValue))
+		rangeWidth := bitWidthForUnsigned(uint64(maxValue - minValue))
+		if rangeWidth == 0 || rangeWidth >= bitpackWidth {
+			return 0, false
+		}
+
+		childSize, ok := bitpackEncodedSize(stats.Source().Length(), rangeWidth)
+		if !ok {
+			return 0, false
+		}
+
+		after := uint64(headerSize) + uint64(unsafe.Sizeof(minValue)) + childSize
+		before := rawBinarySize(stats.Source())
+		if after >= before {
+			return 0, false
+		}
+		return float64(before) / float64(after), true
 	}
 }

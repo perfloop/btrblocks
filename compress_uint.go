@@ -29,15 +29,6 @@ func (unsignedIntCompressor[T]) Schemes() []scheme[T, unsignedStats[T]] {
 			},
 		},
 		registeredScheme[T, unsignedStats[T]]{
-			kind: CodecTypeBitpack,
-			estimate: func(stats unsignedStats[T], ctx planContext) (float64, bool) {
-				return estimateBitpack[T](stats.Source(), ctx)
-			},
-			build: func(arr array.Array[T], _ planContext) (Codec[T], error) {
-				return newBitpackCodec(arr), nil
-			},
-		},
-		registeredScheme[T, unsignedStats[T]]{
 			kind: CodecTypeFor,
 			estimate: func(stats unsignedStats[T], ctx planContext) (float64, bool) {
 				return estimateFoR[T, unsignedStats[T]](stats.min, stats.max)(stats, ctx)
@@ -45,9 +36,16 @@ func (unsignedIntCompressor[T]) Schemes() []scheme[T, unsignedStats[T]] {
 			build: buildFoRCodec[T],
 		},
 		registeredScheme[T, unsignedStats[T]]{
+			kind: CodecTypeBitpack,
+			estimate: func(stats unsignedStats[T], ctx planContext) (float64, bool) {
+				return estimateBitpack[T](stats, ctx)
+			},
+			build: buildBitpackCodec[T],
+		},
+		registeredScheme[T, unsignedStats[T]]{
 			kind: CodecTypeDict,
 			estimate: func(stats unsignedStats[T], ctx planContext) (float64, bool) {
-				return estimateIntegerDict[T, unsignedStats[T]](stats.base.distinctRatio)(stats, ctx)
+				return estimateIntegerDict[T, unsignedStats[T]](stats.base.distinctCount, stats.base.avgRunLength)(stats, ctx)
 			},
 			build: buildIntegerDictCodec[T],
 		},
