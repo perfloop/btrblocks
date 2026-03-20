@@ -42,7 +42,7 @@ const (
 	CodecTypeZigZag
 	CodecTypeBitpack
 	CodecTypeFor
-	CodecTypeSparse
+	_ // reserved for removed sparse codec kind
 	CodecTypeSequence
 	CodecTypeALP
 )
@@ -63,8 +63,6 @@ func (k CodeType) String() string {
 		return "bitpack"
 	case CodecTypeFor:
 		return "for"
-	case CodecTypeSparse:
-		return "sparse"
 	case CodecTypeSequence:
 		return "sequence"
 	case CodecTypeALP:

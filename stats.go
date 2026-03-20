@@ -7,6 +7,7 @@ import (
 )
 
 type baseStats[T Integer | Float | String] struct {
+	src           array.Array[T]
 	isConst       bool
 	distinctRatio float64
 	avgRunLength  float64
@@ -25,10 +26,41 @@ type signedStats[T SignedInteger] struct {
 	hasNegative bool
 }
 
+func (s baseStats[T]) Source() array.Array[T] {
+	return s.src
+}
+
+func (s baseStats[T]) Sample(ctx planContext) array.Array[T] {
+	if ctx.isSample {
+		return s.src
+	}
+	return sampleArray(s.src)
+}
+
+func (s unsignedStats[T]) Source() array.Array[T] {
+	return s.base.Source()
+}
+
+func (s unsignedStats[T]) Sample(ctx planContext) array.Array[T] {
+	return s.base.Sample(ctx)
+}
+
+func (s signedStats[T]) Source() array.Array[T] {
+	return s.base.Source()
+}
+
+func (s signedStats[T]) Sample(ctx planContext) array.Array[T] {
+	return s.base.Sample(ctx)
+}
+
 func computeUnsignedStats[T UnsignedInteger](arr array.Array[T]) unsignedStats[T] {
 	n := arr.Length()
 	if n == 0 {
-		return unsignedStats[T]{}
+		return unsignedStats[T]{
+			base: baseStats[T]{
+				src: arr,
+			},
+		}
 	}
 
 	counts := make(map[T]uint64, 256)
@@ -64,6 +96,7 @@ func computeUnsignedStats[T UnsignedInteger](arr array.Array[T]) unsignedStats[T
 
 	return unsignedStats[T]{
 		base: baseStats[T]{
+			src:           arr,
 			isConst:       len(counts) == 1 && topCount == n,
 			distinctRatio: float64(len(counts)) / float64(n),
 			avgRunLength:  float64(n) / float64(runs),
@@ -78,7 +111,11 @@ func computeUnsignedStats[T UnsignedInteger](arr array.Array[T]) unsignedStats[T
 func computeSignedStats[T SignedInteger](arr array.Array[T]) signedStats[T] {
 	n := arr.Length()
 	if n == 0 {
-		return signedStats[T]{}
+		return signedStats[T]{
+			base: baseStats[T]{
+				src: arr,
+			},
+		}
 	}
 
 	counts := make(map[T]uint64, 256)
@@ -110,6 +147,7 @@ func computeSignedStats[T SignedInteger](arr array.Array[T]) signedStats[T] {
 
 	return signedStats[T]{
 		base: baseStats[T]{
+			src:           arr,
 			isConst:       len(counts) == 1 && topCount == n,
 			distinctRatio: float64(len(counts)) / float64(n),
 			avgRunLength:  float64(n) / float64(runs),
@@ -134,7 +172,7 @@ func floatKey[T Float](value T) uint64 {
 func computeFloatStats[T Float](arr array.Array[T]) baseStats[T] {
 	n := arr.Length()
 	if n == 0 {
-		return baseStats[T]{}
+		return baseStats[T]{src: arr}
 	}
 
 	type entry struct {
@@ -171,6 +209,7 @@ func computeFloatStats[T Float](arr array.Array[T]) baseStats[T] {
 	}
 
 	return baseStats[T]{
+		src:           arr,
 		isConst:       len(counts) == 1 && topCount == n,
 		distinctRatio: float64(len(counts)) / float64(n),
 		avgRunLength:  float64(n) / float64(runs),
@@ -182,7 +221,7 @@ func computeFloatStats[T Float](arr array.Array[T]) baseStats[T] {
 func computeStringStats(arr array.Array[string]) baseStats[string] {
 	n := arr.Length()
 	if n == 0 {
-		return baseStats[string]{}
+		return baseStats[string]{src: arr}
 	}
 
 	counts := make(map[string]uint64, 256)
@@ -209,6 +248,7 @@ func computeStringStats(arr array.Array[string]) baseStats[string] {
 	}
 
 	return baseStats[string]{
+		src:           arr,
 		isConst:       len(counts) == 1 && topCount == n,
 		distinctRatio: float64(len(counts)) / float64(n),
 		avgRunLength:  float64(n) / float64(runs),

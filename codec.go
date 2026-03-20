@@ -21,23 +21,29 @@ const (
 	maxDecompressLength             = 1 << 30
 )
 
-type kindExcludes uint16
+type kindSet uint16
 
-func (e kindExcludes) has(kind CodeType) bool {
+func (e kindSet) has(kind CodeType) bool {
 	return e&(1<<kind) != 0
 }
 
-func (e kindExcludes) with(kinds ...CodeType) kindExcludes {
+func (e kindSet) with(kinds ...CodeType) kindSet {
 	for _, kind := range kinds {
 		e |= 1 << kind
 	}
 	return e
 }
 
+type plannerExcludes struct {
+	integers kindSet
+	floats   kindSet
+	strings  kindSet
+}
+
 type planContext struct {
 	depth    int
 	isSample bool
-	excludes kindExcludes
+	excludes plannerExcludes
 }
 
 func newPlanContext(opts Options) planContext {
@@ -57,9 +63,43 @@ func (c planContext) sampled() planContext {
 	return c
 }
 
-func (c planContext) withExcludes(kinds ...CodeType) planContext {
-	c.excludes = c.excludes.with(kinds...)
+func (c planContext) withIntegerExcludes(kinds ...CodeType) planContext {
+	c.excludes.integers = c.excludes.integers.with(kinds...)
 	return c
+}
+
+func (c planContext) withFloatExcludes(kinds ...CodeType) planContext {
+	c.excludes.floats = c.excludes.floats.with(kinds...)
+	return c
+}
+
+func (c planContext) withStringExcludes(kinds ...CodeType) planContext {
+	c.excludes.strings = c.excludes.strings.with(kinds...)
+	return c
+}
+
+func withTypeExcludes[T Integer | Float | String](ctx planContext, kinds ...CodeType) planContext {
+	var zero T
+	switch any(zero).(type) {
+	case string:
+		return ctx.withStringExcludes(kinds...)
+	case float32, float64:
+		return ctx.withFloatExcludes(kinds...)
+	default:
+		return ctx.withIntegerExcludes(kinds...)
+	}
+}
+
+func (c planContext) excludesInteger(kind CodeType) bool {
+	return c.excludes.integers.has(kind)
+}
+
+func (c planContext) excludesFloat(kind CodeType) bool {
+	return c.excludes.floats.has(kind)
+}
+
+func (c planContext) excludesString(kind CodeType) bool {
+	return c.excludes.strings.has(kind)
 }
 
 type Codec[T Integer | Float | String] interface {
@@ -130,7 +170,7 @@ func validateHeaderForType[T Integer | Float | String](h header) error {
 		return fmt.Errorf("codec: reserved byte = %d, want 0", h.Reserved)
 	}
 	switch h.Kind {
-	case CodecTypeConst, CodecTypeRaw, CodecTypeDict, CodecTypeRunEnd, CodecTypeZigZag, CodecTypeBitpack, CodecTypeFor, CodecTypeSparse, CodecTypeSequence, CodecTypeALP:
+	case CodecTypeConst, CodecTypeRaw, CodecTypeDict, CodecTypeRunEnd, CodecTypeZigZag, CodecTypeBitpack, CodecTypeFor, CodecTypeSequence, CodecTypeALP:
 	default:
 		return fmt.Errorf("codec: unknown kind = %d", h.Kind)
 	}
@@ -176,8 +216,6 @@ func readCodecWithHeader[T Integer | Float | String](r io.Reader, h header) (Cod
 		return readAnyBitpackCodec[T](r, h)
 	case CodecTypeFor:
 		return readAnyFoRCodec[T](r, h)
-	case CodecTypeSparse:
-		return readSparseCodec[T](r, h)
 	case CodecTypeSequence:
 		return readAnySequenceCodec[T](r, h)
 	case CodecTypeALP:

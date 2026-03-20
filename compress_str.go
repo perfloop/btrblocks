@@ -2,35 +2,42 @@ package btrblocks
 
 import "github.com/axiomhq/btrblocks/array"
 
-func compressStringArray(arr array.Array[string], ctx planContext) (Codec[string], error) {
-	stats := computeStringStats(arr)
-	candidates := []candidate[string]{
-		{
-			kind:     CodecTypeConst,
-			estimate: estimateConst[string](stats.isConst),
+type stringCompressor struct{}
+
+func (stringCompressor) ComputeStats(arr array.Array[string]) baseStats[string] {
+	return computeStringStats(arr)
+}
+
+func (stringCompressor) Schemes() []scheme[string, baseStats[string]] {
+	return []scheme[string, baseStats[string]]{
+		registeredScheme[string, baseStats[string]]{
+			kind: CodecTypeConst,
+			estimate: func(stats baseStats[string], ctx planContext) (float64, bool) {
+				return estimateConst[string](stats.isConst)(stats.Source(), ctx)
+			},
 			build: func(arr array.Array[string], _ planContext) (Codec[string], error) {
 				return newConstStringCodec(arr)
 			},
 		},
-		{
-			kind:     CodecTypeDict,
-			estimate: estimateStringDict[string](stats.distinctRatio),
-			build:    buildStringDictCodec[string],
-		},
-		{
-			kind:     CodecTypeSparse,
-			estimate: estimateSparse[string](stats.isConst, stats.topCount, stats.topValue, cmpStrings[string]),
-			build: func(arr array.Array[string], ctx planContext) (Codec[string], error) {
-				return buildSparseCodec(arr, ctx, stats.topValue, cmpStrings[string])
+		registeredScheme[string, baseStats[string]]{
+			kind: CodecTypeDict,
+			estimate: func(stats baseStats[string], ctx planContext) (float64, bool) {
+				return estimateStringDict[baseStats[string]](stats.distinctRatio)(stats, ctx)
 			},
+			build: buildStringDictCodec[string],
 		},
-		{
-			kind:     CodecTypeRunEnd,
-			estimate: estimateRunEnd[string](stats.avgRunLength, cmpStrings[string]),
+		registeredScheme[string, baseStats[string]]{
+			kind: CodecTypeRunEnd,
+			estimate: func(stats baseStats[string], ctx planContext) (float64, bool) {
+				return estimateRunEnd[string, baseStats[string]](stats.avgRunLength, cmpStrings[string])(stats, ctx)
+			},
 			build: func(arr array.Array[string], ctx planContext) (Codec[string], error) {
 				return buildRunEndCodec(arr, ctx, cmpStrings[string])
 			},
 		},
 	}
-	return selectBest(arr, ctx, candidates)
+}
+
+func (stringCompressor) IsExcluded(ctx planContext, kind CodeType) bool {
+	return ctx.excludesString(kind)
 }

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"sort"
 	"unsafe"
 
 	"github.com/axiomhq/btrblocks/array"
@@ -271,8 +270,6 @@ type alpCodec64 struct {
 	encoded   Codec[int64]
 	patchIdxC Codec[uint32]
 	patchValC Codec[float64]
-	patchIdx  []uint32
-	patchVals []float64
 }
 
 type alpCodec32 struct {
@@ -282,11 +279,44 @@ type alpCodec32 struct {
 	encoded   Codec[int32]
 	patchIdxC Codec[uint32]
 	patchValC Codec[float32]
-	patchIdx  []uint32
-	patchVals []float32
 }
 
 const alpBodySize = 2
+
+func findALPPatchIndex(idxCodec Codec[uint32], offset uint64) (uint64, bool) {
+	if idxCodec == nil {
+		return 0, false
+	}
+	target := uint32(offset)
+	lo, hi := uint64(0), idxCodec.Length()
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		if idxCodec.ValueAt(mid) < target {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo < idxCodec.Length() && idxCodec.ValueAt(lo) == target {
+		return lo, true
+	}
+	return 0, false
+}
+
+func decodeALPPatches[T Float](idxCodec Codec[uint32], valCodec Codec[T]) ([]uint32, []T, error) {
+	if idxCodec == nil {
+		return nil, nil, nil
+	}
+	patchIdx := make([]uint32, idxCodec.Length())
+	if err := idxCodec.Decode(patchIdx); err != nil {
+		return nil, nil, err
+	}
+	patchVals := make([]T, valCodec.Length())
+	if err := valCodec.Decode(patchVals); err != nil {
+		return nil, nil, err
+	}
+	return patchIdx, patchVals, nil
+}
 
 func (a *alpCodec64) Kind() CodeType { return CodecTypeALP }
 func (a *alpCodec64) Length() uint64 { return a.length }
@@ -303,11 +333,8 @@ func (a *alpCodec64) ValueAt(offset uint64) float64 {
 	if offset >= a.length {
 		panic(errOffsetOutOfRange)
 	}
-	idx := sort.Search(len(a.patchIdx), func(i int) bool {
-		return a.patchIdx[i] >= uint32(offset)
-	})
-	if idx < len(a.patchIdx) && a.patchIdx[idx] == uint32(offset) {
-		return a.patchVals[idx]
+	if idx, ok := findALPPatchIndex(a.patchIdxC, offset); ok {
+		return a.patchValC.ValueAt(idx)
 	}
 	return alpDecode64(a.encoded.ValueAt(offset), a.expE, a.expF)
 }
@@ -323,8 +350,12 @@ func (a *alpCodec64) Decode(dst []float64) error {
 	for i, value := range encoded {
 		dst[i] = alpDecode64(value, a.expE, a.expF)
 	}
-	for i, idx := range a.patchIdx {
-		dst[int(idx)] = a.patchVals[i]
+	patchIdx, patchVals, err := decodeALPPatches(a.patchIdxC, a.patchValC)
+	if err != nil {
+		return err
+	}
+	for i, idx := range patchIdx {
+		dst[int(idx)] = patchVals[i]
 	}
 	return nil
 }
@@ -393,11 +424,8 @@ func (a *alpCodec32) ValueAt(offset uint64) float32 {
 	if offset >= a.length {
 		panic(errOffsetOutOfRange)
 	}
-	idx := sort.Search(len(a.patchIdx), func(i int) bool {
-		return a.patchIdx[i] >= uint32(offset)
-	})
-	if idx < len(a.patchIdx) && a.patchIdx[idx] == uint32(offset) {
-		return a.patchVals[idx]
+	if idx, ok := findALPPatchIndex(a.patchIdxC, offset); ok {
+		return a.patchValC.ValueAt(idx)
 	}
 	return alpDecode32(a.encoded.ValueAt(offset), a.expE, a.expF)
 }
@@ -413,8 +441,12 @@ func (a *alpCodec32) Decode(dst []float32) error {
 	for i, value := range encoded {
 		dst[i] = alpDecode32(value, a.expE, a.expF)
 	}
-	for i, idx := range a.patchIdx {
-		dst[int(idx)] = a.patchVals[i]
+	patchIdx, patchVals, err := decodeALPPatches(a.patchIdxC, a.patchValC)
+	if err != nil {
+		return err
+	}
+	for i, idx := range patchIdx {
+		dst[int(idx)] = patchVals[i]
 	}
 	return nil
 }
@@ -523,16 +555,15 @@ func readALPCodec64(r io.Reader, h header) (Codec[float64], error) {
 		if idxCodec.Length() != valCodec.Length() {
 			return nil, fmt.Errorf("codec: ALP patch length mismatch %d vs %d", idxCodec.Length(), valCodec.Length())
 		}
+		if idxCodec.Length() == 0 {
+			return nil, fmt.Errorf("codec: ALP patches length = 0")
+		}
+		last := uint64(idxCodec.ValueAt(idxCodec.Length() - 1))
+		if last >= h.Length {
+			return nil, fmt.Errorf("codec: ALP patch index = %d, want < %d", last, h.Length)
+		}
 		codec.patchIdxC = idxCodec
 		codec.patchValC = valCodec
-		codec.patchIdx = make([]uint32, idxCodec.Length())
-		if err := idxCodec.Decode(codec.patchIdx); err != nil {
-			return nil, err
-		}
-		codec.patchVals = make([]float64, valCodec.Length())
-		if err := valCodec.Decode(codec.patchVals); err != nil {
-			return nil, err
-		}
 	}
 	return codec, nil
 }
@@ -572,16 +603,15 @@ func readALPCodec32(r io.Reader, h header) (Codec[float32], error) {
 		if idxCodec.Length() != valCodec.Length() {
 			return nil, fmt.Errorf("codec: ALP patch length mismatch %d vs %d", idxCodec.Length(), valCodec.Length())
 		}
+		if idxCodec.Length() == 0 {
+			return nil, fmt.Errorf("codec: ALP patches length = 0")
+		}
+		last := uint64(idxCodec.ValueAt(idxCodec.Length() - 1))
+		if last >= h.Length {
+			return nil, fmt.Errorf("codec: ALP patch index = %d, want < %d", last, h.Length)
+		}
 		codec.patchIdxC = idxCodec
 		codec.patchValC = valCodec
-		codec.patchIdx = make([]uint32, idxCodec.Length())
-		if err := idxCodec.Decode(codec.patchIdx); err != nil {
-			return nil, err
-		}
-		codec.patchVals = make([]float32, valCodec.Length())
-		if err := valCodec.Decode(codec.patchVals); err != nil {
-			return nil, err
-		}
 	}
 	return codec, nil
 }
@@ -611,7 +641,7 @@ func buildALPCodec[T Float](arr array.Array[T], ctx planContext) (Codec[T], erro
 		if uint64(len(patchIdx))*2 > n {
 			return nil, errALPHighPatchRatio
 		}
-		child, err := compressSignedArray(alpEncodedArray64{
+		child, err := compressArray[int64](alpEncodedArray64{
 			length:  n,
 			expE:    e,
 			expF:    f,
@@ -622,8 +652,6 @@ func buildALPCodec[T Float](arr array.Array[T], ctx planContext) (Codec[T], erro
 		}
 		codec := &alpCodec64{length: n, expE: e, expF: f, encoded: child}
 		if len(patchIdx) > 0 {
-			codec.patchIdx = patchIdx
-			codec.patchVals = patchVals
 			patchIdxCodec, patchValCodec, err := buildALPPatches64(patchIdx, patchVals, ctx)
 			if err != nil {
 				return nil, err
@@ -647,7 +675,7 @@ func buildALPCodec[T Float](arr array.Array[T], ctx planContext) (Codec[T], erro
 		if uint64(len(patchIdx))*2 > n {
 			return nil, errALPHighPatchRatio
 		}
-		child, err := compressSignedArray(alpEncodedArray32{
+		child, err := compressArray[int32](alpEncodedArray32{
 			length:  n,
 			expE:    e,
 			expF:    f,
@@ -658,8 +686,6 @@ func buildALPCodec[T Float](arr array.Array[T], ctx planContext) (Codec[T], erro
 		}
 		codec := &alpCodec32{length: n, expE: e, expF: f, encoded: child}
 		if len(patchIdx) > 0 {
-			codec.patchIdx = patchIdx
-			codec.patchVals = patchVals
 			patchIdxCodec, patchValCodec, err := buildALPPatches32(patchIdx, patchVals, ctx)
 			if err != nil {
 				return nil, err
@@ -674,7 +700,7 @@ func buildALPCodec[T Float](arr array.Array[T], ctx planContext) (Codec[T], erro
 }
 
 func buildALPPatches64(patchIdx []uint32, patchVals []float64, ctx planContext) (Codec[uint32], Codec[float64], error) {
-	patchIdxCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(patchIdx), ctx.descend().withExcludes(CodecTypeDict, CodecTypeRunEnd, CodecTypeSparse))
+	patchIdxCodec, err := compressArray[uint32](array.NewPrimitivesUnsafe(patchIdx), ctx.descend().withIntegerExcludes(CodecTypeDict, CodecTypeRunEnd))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -689,7 +715,7 @@ func buildALPPatches64(patchIdx []uint32, patchVals []float64, ctx planContext) 
 }
 
 func buildALPPatches32(patchIdx []uint32, patchVals []float32, ctx planContext) (Codec[uint32], Codec[float32], error) {
-	patchIdxCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(patchIdx), ctx.descend().withExcludes(CodecTypeDict, CodecTypeRunEnd, CodecTypeSparse))
+	patchIdxCodec, err := compressArray[uint32](array.NewPrimitivesUnsafe(patchIdx), ctx.descend().withIntegerExcludes(CodecTypeDict, CodecTypeRunEnd))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -703,11 +729,11 @@ func buildALPPatches32(patchIdx []uint32, patchVals []float32, ctx planContext) 
 	return patchIdxCodec, newRawCodec(array.NewPrimitivesUnsafe(patchVals)), nil
 }
 
-func estimateALP[T Float](isConst bool) func(array.Array[T], planContext) (float64, bool) {
-	return func(arr array.Array[T], ctx planContext) (float64, bool) {
+func estimateALP[T Float, S statsSource[T]](isConst bool) func(S, planContext) (float64, bool) {
+	return func(stats S, ctx planContext) (float64, bool) {
 		if ctx.depth <= 0 || isConst {
 			return 0, false
 		}
-		return estimateBySample(arr, ctx, buildALPCodec[T])
+		return estimateBySample(stats, ctx, buildALPCodec[T])
 	}
 }

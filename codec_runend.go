@@ -13,6 +13,24 @@ type runEndCodec[T Integer | Float | String, U UnsignedInteger] struct {
 	ends   Codec[U]
 }
 
+func validateRunEndChildren[T Integer | Float | String, U UnsignedInteger](length uint64, runs Codec[T], ends Codec[U]) error {
+	if runs.Length() != ends.Length()+1 {
+		return fmt.Errorf("codec: runend runs length = %d, want %d", runs.Length(), ends.Length()+1)
+	}
+	if ends.Length() == 0 {
+		return nil
+	}
+	first := uint64(ends.ValueAt(0))
+	if first == 0 {
+		return fmt.Errorf("codec: runend first end = 0, want > 0")
+	}
+	last := uint64(ends.ValueAt(ends.Length() - 1))
+	if last >= length {
+		return fmt.Errorf("codec: runend last end = %d, want < %d", last, length)
+	}
+	return nil
+}
+
 func (r *runEndCodec[T, U]) Kind() CodeType { return CodecTypeRunEnd }
 func (r *runEndCodec[T, U]) Length() uint64 { return r.length }
 func (r *runEndCodec[T, U]) PType() PType   { return pTypeForType[T]() }
@@ -65,7 +83,6 @@ func (r *runEndCodec[T, U]) Decode(dst []T) error {
 	if err := r.ends.Decode(ends); err != nil {
 		return err
 	}
-
 	pos := 0
 	for i, rawEnd := range ends {
 		end := int(rawEnd)
@@ -117,8 +134,8 @@ func readRunEndCodec[T Integer | Float | String](r io.Reader, h header) (Codec[T
 		if err != nil {
 			return nil, err
 		}
-		if runs.Length() != ends.Length()+1 {
-			return nil, fmt.Errorf("codec: runend runs length = %d, want %d", runs.Length(), ends.Length()+1)
+		if err := validateRunEndChildren(h.Length, runs, ends); err != nil {
+			return nil, err
 		}
 		return &runEndCodec[T, uint8]{length: h.Length, runs: runs, ends: ends}, nil
 	case PTypeUint16:
@@ -126,8 +143,8 @@ func readRunEndCodec[T Integer | Float | String](r io.Reader, h header) (Codec[T
 		if err != nil {
 			return nil, err
 		}
-		if runs.Length() != ends.Length()+1 {
-			return nil, fmt.Errorf("codec: runend runs length = %d, want %d", runs.Length(), ends.Length()+1)
+		if err := validateRunEndChildren(h.Length, runs, ends); err != nil {
+			return nil, err
 		}
 		return &runEndCodec[T, uint16]{length: h.Length, runs: runs, ends: ends}, nil
 	case PTypeUint32:
@@ -135,8 +152,8 @@ func readRunEndCodec[T Integer | Float | String](r io.Reader, h header) (Codec[T
 		if err != nil {
 			return nil, err
 		}
-		if runs.Length() != ends.Length()+1 {
-			return nil, fmt.Errorf("codec: runend runs length = %d, want %d", runs.Length(), ends.Length()+1)
+		if err := validateRunEndChildren(h.Length, runs, ends); err != nil {
+			return nil, err
 		}
 		return &runEndCodec[T, uint32]{length: h.Length, runs: runs, ends: ends}, nil
 	case PTypeUint64:
@@ -144,8 +161,8 @@ func readRunEndCodec[T Integer | Float | String](r io.Reader, h header) (Codec[T
 		if err != nil {
 			return nil, err
 		}
-		if runs.Length() != ends.Length()+1 {
-			return nil, fmt.Errorf("codec: runend runs length = %d, want %d", runs.Length(), ends.Length()+1)
+		if err := validateRunEndChildren(h.Length, runs, ends); err != nil {
+			return nil, err
 		}
 		return &runEndCodec[T, uint64]{length: h.Length, runs: runs, ends: ends}, nil
 	default:
@@ -174,11 +191,12 @@ func buildRunEndCodec[T Integer | Float | String](arr array.Array[T], ctx planCo
 		}
 	}
 
-	childCtx := ctx.descend().withExcludes(CodecTypeRunEnd, CodecTypeDict)
-	runsCodec, err := compressArray(buildArray(runs), childCtx)
+	runsChildCtx := withTypeExcludes[T](ctx.descend(), CodecTypeRunEnd, CodecTypeDict)
+	runsCodec, err := compressArray(buildArray(runs), runsChildCtx)
 	if err != nil {
 		return nil, err
 	}
+	endsChildCtx := ctx.descend().withIntegerExcludes(CodecTypeRunEnd, CodecTypeDict)
 	maxEnd := uint64(0)
 	if len(ends) > 0 {
 		maxEnd = ends[len(ends)-1]
@@ -189,7 +207,7 @@ func buildRunEndCodec[T Integer | Float | String](arr array.Array[T], ctx planCo
 		for i, end := range ends {
 			narrow[i] = uint8(end)
 		}
-		endsCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		endsCodec, err := compressArray[uint8](array.NewPrimitivesUnsafe(narrow), endsChildCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -199,7 +217,7 @@ func buildRunEndCodec[T Integer | Float | String](arr array.Array[T], ctx planCo
 		for i, end := range ends {
 			narrow[i] = uint16(end)
 		}
-		endsCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		endsCodec, err := compressArray[uint16](array.NewPrimitivesUnsafe(narrow), endsChildCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -209,7 +227,7 @@ func buildRunEndCodec[T Integer | Float | String](arr array.Array[T], ctx planCo
 		for i, end := range ends {
 			narrow[i] = uint32(end)
 		}
-		endsCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		endsCodec, err := compressArray[uint32](array.NewPrimitivesUnsafe(narrow), endsChildCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -217,7 +235,7 @@ func buildRunEndCodec[T Integer | Float | String](arr array.Array[T], ctx planCo
 	default:
 		narrow := make([]uint64, len(ends))
 		copy(narrow, ends)
-		endsCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		endsCodec, err := compressArray[uint64](array.NewPrimitivesUnsafe(narrow), endsChildCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -225,12 +243,12 @@ func buildRunEndCodec[T Integer | Float | String](arr array.Array[T], ctx planCo
 	}
 }
 
-func estimateRunEnd[T Integer | Float | String](avgRunLength float64, cmp cmpFn[T]) func(array.Array[T], planContext) (float64, bool) {
-	return func(arr array.Array[T], ctx planContext) (float64, bool) {
+func estimateRunEnd[T Integer | Float | String, S statsSource[T]](avgRunLength float64, cmp cmpFn[T]) func(S, planContext) (float64, bool) {
+	return func(stats S, ctx planContext) (float64, bool) {
 		if ctx.depth <= 0 || avgRunLength < 4 {
 			return 0, false
 		}
-		return estimateBySample(arr, ctx, func(arr array.Array[T], ctx planContext) (Codec[T], error) {
+		return estimateBySample(stats, ctx, func(arr array.Array[T], ctx planContext) (Codec[T], error) {
 			return buildRunEndCodec(arr, ctx, cmp)
 		})
 	}

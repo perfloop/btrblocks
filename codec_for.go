@@ -239,13 +239,13 @@ func buildFoRCodec[T UnsignedInteger](arr array.Array[T], ctx planContext) (Code
 	return &forCodec[T]{min: minValue, child: child}, nil
 }
 
-func estimateFoR[T UnsignedInteger](minValue, maxValue T) func(array.Array[T], planContext) (float64, bool) {
-	return func(arr array.Array[T], ctx planContext) (float64, bool) {
+func estimateFoR[T UnsignedInteger, S statsSource[T]](minValue, maxValue T) func(S, planContext) (float64, bool) {
+	return func(stats S, ctx planContext) (float64, bool) {
 		fullWidth := bits.Len64(uint64(maxValue))
 		rangeWidth := bits.Len64(uint64(maxValue - minValue))
 		if ctx.depth <= 0 || minValue == 0 || rangeWidth >= fullWidth {
 			return 0, false
 		}
-		return estimateBySample(arr, ctx, buildFoRCodec[T])
+		return estimateBySample(stats, ctx, buildFoRCodec[T])
 	}
 }

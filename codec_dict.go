@@ -169,7 +169,7 @@ func buildFloatDictCodec[T Float](arr array.Array[T], ctx planContext) (Codec[T]
 		indices[i] = index
 	}
 
-	valuesCodec, err := compressArray(buildArray(values), ctx.descend().withExcludes(CodecTypeDict))
+	valuesCodec, err := compressArray(buildArray(values), ctx.descend().withFloatExcludes(CodecTypeDict))
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +194,7 @@ func buildStringDictCodec[T String](arr array.Array[T], ctx planContext) (Codec[
 		indices[i] = index
 	}
 
-	valuesCodec, err := compressArray(buildArray(values), ctx.descend().withExcludes(CodecTypeDict))
+	valuesCodec, err := compressArray(buildArray(values), ctx.descend().withStringExcludes(CodecTypeDict))
 	if err != nil {
 		return nil, err
 	}
@@ -210,14 +210,14 @@ func buildDictIndicesCodec[T Integer | Float | String](valuesCodec Codec[T], ind
 			}
 		}
 	}
-	childCtx := ctx.descend().withExcludes(CodecTypeDict, CodecTypeSequence)
+	childCtx := ctx.descend().withIntegerExcludes(CodecTypeDict, CodecTypeSequence)
 	switch {
 	case maxIndex <= uint64(^uint8(0)):
 		narrow := make([]uint8, len(indices))
 		for i, idx := range indices {
 			narrow[i] = uint8(idx)
 		}
-		indicesCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		indicesCodec, err := compressArray[uint8](array.NewPrimitivesUnsafe(narrow), childCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -227,7 +227,7 @@ func buildDictIndicesCodec[T Integer | Float | String](valuesCodec Codec[T], ind
 		for i, idx := range indices {
 			narrow[i] = uint16(idx)
 		}
-		indicesCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		indicesCodec, err := compressArray[uint16](array.NewPrimitivesUnsafe(narrow), childCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -237,7 +237,7 @@ func buildDictIndicesCodec[T Integer | Float | String](valuesCodec Codec[T], ind
 		for i, idx := range indices {
 			narrow[i] = uint32(idx)
 		}
-		indicesCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		indicesCodec, err := compressArray[uint32](array.NewPrimitivesUnsafe(narrow), childCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -245,7 +245,7 @@ func buildDictIndicesCodec[T Integer | Float | String](valuesCodec Codec[T], ind
 	default:
 		narrow := make([]uint64, len(indices))
 		copy(narrow, indices)
-		indicesCodec, err := compressUnsignedArray(array.NewPrimitivesUnsafe(narrow), childCtx)
+		indicesCodec, err := compressArray[uint64](array.NewPrimitivesUnsafe(narrow), childCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -253,29 +253,29 @@ func buildDictIndicesCodec[T Integer | Float | String](valuesCodec Codec[T], ind
 	}
 }
 
-func estimateIntegerDict[T Integer](distinctRatio float64) func(array.Array[T], planContext) (float64, bool) {
-	return func(arr array.Array[T], ctx planContext) (float64, bool) {
+func estimateIntegerDict[T Integer, S statsSource[T]](distinctRatio float64) func(S, planContext) (float64, bool) {
+	return func(stats S, ctx planContext) (float64, bool) {
 		if ctx.depth <= 0 || distinctRatio > 0.5 {
 			return 0, false
 		}
-		return estimateBySample(arr, ctx, buildIntegerDictCodec[T])
+		return estimateBySample(stats, ctx, buildIntegerDictCodec[T])
 	}
 }
 
-func estimateStringDict[T String](distinctRatio float64) func(array.Array[T], planContext) (float64, bool) {
-	return func(arr array.Array[T], ctx planContext) (float64, bool) {
+func estimateStringDict[S statsSource[string]](distinctRatio float64) func(S, planContext) (float64, bool) {
+	return func(stats S, ctx planContext) (float64, bool) {
 		if ctx.depth <= 0 || distinctRatio > 0.5 {
 			return 0, false
 		}
-		return estimateBySample(arr, ctx, buildStringDictCodec[T])
+		return estimateBySample(stats, ctx, buildStringDictCodec[string])
 	}
 }
 
-func estimateFloatDict[T Float](distinctRatio float64) func(array.Array[T], planContext) (float64, bool) {
-	return func(arr array.Array[T], ctx planContext) (float64, bool) {
+func estimateFloatDict[T Float, S statsSource[T]](distinctRatio float64) func(S, planContext) (float64, bool) {
+	return func(stats S, ctx planContext) (float64, bool) {
 		if ctx.depth <= 0 || distinctRatio > 0.5 {
 			return 0, false
 		}
-		return estimateBySample(arr, ctx, buildFloatDictCodec[T])
+		return estimateBySample(stats, ctx, buildFloatDictCodec[T])
 	}
 }

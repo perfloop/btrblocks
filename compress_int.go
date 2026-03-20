@@ -2,47 +2,58 @@ package btrblocks
 
 import "github.com/axiomhq/btrblocks/array"
 
-func compressSignedArray[T SignedInteger](arr array.Array[T], ctx planContext) (Codec[T], error) {
-	stats := computeSignedStats(arr)
-	candidates := []candidate[T]{
-		{
-			kind:     CodecTypeConst,
-			estimate: estimateConst[T](stats.base.isConst),
+type signedIntCompressor[T SignedInteger] struct{}
+
+func (signedIntCompressor[T]) ComputeStats(arr array.Array[T]) signedStats[T] {
+	return computeSignedStats(arr)
+}
+
+func (signedIntCompressor[T]) Schemes() []scheme[T, signedStats[T]] {
+	return []scheme[T, signedStats[T]]{
+		registeredScheme[T, signedStats[T]]{
+			kind: CodecTypeConst,
+			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
+				return estimateConst[T](stats.base.isConst)(stats.Source(), ctx)
+			},
 			build: func(arr array.Array[T], _ planContext) (Codec[T], error) {
 				return newConstIntegerCodec(arr)
 			},
 		},
-		{
-			kind:     CodecTypeSequence,
-			estimate: estimateSequence[T],
+		registeredScheme[T, signedStats[T]]{
+			kind: CodecTypeSequence,
+			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
+				return estimateSequence[T](stats.Source(), ctx)
+			},
 			build: func(arr array.Array[T], _ planContext) (Codec[T], error) {
 				return newSequenceCodec(arr)
 			},
 		},
-		{
-			kind:     CodecTypeZigZag,
-			estimate: estimateZigZag[T](stats.hasNegative),
-			build:    buildZigZagCodec[T],
-		},
-		{
-			kind:     CodecTypeSparse,
-			estimate: estimateSparse(stats.base.isConst, stats.base.topCount, stats.base.topValue, cmpIntegers[T]),
-			build: func(arr array.Array[T], ctx planContext) (Codec[T], error) {
-				return buildSparseCodec(arr, ctx, stats.base.topValue, cmpIntegers[T])
+		registeredScheme[T, signedStats[T]]{
+			kind: CodecTypeZigZag,
+			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
+				return estimateZigZag[T, signedStats[T]](stats.hasNegative)(stats, ctx)
 			},
+			build: buildZigZagCodec[T],
 		},
-		{
-			kind:     CodecTypeDict,
-			estimate: estimateIntegerDict[T](stats.base.distinctRatio),
-			build:    buildIntegerDictCodec[T],
+		registeredScheme[T, signedStats[T]]{
+			kind: CodecTypeDict,
+			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
+				return estimateIntegerDict[T, signedStats[T]](stats.base.distinctRatio)(stats, ctx)
+			},
+			build: buildIntegerDictCodec[T],
 		},
-		{
-			kind:     CodecTypeRunEnd,
-			estimate: estimateRunEnd(stats.base.avgRunLength, cmpIntegers[T]),
+		registeredScheme[T, signedStats[T]]{
+			kind: CodecTypeRunEnd,
+			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
+				return estimateRunEnd[T, signedStats[T]](stats.base.avgRunLength, cmpIntegers[T])(stats, ctx)
+			},
 			build: func(arr array.Array[T], ctx planContext) (Codec[T], error) {
 				return buildRunEndCodec(arr, ctx, cmpIntegers[T])
 			},
 		},
 	}
-	return selectBest(arr, ctx, candidates)
+}
+
+func (signedIntCompressor[T]) IsExcluded(ctx planContext, kind CodeType) bool {
+	return ctx.excludesInteger(kind)
 }

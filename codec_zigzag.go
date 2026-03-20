@@ -248,25 +248,25 @@ func buildZigZagCodec[T SignedInteger](arr array.Array[T], ctx planContext) (Cod
 	max := zigzagMaxEncoded(arr.Length(), arr.ValueAt)
 	switch {
 	case max <= uint64(^uint8(0)):
-		child, err := compressUnsignedArray(zigzagEncodedArray[T, uint8]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd, CodecTypeSparse))
+		child, err := compressArray[uint8](zigzagEncodedArray[T, uint8]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
 		if err != nil {
 			return nil, err
 		}
 		return &zigzagCodec[T, uint8]{child: child}, nil
 	case max <= uint64(^uint16(0)):
-		child, err := compressUnsignedArray(zigzagEncodedArray[T, uint16]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd, CodecTypeSparse))
+		child, err := compressArray[uint16](zigzagEncodedArray[T, uint16]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
 		if err != nil {
 			return nil, err
 		}
 		return &zigzagCodec[T, uint16]{child: child}, nil
 	case max <= uint64(^uint32(0)):
-		child, err := compressUnsignedArray(zigzagEncodedArray[T, uint32]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd, CodecTypeSparse))
+		child, err := compressArray[uint32](zigzagEncodedArray[T, uint32]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
 		if err != nil {
 			return nil, err
 		}
 		return &zigzagCodec[T, uint32]{child: child}, nil
 	default:
-		child, err := compressUnsignedArray(zigzagEncodedArray[T, uint64]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd, CodecTypeSparse))
+		child, err := compressArray[uint64](zigzagEncodedArray[T, uint64]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
 		if err != nil {
 			return nil, err
 		}
@@ -274,11 +274,11 @@ func buildZigZagCodec[T SignedInteger](arr array.Array[T], ctx planContext) (Cod
 	}
 }
 
-func estimateZigZag[T SignedInteger](hasNegative bool) func(array.Array[T], planContext) (float64, bool) {
-	return func(arr array.Array[T], ctx planContext) (float64, bool) {
+func estimateZigZag[T SignedInteger, S statsSource[T]](hasNegative bool) func(S, planContext) (float64, bool) {
+	return func(stats S, ctx planContext) (float64, bool) {
 		if ctx.depth <= 0 || !hasNegative {
 			return 0, false
 		}
-		return estimateBySample(arr, ctx, buildZigZagCodec[T])
+		return estimateBySample(stats, ctx, buildZigZagCodec[T])
 	}
 }
