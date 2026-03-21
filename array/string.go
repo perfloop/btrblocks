@@ -95,6 +95,23 @@ func (c *Strings[T]) CopyTo(dst []string) {
 	}
 }
 
+func (c *Strings[T]) Slice(start, end uint64) (Array[string], error) {
+	if err := validateSliceBounds(c.Length(), start, end); err != nil {
+		return nil, err
+	}
+	base := c.offsets[start]
+	bufStart := int(base)
+	bufEnd := int(c.offsets[end])
+	offsets := make([]T, int(end-start)+1)
+	for i := range offsets {
+		offsets[i] = c.offsets[start+uint64(i)] - base
+	}
+	return &Strings[T]{
+		offsets: offsets,
+		buf:     c.buf[bufStart:bufEnd],
+	}, nil
+}
+
 func (c *Strings[T]) BinarySize() uint64 { return uint64(headerSize) + c.bodySize() }
 func (c *Strings[T]) Length() uint64     { return uint64(len(c.offsets) - 1) }
 func (c *Strings[T]) PType() PType       { return PTypeString }

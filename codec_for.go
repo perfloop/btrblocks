@@ -9,11 +9,13 @@ import (
 	"github.com/axiomhq/btrblocks/array"
 )
 
-type forCodec[T UnsignedInteger] struct {
+// forArray stores a reference value plus a child encoded array for biased deltas.
+type forArray[T UnsignedInteger] struct {
 	min   T
-	child Codec[T]
+	child EncodedArray[T]
 }
 
+// forEncodedArray exposes values shifted by the shared minimum for child encoding.
 type forEncodedArray[T UnsignedInteger] struct {
 	length  uint64
 	min     T
@@ -36,6 +38,10 @@ func (a forEncodedArray[T]) BinarySize() uint64 {
 
 func (a forEncodedArray[T]) Length() uint64 { return a.length }
 func (a forEncodedArray[T]) PType() PType   { return pTypeForType[T]() }
+
+func (a forEncodedArray[T]) Slice(start, end uint64) (array.Array[T], error) {
+	return materializeSlice[T](a, start, end)
+}
 
 func (a forEncodedArray[T]) WriteTo(w io.Writer) (int64, error) {
 	bodySize := a.length * uint64(pTypeForType[T]().ByteWidth())
@@ -78,23 +84,23 @@ func (a forEncodedArray[T]) WriteTo(w io.Writer) (int64, error) {
 	return n + written, nil
 }
 
-func (f *forCodec[T]) Kind() CodeType { return CodecTypeFor }
-func (f *forCodec[T]) Length() uint64 { return f.child.Length() }
-func (f *forCodec[T]) PType() PType   { return pTypeForType[T]() }
+func (f *forArray[T]) Encoding() CodeType { return CodecTypeFor }
+func (f *forArray[T]) Length() uint64     { return f.child.Length() }
+func (f *forArray[T]) PType() PType       { return pTypeForType[T]() }
 
-func (f *forCodec[T]) BinarySize() uint64 {
+func (f *forArray[T]) BinarySize() uint64 {
 	return uint64(headerSize) + uint64(unsafe.Sizeof(f.min)) + f.child.BinarySize()
 }
 
-func (f *forCodec[T]) ValueAt(offset uint64) T {
+func (f *forArray[T]) ValueAt(offset uint64) T {
 	return f.child.ValueAt(offset) + f.min
 }
 
-func (f *forCodec[T]) Decode(dst []T) error {
-	if err := validateDecodeLength(f.child.Length(), len(dst)); err != nil {
+func (f *forArray[T]) CopyTo(dst []T) error {
+	if err := validateCopyLength(f.child.Length(), len(dst)); err != nil {
 		return err
 	}
-	if err := f.child.Decode(dst); err != nil {
+	if err := f.child.CopyTo(dst); err != nil {
 		return err
 	}
 	for i := range dst {
@@ -103,7 +109,15 @@ func (f *forCodec[T]) Decode(dst []T) error {
 	return nil
 }
 
-func (f *forCodec[T]) WriteTo(w io.Writer) (int64, error) {
+func (f *forArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
+	child, err := f.child.Slice(start, end)
+	if err != nil {
+		return nil, err
+	}
+	return &forArray[T]{min: f.min, child: child}, nil
+}
+
+func (f *forArray[T]) WriteTo(w io.Writer) (int64, error) {
 	minSize := uint64(unsafe.Sizeof(f.min))
 	n, err := header{
 		Version:  versionNumber,
@@ -152,39 +166,39 @@ func (f *forCodec[T]) WriteTo(w io.Writer) (int64, error) {
 	return n + nn, err
 }
 
-func readAnyFoRCodec[T Integer | Float | String](r io.Reader, h header) (Codec[T], error) {
+func readAnyFoRArray[T Integer | Float | String](r io.Reader, h header) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case uint8:
-		c, err := readFoRCodec[uint8](r, h)
+		c, err := readFoRArray[uint8](r, h)
 		if err != nil {
 			return nil, err
 		}
-		return any(c).(Codec[T]), nil
+		return any(c).(EncodedArray[T]), nil
 	case uint16:
-		c, err := readFoRCodec[uint16](r, h)
+		c, err := readFoRArray[uint16](r, h)
 		if err != nil {
 			return nil, err
 		}
-		return any(c).(Codec[T]), nil
+		return any(c).(EncodedArray[T]), nil
 	case uint32:
-		c, err := readFoRCodec[uint32](r, h)
+		c, err := readFoRArray[uint32](r, h)
 		if err != nil {
 			return nil, err
 		}
-		return any(c).(Codec[T]), nil
+		return any(c).(EncodedArray[T]), nil
 	case uint64:
-		c, err := readFoRCodec[uint64](r, h)
+		c, err := readFoRArray[uint64](r, h)
 		if err != nil {
 			return nil, err
 		}
-		return any(c).(Codec[T]), nil
+		return any(c).(EncodedArray[T]), nil
 	default:
 		return nil, fmt.Errorf("codec: for not supported for %v", h.ElemType)
 	}
 }
 
-func readFoRCodec[T UnsignedInteger](r io.Reader, h header) (Codec[T], error) {
+func readFoRArray[T UnsignedInteger](r io.Reader, h header) (EncodedArray[T], error) {
 	minSize := uint64(unsafe.Sizeof(T(0)))
 	if h.BodySize != minSize {
 		return nil, fmt.Errorf("codec: for body size = %d, want %d", h.BodySize, minSize)
@@ -206,17 +220,17 @@ func readFoRCodec[T UnsignedInteger](r io.Reader, h header) (Codec[T], error) {
 		minValue = T(binary.LittleEndian.Uint64(buf[:8]))
 	}
 
-	child, err := readCodec[T](r)
+	child, err := readEncodedArray[T](r)
 	if err != nil {
 		return nil, err
 	}
 	if child.Length() != h.Length {
 		return nil, fmt.Errorf("codec: for length = %d, want %d", h.Length, child.Length())
 	}
-	return &forCodec[T]{min: minValue, child: child}, nil
+	return &forArray[T]{min: minValue, child: child}, nil
 }
 
-func buildFoRCodec[T UnsignedInteger](arr array.Array[T], ctx planContext) (Codec[T], error) {
+func buildFoRArray[T UnsignedInteger](arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
 	if ctx.depth <= 0 {
 		return nil, errDepthExhausted
 	}
@@ -237,7 +251,7 @@ func buildFoRCodec[T UnsignedInteger](arr array.Array[T], ctx planContext) (Code
 		}
 	}
 
-	child, err := buildBitpackCodec(forEncodedArray[T]{
+	child, err := buildBitPackedArray(forEncodedArray[T]{
 		length:  arr.Length(),
 		min:     minValue,
 		valueAt: arr.ValueAt,
@@ -245,14 +259,14 @@ func buildFoRCodec[T UnsignedInteger](arr array.Array[T], ctx planContext) (Code
 	if err != nil {
 		return nil, err
 	}
-	bitpackChild, ok := child.(*bitpackCodec[T])
+	bitpackChild, ok := child.(*bitPackedArray[T])
 	if !ok {
-		return nil, fmt.Errorf("codec: FoR child kind = %s, want bitpack", child.Kind())
+		return nil, fmt.Errorf("codec: FoR child kind = %s, want bitpack", child.Encoding())
 	}
 	if bitpackChild.bitWidth > rangeWidth {
 		return nil, fmt.Errorf("codec: FoR child bit width = %d, want <= %d", bitpackChild.bitWidth, rangeWidth)
 	}
-	return &forCodec[T]{min: minValue, child: bitpackChild}, nil
+	return &forArray[T]{min: minValue, child: bitpackChild}, nil
 }
 
 func estimateFoR[T UnsignedInteger, S statsSource[T]](minValue, maxValue T) func(S, planContext) (float64, bool) {

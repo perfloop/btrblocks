@@ -14,7 +14,7 @@ const headerSize = 20
 // little-endian.
 //
 // This format intentionally omits magic bytes. Array streams are only entered
-// through array/codec decode paths that already know they are at an array
+// through array/encoded-array read paths that already know they are at an array
 // boundary, so version and flags carry the format-evolution contract.
 type Header struct {
 	Version  uint8  // Format version; currently 1.

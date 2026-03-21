@@ -2,6 +2,7 @@ package btrblocks
 
 import "github.com/axiomhq/btrblocks/array"
 
+// signedIntCompressor registers the dense signed-integer schemes and stats policy.
 type signedIntCompressor[T SignedInteger] struct{}
 
 func (signedIntCompressor[T]) ComputeStats(arr array.Array[T]) signedStats[T] {
@@ -15,8 +16,8 @@ func (signedIntCompressor[T]) Schemes() []scheme[T, signedStats[T]] {
 			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
 				return estimateConst[T](stats.base.isConst)(stats.Source(), ctx)
 			},
-			build: func(arr array.Array[T], _ planContext) (Codec[T], error) {
-				return newConstIntegerCodec(arr)
+			build: func(arr array.Array[T], _ planContext) (EncodedArray[T], error) {
+				return newConstIntegerArray(arr)
 			},
 		},
 		registeredScheme[T, signedStats[T]]{
@@ -24,8 +25,8 @@ func (signedIntCompressor[T]) Schemes() []scheme[T, signedStats[T]] {
 			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
 				return estimateSequence[T](stats.Source(), ctx)
 			},
-			build: func(arr array.Array[T], _ planContext) (Codec[T], error) {
-				return newSequenceCodec(arr)
+			build: func(arr array.Array[T], _ planContext) (EncodedArray[T], error) {
+				return newSequenceArray(arr)
 			},
 		},
 		registeredScheme[T, signedStats[T]]{
@@ -33,22 +34,22 @@ func (signedIntCompressor[T]) Schemes() []scheme[T, signedStats[T]] {
 			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
 				return estimateZigZag[T, signedStats[T]](stats.hasNegative)(stats, ctx)
 			},
-			build: buildZigZagCodec[T],
+			build: buildZigZagArray[T],
 		},
 		registeredScheme[T, signedStats[T]]{
 			kind: CodecTypeDict,
 			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
 				return estimateIntegerDict[T, signedStats[T]](stats.base.distinctCount, stats.base.avgRunLength)(stats, ctx)
 			},
-			build: buildIntegerDictCodec[T],
+			build: buildIntegerDictArray[T],
 		},
 		registeredScheme[T, signedStats[T]]{
 			kind: CodecTypeRunEnd,
 			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
 				return estimateRunEnd[T, signedStats[T]](stats.base.avgRunLength, cmpIntegers[T])(stats, ctx)
 			},
-			build: func(arr array.Array[T], ctx planContext) (Codec[T], error) {
-				return buildRunEndCodec(arr, ctx, cmpIntegers[T])
+			build: func(arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
+				return buildRunEndArray(arr, ctx, cmpIntegers[T])
 			},
 		},
 	}

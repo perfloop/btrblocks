@@ -12,13 +12,14 @@ import (
 
 var errNotArithmeticSequence = errors.New("not an arithmetic sequence")
 
-type sequenceCodec[T Integer] struct {
+// sequenceArray stores an arithmetic progression as a base value and step.
+type sequenceArray[T Integer] struct {
 	length uint64
 	base   T
 	step   T
 }
 
-func newSequenceCodec[T Integer](arr array.Array[T]) (*sequenceCodec[T], error) {
+func newSequenceArray[T Integer](arr array.Array[T]) (*sequenceArray[T], error) {
 	if arr.Length() == 0 {
 		return nil, errDataEmpty
 	}
@@ -35,26 +36,26 @@ func newSequenceCodec[T Integer](arr array.Array[T]) (*sequenceCodec[T], error) 
 			return nil, errNotArithmeticSequence
 		}
 	}
-	return &sequenceCodec[T]{length: arr.Length(), base: base, step: step}, nil
+	return &sequenceArray[T]{length: arr.Length(), base: base, step: step}, nil
 }
 
-func (s *sequenceCodec[T]) Kind() CodeType { return CodecTypeSequence }
-func (s *sequenceCodec[T]) Length() uint64 { return s.length }
-func (s *sequenceCodec[T]) PType() PType   { return pTypeForType[T]() }
+func (s *sequenceArray[T]) Encoding() CodeType { return CodecTypeSequence }
+func (s *sequenceArray[T]) Length() uint64     { return s.length }
+func (s *sequenceArray[T]) PType() PType       { return pTypeForType[T]() }
 
-func (s *sequenceCodec[T]) BinarySize() uint64 {
+func (s *sequenceArray[T]) BinarySize() uint64 {
 	return uint64(headerSize) + 2*uint64(unsafe.Sizeof(s.base))
 }
 
-func (s *sequenceCodec[T]) ValueAt(offset uint64) T {
+func (s *sequenceArray[T]) ValueAt(offset uint64) T {
 	if offset >= s.length {
 		panic(errOffsetOutOfRange)
 	}
 	return s.base + T(offset)*s.step
 }
 
-func (s *sequenceCodec[T]) Decode(dst []T) error {
-	if err := validateDecodeLength(s.length, len(dst)); err != nil {
+func (s *sequenceArray[T]) CopyTo(dst []T) error {
+	if err := validateCopyLength(s.length, len(dst)); err != nil {
 		return err
 	}
 	for i := range dst {
@@ -63,7 +64,18 @@ func (s *sequenceCodec[T]) Decode(dst []T) error {
 	return nil
 }
 
-func (s *sequenceCodec[T]) WriteTo(w io.Writer) (int64, error) {
+func (s *sequenceArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
+	if err := validateSliceBounds(s.length, start, end); err != nil {
+		return nil, err
+	}
+	return &sequenceArray[T]{
+		length: end - start,
+		base:   s.base + T(start)*s.step,
+		step:   s.step,
+	}, nil
+}
+
+func (s *sequenceArray[T]) WriteTo(w io.Writer) (int64, error) {
 	bodySize := 2 * uint64(unsafe.Sizeof(s.base))
 	n, err := header{
 		Version:  versionNumber,
@@ -114,63 +126,63 @@ func (s *sequenceCodec[T]) WriteTo(w io.Writer) (int64, error) {
 	return n, nil
 }
 
-func readAnySequenceCodec[T Integer | Float | String](r io.Reader, h header) (Codec[T], error) {
+func readAnySequenceArray[T Integer | Float | String](r io.Reader, h header) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case int8:
-		c, err := readSequenceCodec[int8](r, h)
+		c, err := readSequenceArray[int8](r, h)
 		if err != nil {
 			return nil, err
 		}
-		return any(c).(Codec[T]), nil
+		return any(c).(EncodedArray[T]), nil
 	case int16:
-		c, err := readSequenceCodec[int16](r, h)
+		c, err := readSequenceArray[int16](r, h)
 		if err != nil {
 			return nil, err
 		}
-		return any(c).(Codec[T]), nil
+		return any(c).(EncodedArray[T]), nil
 	case int32:
-		c, err := readSequenceCodec[int32](r, h)
+		c, err := readSequenceArray[int32](r, h)
 		if err != nil {
 			return nil, err
 		}
-		return any(c).(Codec[T]), nil
+		return any(c).(EncodedArray[T]), nil
 	case int64:
-		c, err := readSequenceCodec[int64](r, h)
+		c, err := readSequenceArray[int64](r, h)
 		if err != nil {
 			return nil, err
 		}
-		return any(c).(Codec[T]), nil
+		return any(c).(EncodedArray[T]), nil
 	case uint8:
-		c, err := readSequenceCodec[uint8](r, h)
+		c, err := readSequenceArray[uint8](r, h)
 		if err != nil {
 			return nil, err
 		}
-		return any(c).(Codec[T]), nil
+		return any(c).(EncodedArray[T]), nil
 	case uint16:
-		c, err := readSequenceCodec[uint16](r, h)
+		c, err := readSequenceArray[uint16](r, h)
 		if err != nil {
 			return nil, err
 		}
-		return any(c).(Codec[T]), nil
+		return any(c).(EncodedArray[T]), nil
 	case uint32:
-		c, err := readSequenceCodec[uint32](r, h)
+		c, err := readSequenceArray[uint32](r, h)
 		if err != nil {
 			return nil, err
 		}
-		return any(c).(Codec[T]), nil
+		return any(c).(EncodedArray[T]), nil
 	case uint64:
-		c, err := readSequenceCodec[uint64](r, h)
+		c, err := readSequenceArray[uint64](r, h)
 		if err != nil {
 			return nil, err
 		}
-		return any(c).(Codec[T]), nil
+		return any(c).(EncodedArray[T]), nil
 	default:
 		return nil, fmt.Errorf("codec: sequence not supported for %v", h.ElemType)
 	}
 }
 
-func readSequenceCodec[T Integer](r io.Reader, h header) (Codec[T], error) {
+func readSequenceArray[T Integer](r io.Reader, h header) (EncodedArray[T], error) {
 	elemSize := uint64(unsafe.Sizeof(T(0)))
 	if h.BodySize != 2*elemSize {
 		return nil, fmt.Errorf("codec: sequence body size = %d, want %d", h.BodySize, 2*elemSize)
@@ -193,11 +205,11 @@ func readSequenceCodec[T Integer](r io.Reader, h header) (Codec[T], error) {
 			vals[i] = T(binary.LittleEndian.Uint64(buf[:8]))
 		}
 	}
-	return &sequenceCodec[T]{length: h.Length, base: vals[0], step: vals[1]}, nil
+	return &sequenceArray[T]{length: h.Length, base: vals[0], step: vals[1]}, nil
 }
 
 func estimateSequence[T Integer](arr array.Array[T], _ planContext) (float64, bool) {
-	codec, err := newSequenceCodec(arr)
+	codec, err := newSequenceArray(arr)
 	if err != nil {
 		return 0, false
 	}

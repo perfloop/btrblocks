@@ -42,7 +42,7 @@ const (
 	CodecTypeZigZag
 	CodecTypeBitpack
 	CodecTypeFor
-	_ // reserved for removed sparse codec kind
+	_ // reserved for removed sparse encoding kind
 	CodecTypeSequence
 	CodecTypeALP
 )
@@ -72,6 +72,7 @@ func (k CodeType) String() string {
 	}
 }
 
+// Options configures recursive planning behavior for compression entrypoints.
 type Options struct {
 	MaxDepth int
 }

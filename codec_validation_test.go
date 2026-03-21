@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func mustEncodeCodec(t *testing.T, codec io.WriterTo) []byte {
+func mustWriteEncodedArray(t *testing.T, codec io.WriterTo) []byte {
 	t.Helper()
 
 	var buf bytes.Buffer
@@ -47,10 +47,10 @@ func TestReadRejectsRemovedCodecKind(t *testing.T) {
 }
 
 func TestReadRunEndRejectsZeroFirstEnd(t *testing.T) {
-	data := mustEncodeCodec(t, &runEndCodec[uint32, uint8]{
+	data := mustWriteEncodedArray(t, &runEndArray[uint32]{
 		length: 3,
-		runs:   newRawCodec(buildArray([]uint32{1, 2})),
-		ends:   newRawCodec(buildArray([]uint8{0})),
+		runs:   newRawArray(buildArray([]uint32{1, 2})),
+		ends:   buildOrdinalSlice(0, []uint64{0}),
 	})
 
 	_, err := Read[uint32](bytes.NewReader(data))
@@ -59,10 +59,10 @@ func TestReadRunEndRejectsZeroFirstEnd(t *testing.T) {
 }
 
 func TestReadRunEndRejectsTerminalEndAtLength(t *testing.T) {
-	data := mustEncodeCodec(t, &runEndCodec[uint32, uint8]{
+	data := mustWriteEncodedArray(t, &runEndArray[uint32]{
 		length: 3,
-		runs:   newRawCodec(buildArray([]uint32{1, 2})),
-		ends:   newRawCodec(buildArray([]uint8{3})),
+		runs:   newRawArray(buildArray([]uint32{1, 2})),
+		ends:   buildOrdinalSlice(3, []uint64{3}),
 	})
 
 	_, err := Read[uint32](bytes.NewReader(data))
@@ -71,12 +71,15 @@ func TestReadRunEndRejectsTerminalEndAtLength(t *testing.T) {
 }
 
 func TestReadBitpackRejectsEmptyPatches(t *testing.T) {
-	data := mustEncodeCodec(t, &bitpackCodec[uint32]{
-		length:    3,
-		bitWidth:  1,
-		buf:       []byte{0},
-		patchIdxC: patchIndexView[uint8]{codec: newRawCodec(buildArray([]uint8{}))},
-		patchValC: newRawCodec(buildArray([]uint32{})),
+	data := mustWriteEncodedArray(t, &bitPackedArray[uint32]{
+		length:   3,
+		bitWidth: 1,
+		buf:      []byte{0},
+		patches: &patches[uint32]{
+			length:  3,
+			indices: buildOrdinalSlice(0, []uint64{}),
+			values:  newRawArray(buildArray([]uint32{})),
+		},
 	})
 
 	_, err := Read[uint32](bytes.NewReader(data))
@@ -85,20 +88,23 @@ func TestReadBitpackRejectsEmptyPatches(t *testing.T) {
 }
 
 func TestReadBitpackRejectsOutOfRangePatchIndex(t *testing.T) {
-	data := mustEncodeCodec(t, &bitpackCodec[uint32]{
-		length:    3,
-		bitWidth:  1,
-		buf:       []byte{0},
-		patchIdxC: patchIndexView[uint8]{codec: newRawCodec(buildArray([]uint8{3}))},
-		patchValC: newRawCodec(buildArray([]uint32{42})),
+	data := mustWriteEncodedArray(t, &bitPackedArray[uint32]{
+		length:   3,
+		bitWidth: 1,
+		buf:      []byte{0},
+		patches: &patches[uint32]{
+			length:  3,
+			indices: buildOrdinalSlice(3, []uint64{3}),
+			values:  newRawArray(buildArray([]uint32{42})),
+		},
 	})
 
 	_, err := Read[uint32](bytes.NewReader(data))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "bitpack patch index = 3, want < 3")
+	require.Contains(t, err.Error(), "bitpack patch index = 3, want [0, 3)")
 }
 
-func TestReadBitpackKeepsPatchesEncodedUntilDecode(t *testing.T) {
+func TestReadBitpackKeepsPatchesEncodedUntilCopy(t *testing.T) {
 	values := make([]uint32, 256)
 	for i := range values {
 		values[i] = uint32(i % 16)
@@ -106,20 +112,19 @@ func TestReadBitpackKeepsPatchesEncodedUntilDecode(t *testing.T) {
 	values[17] = 1 << 20
 	values[199] = 1<<21 + 3
 
-	codec, err := buildBitpackCodec(array.NewPrimitivesUnsafe(values), newPlanContext(Options{}))
+	codec, err := buildBitPackedArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{}))
 	require.NoError(t, err)
 
 	var buf bytes.Buffer
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readCodec, err := Read[uint32](&buf)
+	readEncodedArray, err := Read[uint32](&buf)
 	require.NoError(t, err)
 
-	bitpack, ok := readCodec.(*bitpackCodec[uint32])
+	bitpack, ok := readEncodedArray.(*bitPackedArray[uint32])
 	require.True(t, ok)
-	require.NotNil(t, bitpack.patchIdxC)
-	require.NotNil(t, bitpack.patchValC)
+	require.NotNil(t, bitpack.patches)
 	require.Less(t, bitpack.bitWidth, bitWidthForUnsigned(uint64(values[199])))
 
 	require.Equal(t, values[0], bitpack.ValueAt(0))
@@ -127,18 +132,21 @@ func TestReadBitpackKeepsPatchesEncodedUntilDecode(t *testing.T) {
 	require.Equal(t, values[199], bitpack.ValueAt(199))
 
 	decoded := make([]uint32, len(values))
-	require.NoError(t, bitpack.Decode(decoded))
+	require.NoError(t, bitpack.CopyTo(decoded))
 	require.Equal(t, values, decoded)
 }
 
 func TestReadALP64RejectsEmptyPatches(t *testing.T) {
-	data := mustEncodeCodec(t, &alpCodec64{
-		length:    3,
-		expE:      0,
-		expF:      0,
-		encoded:   newRawCodec(buildArray([]int64{1, 2, 3})),
-		patchIdxC: newRawCodec(buildArray([]uint32{})),
-		patchValC: newRawCodec(buildArray([]float64{})),
+	data := mustWriteEncodedArray(t, &alpArray64{
+		length:  3,
+		expE:    0,
+		expF:    0,
+		encoded: newRawArray(buildArray([]int64{1, 2, 3})),
+		patches: &patches[float64]{
+			length:  3,
+			indices: buildOrdinalSlice(0, []uint64{}),
+			values:  newRawArray(buildArray([]float64{})),
+		},
 	})
 
 	_, err := Read[float64](bytes.NewReader(data))
@@ -147,36 +155,41 @@ func TestReadALP64RejectsEmptyPatches(t *testing.T) {
 }
 
 func TestReadALP32RejectsOutOfRangePatchIndex(t *testing.T) {
-	data := mustEncodeCodec(t, &alpCodec32{
-		length:    3,
-		expE:      0,
-		expF:      0,
-		encoded:   newRawCodec(buildArray([]int32{1, 2, 3})),
-		patchIdxC: newRawCodec(buildArray([]uint32{3})),
-		patchValC: newRawCodec(buildArray([]float32{1.25})),
+	data := mustWriteEncodedArray(t, &alpArray32{
+		length:  3,
+		expE:    0,
+		expF:    0,
+		encoded: newRawArray(buildArray([]int32{1, 2, 3})),
+		patches: &patches[float32]{
+			length:  3,
+			indices: buildOrdinalSlice(3, []uint64{3}),
+			values:  newRawArray(buildArray([]float32{1.25})),
+		},
 	})
 
 	_, err := Read[float32](bytes.NewReader(data))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "ALP patch index = 3, want < 3")
+	require.Contains(t, err.Error(), "ALP patch index = 3, want [0, 3)")
 }
 
-func TestReadALP64KeepsPatchesEncodedUntilDecode(t *testing.T) {
-	data := mustEncodeCodec(t, &alpCodec64{
-		length:    4,
-		expE:      0,
-		expF:      0,
-		encoded:   newRawCodec(buildArray([]int64{1, 2, 3, 4})),
-		patchIdxC: newRawCodec(buildArray([]uint32{1, 3})),
-		patchValC: newRawCodec(buildArray([]float64{20.5, 40.5})),
+func TestReadALP64KeepsPatchesEncodedUntilCopy(t *testing.T) {
+	data := mustWriteEncodedArray(t, &alpArray64{
+		length:  4,
+		expE:    0,
+		expF:    0,
+		encoded: newRawArray(buildArray([]int64{1, 2, 3, 4})),
+		patches: &patches[float64]{
+			length:  4,
+			indices: buildOrdinalSlice(3, []uint64{1, 3}),
+			values:  newRawArray(buildArray([]float64{20.5, 40.5})),
+		},
 	})
 
-	readCodec, err := Read[float64](bytes.NewReader(data))
+	readEncodedArray, err := Read[float64](bytes.NewReader(data))
 	require.NoError(t, err)
 
-	codec := readCodec.(*alpCodec64)
-	require.NotNil(t, codec.patchIdxC)
-	require.NotNil(t, codec.patchValC)
+	codec := readEncodedArray.(*alpArray64)
+	require.NotNil(t, codec.patches)
 
 	require.Equal(t, 1.0, codec.ValueAt(0))
 	require.Equal(t, 20.5, codec.ValueAt(1))
@@ -184,32 +197,34 @@ func TestReadALP64KeepsPatchesEncodedUntilDecode(t *testing.T) {
 	require.Equal(t, 40.5, codec.ValueAt(3))
 
 	decoded := make([]float64, 4)
-	require.NoError(t, codec.Decode(decoded))
+	require.NoError(t, codec.CopyTo(decoded))
 	require.Equal(t, []float64{1.0, 20.5, 3.0, 40.5}, decoded)
 }
 
-func TestReadALP32KeepsPatchesEncodedUntilDecode(t *testing.T) {
-	data := mustEncodeCodec(t, &alpCodec32{
-		length:    3,
-		expE:      0,
-		expF:      0,
-		encoded:   newRawCodec(buildArray([]int32{1, 2, 3})),
-		patchIdxC: newRawCodec(buildArray([]uint32{0, 2})),
-		patchValC: newRawCodec(buildArray([]float32{9.25, 7.5})),
+func TestReadALP32KeepsPatchesEncodedUntilCopy(t *testing.T) {
+	data := mustWriteEncodedArray(t, &alpArray32{
+		length:  3,
+		expE:    0,
+		expF:    0,
+		encoded: newRawArray(buildArray([]int32{1, 2, 3})),
+		patches: &patches[float32]{
+			length:  3,
+			indices: buildOrdinalSlice(2, []uint64{0, 2}),
+			values:  newRawArray(buildArray([]float32{9.25, 7.5})),
+		},
 	})
 
-	readCodec, err := Read[float32](bytes.NewReader(data))
+	readEncodedArray, err := Read[float32](bytes.NewReader(data))
 	require.NoError(t, err)
 
-	codec := readCodec.(*alpCodec32)
-	require.NotNil(t, codec.patchIdxC)
-	require.NotNil(t, codec.patchValC)
+	codec := readEncodedArray.(*alpArray32)
+	require.NotNil(t, codec.patches)
 
 	require.Equal(t, float32(9.25), codec.ValueAt(0))
 	require.Equal(t, float32(2.0), codec.ValueAt(1))
 	require.Equal(t, float32(7.5), codec.ValueAt(2))
 
 	decoded := make([]float32, 3)
-	require.NoError(t, codec.Decode(decoded))
+	require.NoError(t, codec.CopyTo(decoded))
 	require.Equal(t, []float32{9.25, 2.0, 7.5}, decoded)
 }

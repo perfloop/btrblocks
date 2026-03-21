@@ -59,6 +59,20 @@ func TestPrimitiveWriteToIncludesHeaderAndBody(t *testing.T) {
 	require.Equal(t, wantBody, got[headerSize:])
 }
 
+func TestPrimitivesSlice(t *testing.T) {
+	values := []uint32{1, 2, 3, 4}
+	arr := NewPrimitivesUnsafe(values)
+
+	sliced, err := arr.Slice(1, 3)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), sliced.Length())
+	require.Equal(t, uint32(2), sliced.ValueAt(0))
+	require.Equal(t, uint32(3), sliced.ValueAt(1))
+
+	values[1] = 9
+	require.Equal(t, uint32(9), sliced.ValueAt(0))
+}
+
 func TestPrimitivesLargeCorpus(t *testing.T) {
 	values := make([]uint32, largeCorpusSize)
 	for i := range values {

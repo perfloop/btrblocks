@@ -6,24 +6,27 @@ import (
 	"github.com/axiomhq/btrblocks/array"
 )
 
+// statsSource exposes the source array and its sampling policy to the planner.
 type statsSource[T Integer | Float | String] interface {
 	Source() array.Array[T]
 	Sample(planContext) array.Array[T]
 }
 
+// scheme is a planner-visible encoding candidate with estimate and build hooks.
 type scheme[T Integer | Float | String, S statsSource[T]] interface {
-	Kind() CodeType
+	Encoding() CodeType
 	Estimate(stats S, ctx planContext) (float64, bool)
-	Build(arr array.Array[T], ctx planContext) (Codec[T], error)
+	Build(arr array.Array[T], ctx planContext) (EncodedArray[T], error)
 }
 
+// registeredScheme is the concrete function-backed implementation of a scheme.
 type registeredScheme[T Integer | Float | String, S statsSource[T]] struct {
 	kind     CodeType
 	estimate func(stats S, ctx planContext) (float64, bool)
-	build    func(arr array.Array[T], ctx planContext) (Codec[T], error)
+	build    func(arr array.Array[T], ctx planContext) (EncodedArray[T], error)
 }
 
-func (s registeredScheme[T, S]) Kind() CodeType {
+func (s registeredScheme[T, S]) Encoding() CodeType {
 	return s.kind
 }
 
@@ -34,19 +37,20 @@ func (s registeredScheme[T, S]) Estimate(stats S, ctx planContext) (float64, boo
 	return s.estimate(stats, ctx)
 }
 
-func (s registeredScheme[T, S]) Build(arr array.Array[T], ctx planContext) (Codec[T], error) {
+func (s registeredScheme[T, S]) Build(arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
 	return s.build(arr, ctx)
 }
 
+// compressor owns stats generation, scheme registration, and exclusion policy for one type family.
 type compressor[T Integer | Float | String, S statsSource[T]] interface {
 	ComputeStats(arr array.Array[T]) S
 	Schemes() []scheme[T, S]
 	IsExcluded(ctx planContext, kind CodeType) bool
 }
 
-func compressWith[T Integer | Float | String, S statsSource[T]](arr array.Array[T], ctx planContext, c compressor[T, S]) (Codec[T], error) {
+func compressWith[T Integer | Float | String, S statsSource[T]](arr array.Array[T], ctx planContext, c compressor[T, S]) (EncodedArray[T], error) {
 	stats := c.ComputeStats(arr)
-	raw := Codec[T](newRawCodec(arr))
+	raw := EncodedArray[T](newRawArray(arr))
 
 	scheme, ok := chooseScheme(stats, ctx, c)
 	if !ok {
@@ -67,7 +71,7 @@ func chooseScheme[T Integer | Float | String, S statsSource[T]](stats S, ctx pla
 	var best scheme[T, S]
 	bestRatio := 1.0
 	for _, candidate := range c.Schemes() {
-		if c.IsExcluded(ctx, candidate.Kind()) {
+		if c.IsExcluded(ctx, candidate.Encoding()) {
 			continue
 		}
 		ratio, ok := candidate.Estimate(stats, ctx)
@@ -82,7 +86,7 @@ func chooseScheme[T Integer | Float | String, S statsSource[T]](stats S, ctx pla
 	return best, best != nil
 }
 
-func estimateBySample[T Integer | Float | String, S statsSource[T]](stats S, ctx planContext, build func(array.Array[T], planContext) (Codec[T], error)) (float64, bool) {
+func estimateBySample[T Integer | Float | String, S statsSource[T]](stats S, ctx planContext, build func(array.Array[T], planContext) (EncodedArray[T], error)) (float64, bool) {
 	sampledCtx := ctx.sampled()
 	sample := stats.Sample(ctx)
 	codec, err := build(sample, sampledCtx)

@@ -21,12 +21,24 @@ type Array[T Integer | Float | String] interface {
 	ValueAt(offset uint64) T
 	// CopyTo copies all elements into dst. len(dst) must be >= Length().
 	CopyTo(dst []T)
+	// Slice returns a view of the half-open interval [start, end).
+	Slice(start, end uint64) (Array[T], error)
 	// BinarySize is the total size in bytes when written (header + body).
 	BinarySize() uint64
 	// Length is the number of elements in the array.
 	Length() uint64
 	// PType identifies the element type for this array.
 	PType() PType
+}
+
+func validateSliceBounds(length, start, end uint64) error {
+	if start > end {
+		return fmt.Errorf("array: slice start = %d, want <= %d", start, end)
+	}
+	if end > length {
+		return fmt.Errorf("array: slice end = %d, want <= %d", end, length)
+	}
+	return nil
 }
 
 func ReadArray[T Integer | Float | String](r io.Reader) (Array[T], error) {

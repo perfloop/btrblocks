@@ -47,6 +47,13 @@ func (c *Primitives[T]) Length() uint64          { return uint64(len(c.data)) }
 func (c *Primitives[T]) PType() PType            { return c.pType }
 func (c *Primitives[T]) bodySize() uint64        { return uint64(len(c.data)) * uint64(c.width()) }
 
+func (c *Primitives[T]) Slice(start, end uint64) (Array[T], error) {
+	if err := validateSliceBounds(c.Length(), start, end); err != nil {
+		return nil, err
+	}
+	return &Primitives[T]{pType: c.pType, data: c.data[int(start):int(end)]}, nil
+}
+
 func (c *Primitives[T]) writeBody(w io.Writer) (int64, error) {
 	if len(c.data) == 0 {
 		return 0, nil

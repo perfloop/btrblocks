@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/axiomhq/btrblocks/array"
 )
 
 var (
@@ -35,12 +37,14 @@ func (e kindSet) with(kinds ...CodeType) kindSet {
 	return e
 }
 
+// plannerExcludes groups per-domain encoding exclusions for recursive planning.
 type plannerExcludes struct {
 	integers kindSet
 	floats   kindSet
 	strings  kindSet
 }
 
+// planContext carries planner depth, sampling state, and recursive exclusions.
 type planContext struct {
 	depth    int
 	isSample bool
@@ -103,17 +107,20 @@ func (c planContext) excludesString(kind CodeType) bool {
 	return c.excludes.strings.has(kind)
 }
 
-type Codec[T Integer | Float | String] interface {
+// EncodedArray is a typed encoded leaf node in the primitive/string compression tree.
+type EncodedArray[T Integer | Float | String] interface {
 	io.WriterTo
 
-	Kind() CodeType
+	Encoding() CodeType
 	ValueAt(offset uint64) T
-	Decode(dst []T) error
+	CopyTo(dst []T) error
+	Slice(start, end uint64) (EncodedArray[T], error)
 	BinarySize() uint64
 	Length() uint64
 	PType() PType
 }
 
+// header is the fixed encoded-array stream prefix written before each node body.
 type header struct {
 	Version  uint8
 	Kind     CodeType
@@ -156,11 +163,46 @@ func (h header) WriteTo(w io.Writer) (int64, error) {
 	return int64(n), err
 }
 
-func validateDecodeLength(length uint64, dstLen int) error {
+func validateCopyLength(length uint64, dstLen int) error {
 	if uint64(dstLen) != length {
-		return fmt.Errorf("codec: decode destination length = %d, want %d", dstLen, length)
+		return fmt.Errorf("codec: copy destination length = %d, want %d", dstLen, length)
 	}
 	return nil
+}
+
+func validateSliceBounds(length, start, end uint64) error {
+	if start > end {
+		return fmt.Errorf("codec: slice start = %d, want <= %d", start, end)
+	}
+	if end > length {
+		return fmt.Errorf("codec: slice end = %d, want <= %d", end, length)
+	}
+	return nil
+}
+
+func materializeSlice[T Integer | Float | String](src interface {
+	Length() uint64
+	ValueAt(uint64) T
+}, start, end uint64) (array.Array[T], error) {
+	if err := validateSliceBounds(src.Length(), start, end); err != nil {
+		return nil, err
+	}
+	values := make([]T, end-start)
+	for i := range values {
+		values[i] = src.ValueAt(start + uint64(i))
+	}
+	return buildArray(values), nil
+}
+
+func sliceToRawArray[T Integer | Float | String](src interface {
+	Length() uint64
+	ValueAt(uint64) T
+}, start, end uint64) (EncodedArray[T], error) {
+	values, err := materializeSlice(src, start, end)
+	if err != nil {
+		return nil, err
+	}
+	return newRawArray(values), nil
 }
 
 func validateHeaderForType[T Integer | Float | String](h header) error {
@@ -194,37 +236,37 @@ func validateHeaderForType[T Integer | Float | String](h header) error {
 	return nil
 }
 
-func readCodec[T Integer | Float | String](r io.Reader) (Codec[T], error) {
+func readEncodedArray[T Integer | Float | String](r io.Reader) (EncodedArray[T], error) {
 	h, err := readHeader(r)
 	if err != nil {
 		return nil, err
 	}
-	return readCodecWithHeader[T](r, h)
+	return readEncodedArrayWithHeader[T](r, h)
 }
 
-func readCodecWithHeader[T Integer | Float | String](r io.Reader, h header) (Codec[T], error) {
+func readEncodedArrayWithHeader[T Integer | Float | String](r io.Reader, h header) (EncodedArray[T], error) {
 	if err := validateHeaderForType[T](h); err != nil {
 		return nil, err
 	}
 	switch h.Kind {
 	case CodecTypeConst:
-		return readConstCodec[T](r, h)
+		return readConstArray[T](r, h)
 	case CodecTypeRaw:
-		return readRawCodec[T](r, h)
+		return readRawArray[T](r, h)
 	case CodecTypeDict:
-		return readDictCodec[T](r, h)
+		return readDictArray[T](r, h)
 	case CodecTypeRunEnd:
-		return readRunEndCodec[T](r, h)
+		return readRunEndArray[T](r, h)
 	case CodecTypeZigZag:
-		return readAnyZigZagCodec[T](r, h)
+		return readAnyZigZagArray[T](r, h)
 	case CodecTypeBitpack:
-		return readAnyBitpackCodec[T](r, h)
+		return readAnyBitPackedArray[T](r, h)
 	case CodecTypeFor:
-		return readAnyFoRCodec[T](r, h)
+		return readAnyFoRArray[T](r, h)
 	case CodecTypeSequence:
-		return readAnySequenceCodec[T](r, h)
+		return readAnySequenceArray[T](r, h)
 	case CodecTypeALP:
-		return readAnyALPCodec[T](r, h)
+		return readAnyALPArray[T](r, h)
 	default:
 		return nil, fmt.Errorf("codec: unknown kind = %d", h.Kind)
 	}

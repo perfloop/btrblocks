@@ -10,25 +10,26 @@ import (
 
 var errValueNotConstant = errors.New("not constant")
 
-type constCodec[T Integer | Float | String] struct {
+// constArray stores one repeated value for the entire logical array length.
+type constArray[T Integer | Float | String] struct {
 	length uint64
 	value  T
 }
 
-func (c *constCodec[T]) Kind() CodeType     { return CodecTypeConst }
-func (c *constCodec[T]) Length() uint64     { return c.length }
-func (c *constCodec[T]) PType() PType       { return pTypeForType[T]() }
-func (c *constCodec[T]) BinarySize() uint64 { return uint64(headerSize) + constBodyBinarySize(c.value) }
+func (c *constArray[T]) Encoding() CodeType { return CodecTypeConst }
+func (c *constArray[T]) Length() uint64     { return c.length }
+func (c *constArray[T]) PType() PType       { return pTypeForType[T]() }
+func (c *constArray[T]) BinarySize() uint64 { return uint64(headerSize) + constBodyBinarySize(c.value) }
 
-func (c *constCodec[T]) ValueAt(offset uint64) T {
+func (c *constArray[T]) ValueAt(offset uint64) T {
 	if offset >= c.length {
 		panic(errOffsetOutOfRange)
 	}
 	return c.value
 }
 
-func (c *constCodec[T]) Decode(dst []T) error {
-	if err := validateDecodeLength(c.length, len(dst)); err != nil {
+func (c *constArray[T]) CopyTo(dst []T) error {
+	if err := validateCopyLength(c.length, len(dst)); err != nil {
 		return err
 	}
 	for i := range dst {
@@ -37,7 +38,14 @@ func (c *constCodec[T]) Decode(dst []T) error {
 	return nil
 }
 
-func (c *constCodec[T]) WriteTo(w io.Writer) (int64, error) {
+func (c *constArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
+	if err := validateSliceBounds(c.length, start, end); err != nil {
+		return nil, err
+	}
+	return &constArray[T]{length: end - start, value: c.value}, nil
+}
+
+func (c *constArray[T]) WriteTo(w io.Writer) (int64, error) {
 	body := constBodyArray(c.value)
 	n, err := header{
 		Version:  versionNumber,
@@ -53,7 +61,7 @@ func (c *constCodec[T]) WriteTo(w io.Writer) (int64, error) {
 	return n + int64(nn), err
 }
 
-func newConstCodec[T Integer | Float | String](arr array.Array[T], cmp cmpFn[T]) (*constCodec[T], error) {
+func newConstArray[T Integer | Float | String](arr array.Array[T], cmp cmpFn[T]) (*constArray[T], error) {
 	if arr.Length() == 0 {
 		return nil, errDataEmpty
 	}
@@ -63,22 +71,22 @@ func newConstCodec[T Integer | Float | String](arr array.Array[T], cmp cmpFn[T])
 			return nil, errValueNotConstant
 		}
 	}
-	return &constCodec[T]{length: arr.Length(), value: value}, nil
+	return &constArray[T]{length: arr.Length(), value: value}, nil
 }
 
-func newConstIntegerCodec[T Integer](arr array.Array[T]) (*constCodec[T], error) {
-	return newConstCodec(arr, cmpIntegers[T])
+func newConstIntegerArray[T Integer](arr array.Array[T]) (*constArray[T], error) {
+	return newConstArray(arr, cmpIntegers[T])
 }
 
-func newConstFloatCodec[T Float](arr array.Array[T]) (*constCodec[T], error) {
-	return newConstCodec(arr, cmpFloats[T])
+func newConstFloatArray[T Float](arr array.Array[T]) (*constArray[T], error) {
+	return newConstArray(arr, cmpFloats[T])
 }
 
-func newConstStringCodec[T String](arr array.Array[T]) (*constCodec[T], error) {
-	return newConstCodec(arr, cmpStrings[T])
+func newConstStringArray[T String](arr array.Array[T]) (*constArray[T], error) {
+	return newConstArray(arr, cmpStrings[T])
 }
 
-func readConstCodec[T Integer | Float | String](r io.Reader, h header) (Codec[T], error) {
+func readConstArray[T Integer | Float | String](r io.Reader, h header) (EncodedArray[T], error) {
 	arr, err := array.ReadArray[T](r)
 	if err != nil {
 		return nil, err
@@ -92,7 +100,7 @@ func readConstCodec[T Integer | Float | String](r io.Reader, h header) (Codec[T]
 	if h.BodySize != arr.BinarySize() {
 		return nil, fmt.Errorf("codec: const body size = %d, want %d", h.BodySize, arr.BinarySize())
 	}
-	return &constCodec[T]{length: h.Length, value: arr.ValueAt(0)}, nil
+	return &constArray[T]{length: h.Length, value: arr.ValueAt(0)}, nil
 }
 
 func estimateConst[T Integer | Float | String](isConst bool) func(array.Array[T], planContext) (float64, bool) {

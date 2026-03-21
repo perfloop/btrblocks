@@ -2,6 +2,7 @@ package btrblocks
 
 import "github.com/axiomhq/btrblocks/array"
 
+// unsignedIntCompressor registers the dense unsigned-integer schemes and stats policy.
 type unsignedIntCompressor[T UnsignedInteger] struct{}
 
 func (unsignedIntCompressor[T]) ComputeStats(arr array.Array[T]) unsignedStats[T] {
@@ -15,8 +16,8 @@ func (unsignedIntCompressor[T]) Schemes() []scheme[T, unsignedStats[T]] {
 			estimate: func(stats unsignedStats[T], ctx planContext) (float64, bool) {
 				return estimateConst[T](stats.base.isConst)(stats.Source(), ctx)
 			},
-			build: func(arr array.Array[T], _ planContext) (Codec[T], error) {
-				return newConstIntegerCodec(arr)
+			build: func(arr array.Array[T], _ planContext) (EncodedArray[T], error) {
+				return newConstIntegerArray(arr)
 			},
 		},
 		registeredScheme[T, unsignedStats[T]]{
@@ -24,8 +25,8 @@ func (unsignedIntCompressor[T]) Schemes() []scheme[T, unsignedStats[T]] {
 			estimate: func(stats unsignedStats[T], ctx planContext) (float64, bool) {
 				return estimateSequence[T](stats.Source(), ctx)
 			},
-			build: func(arr array.Array[T], _ planContext) (Codec[T], error) {
-				return newSequenceCodec(arr)
+			build: func(arr array.Array[T], _ planContext) (EncodedArray[T], error) {
+				return newSequenceArray(arr)
 			},
 		},
 		registeredScheme[T, unsignedStats[T]]{
@@ -33,29 +34,29 @@ func (unsignedIntCompressor[T]) Schemes() []scheme[T, unsignedStats[T]] {
 			estimate: func(stats unsignedStats[T], ctx planContext) (float64, bool) {
 				return estimateFoR[T, unsignedStats[T]](stats.min, stats.max)(stats, ctx)
 			},
-			build: buildFoRCodec[T],
+			build: buildFoRArray[T],
 		},
 		registeredScheme[T, unsignedStats[T]]{
 			kind: CodecTypeBitpack,
 			estimate: func(stats unsignedStats[T], ctx planContext) (float64, bool) {
 				return estimateBitpack[T](stats, ctx)
 			},
-			build: buildBitpackCodec[T],
+			build: buildBitPackedArray[T],
 		},
 		registeredScheme[T, unsignedStats[T]]{
 			kind: CodecTypeDict,
 			estimate: func(stats unsignedStats[T], ctx planContext) (float64, bool) {
 				return estimateIntegerDict[T, unsignedStats[T]](stats.base.distinctCount, stats.base.avgRunLength)(stats, ctx)
 			},
-			build: buildIntegerDictCodec[T],
+			build: buildIntegerDictArray[T],
 		},
 		registeredScheme[T, unsignedStats[T]]{
 			kind: CodecTypeRunEnd,
 			estimate: func(stats unsignedStats[T], ctx planContext) (float64, bool) {
 				return estimateRunEnd[T, unsignedStats[T]](stats.base.avgRunLength, cmpIntegers[T])(stats, ctx)
 			},
-			build: func(arr array.Array[T], ctx planContext) (Codec[T], error) {
-				return buildRunEndCodec(arr, ctx, cmpIntegers[T])
+			build: func(arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
+				return buildRunEndArray(arr, ctx, cmpIntegers[T])
 			},
 		},
 	}

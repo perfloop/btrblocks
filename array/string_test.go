@@ -81,6 +81,19 @@ func TestStringsWriteToIncludesHeaderOffsetsAndBuffer(t *testing.T) {
 	require.Equal(t, wantBody, got[headerSize:])
 }
 
+func TestStringsSlice(t *testing.T) {
+	arr := newStringsWithOffsets[uint16]([]string{"go", "", "lang"}, 6)
+
+	slicedAny, err := arr.Slice(1, 3)
+	require.NoError(t, err)
+	sliced, ok := slicedAny.(*Strings[uint16])
+	require.True(t, ok)
+	require.Equal(t, uint64(2), sliced.Length())
+	require.Equal(t, "", sliced.ValueAt(0))
+	require.Equal(t, "lang", sliced.ValueAt(1))
+	require.Equal(t, unsafe.SliceData(arr.buf[2:6]), unsafe.SliceData(sliced.buf))
+}
+
 func TestStringsLargeCorpus(t *testing.T) {
 	pool := []string{"", "a", "bb", "ccc"}
 	values := make([]string, largeCorpusSize)

@@ -6,6 +6,7 @@ import (
 	"github.com/axiomhq/btrblocks/array"
 )
 
+// baseStats holds type-agnostic planner statistics for one array.
 type baseStats[T Integer | Float | String] struct {
 	src           array.Array[T]
 	isConst       bool
@@ -16,12 +17,14 @@ type baseStats[T Integer | Float | String] struct {
 	topCount      uint64
 }
 
+// unsignedStats extends baseStats with min/max bounds for unsigned arrays.
 type unsignedStats[T UnsignedInteger] struct {
 	base baseStats[T]
 	min  T
 	max  T
 }
 
+// signedStats extends baseStats with negative-value tracking for signed arrays.
 type signedStats[T SignedInteger] struct {
 	base        baseStats[T]
 	hasNegative bool

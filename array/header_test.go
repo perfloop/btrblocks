@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// shortWriter simulates partial writes when testing header serialization.
 type shortWriter struct {
 	remaining int
 }
