@@ -315,6 +315,17 @@ func (a *alpArray64) ValueAt(offset uint64) float64 {
 	return alpDecode64(a.encoded.ValueAt(offset), a.expE, a.expF)
 }
 
+func (a *alpArray64) decompress(dst []float64) error {
+	encoded := make([]int64, a.length)
+	if err := decompressAny(a.encoded, encoded); err != nil {
+		return err
+	}
+	for i, value := range encoded {
+		dst[i] = alpDecode64(value, a.expE, a.expF)
+	}
+	return a.patches.Apply(dst)
+}
+
 func (a *alpArray64) Slice(start, end uint64) (EncodedArray[float64], error) {
 	if err := validateSliceBounds(a.length, start, end); err != nil {
 		return nil, err
@@ -393,6 +404,17 @@ func (a *alpArray32) ValueAt(offset uint64) float32 {
 		return value
 	}
 	return alpDecode32(a.encoded.ValueAt(offset), a.expE, a.expF)
+}
+
+func (a *alpArray32) decompress(dst []float32) error {
+	encoded := make([]int32, a.length)
+	if err := decompressAny(a.encoded, encoded); err != nil {
+		return err
+	}
+	for i, value := range encoded {
+		dst[i] = alpDecode32(value, a.expE, a.expF)
+	}
+	return a.patches.Apply(dst)
 }
 
 func (a *alpArray32) Slice(start, end uint64) (EncodedArray[float32], error) {

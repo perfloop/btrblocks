@@ -28,6 +28,13 @@ func (c *constArray[T]) ValueAt(offset uint64) T {
 	return c.value
 }
 
+func (c *constArray[T]) decompress(dst []T) error {
+	for i := range dst {
+		dst[i] = c.value
+	}
+	return nil
+}
+
 func (c *constArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	if err := validateSliceBounds(c.length, start, end); err != nil {
 		return nil, err

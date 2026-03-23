@@ -28,6 +28,11 @@ func (r *rawArray[T]) ValueAt(offset uint64) T {
 	return r.arr.ValueAt(offset)
 }
 
+func (r *rawArray[T]) decompress(dst []T) error {
+	r.arr.CopyTo(dst)
+	return nil
+}
+
 func (r *rawArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	return sliceToRawArray[T](r, start, end)
 }

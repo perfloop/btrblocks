@@ -96,6 +96,16 @@ func (f *forArray[T]) ValueAt(offset uint64) T {
 	return f.child.ValueAt(offset) + f.min
 }
 
+func (f *forArray[T]) decompress(dst []T) error {
+	if err := decompressAny(f.child, dst); err != nil {
+		return err
+	}
+	for i := range dst {
+		dst[i] += f.min
+	}
+	return nil
+}
+
 func (f *forArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	child, err := f.child.Slice(start, end)
 	if err != nil {

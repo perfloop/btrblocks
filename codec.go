@@ -121,6 +121,13 @@ type EncodedArray[T Integer | Float | String] interface {
 	PType() PType
 }
 
+// decompressor is an internal interface for bulk decompression.
+// It is NOT part of EncodedArray — callers use DecompressInto/Decompress instead.
+// Each codec struct implements this to provide an efficient bulk path.
+type decompressor[T Integer | Float | String] interface {
+	decompress(dst []T) error
+}
+
 // header is the fixed encoded-array stream prefix written before each node body.
 type header struct {
 	Version  uint8
