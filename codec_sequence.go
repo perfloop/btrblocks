@@ -54,11 +54,12 @@ func (s *sequenceArray[T]) ValueAt(offset uint64) T {
 	return s.base + T(offset)*s.step
 }
 
-func (s *sequenceArray[T]) decompress(dst []T) error {
+func (s *sequenceArray[T]) Decompress() ([]T, error) {
+	dst := make([]T, s.length)
 	for i := range dst {
 		dst[i] = s.base + T(i)*s.step
 	}
-	return nil
+	return dst, nil
 }
 
 func (s *sequenceArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {

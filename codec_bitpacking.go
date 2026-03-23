@@ -189,18 +189,18 @@ func (c *bitPackedArray[T]) ValueAt(offset uint64) T {
 	return T(unpackUnsigned(c.buf, offset*uint64(c.bitWidth), c.bitWidth))
 }
 
-func (c *bitPackedArray[T]) decompress(dst []T) error {
+func (c *bitPackedArray[T]) Decompress() ([]T, error) {
+	dst := make([]T, c.length)
 	if c.bitWidth == 0 {
-		var zero T
-		for i := range dst {
-			dst[i] = zero
-		}
-		return nil
+		return dst, nil
 	}
 	for i := range dst {
 		dst[i] = T(unpackUnsigned(c.buf, uint64(i)*uint64(c.bitWidth), c.bitWidth))
 	}
-	return c.patches.Apply(dst)
+	if err := c.patches.Apply(dst); err != nil {
+		return nil, err
+	}
+	return dst, nil
 }
 
 func (c *bitPackedArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {

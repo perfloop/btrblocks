@@ -72,22 +72,23 @@ func fillRun[T Integer | Float | String](dst []T, start, end int, value T) {
 	}
 }
 
-func (r *runEndArray[T]) decompress(dst []T) error {
-	runs := make([]T, r.runs.Length())
-	if err := decompressAny(r.runs, runs); err != nil {
-		return err
+func (r *runEndArray[T]) Decompress() ([]T, error) {
+	runs, err := r.runs.Decompress()
+	if err != nil {
+		return nil, err
 	}
-	ends := make([]uint64, r.ends.Length())
-	if err := decompressOrdinalsInto(r.ends, ends); err != nil {
-		return err
+	ends, err := decompressOrdinals(r.ends)
+	if err != nil {
+		return nil, err
 	}
+	dst := make([]T, r.length)
 	pos := 0
 	for i, rawEnd := range ends {
 		fillRun(dst, pos, int(rawEnd), runs[i])
 		pos = int(rawEnd)
 	}
 	fillRun(dst, pos, len(dst), runs[len(ends)])
-	return nil
+	return dst, nil
 }
 
 func (r *runEndArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {

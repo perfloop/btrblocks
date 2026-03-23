@@ -17,78 +17,48 @@ func Read[T Integer | Float | String](r io.Reader) (EncodedArray[T], error) {
 	return readEncodedArray[T](r)
 }
 
-// DecompressInto bulk-decodes encoded into dst. This is the only entry point for
-// bulk decompression — EncodedArray itself exposes only scalar ValueAt access.
-// Each codec type is matched for an efficient bulk path; unknown types fall back
-// to a ValueAt loop.
-func DecompressInto[T Integer | Float | String](encoded EncodedArray[T], dst []T) error {
-	if encoded.Length() > maxDecompressLength {
-		return fmt.Errorf("codec: decompressed length %d exceeds limit %d", encoded.Length(), maxDecompressLength)
-	}
-	if err := validateCopyLength(encoded.Length(), len(dst)); err != nil {
-		return err
-	}
-	return decompressAny(encoded, dst)
-}
-
-// decompressAny dispatches to each codec's decompress method.
-func decompressAny[T Integer | Float | String](encoded EncodedArray[T], dst []T) error {
-	if d, ok := encoded.(decompressor[T]); ok {
-		return d.decompress(dst)
-	}
-	// Fallback: ValueAt loop for unknown or future codec types.
-	for i := range dst {
-		dst[i] = encoded.ValueAt(uint64(i))
-	}
-	return nil
-}
-
-// decompressOrdinalsInto bulk-decompresses an ordinalArray into a []uint64 slice.
-func decompressOrdinalsInto(ord ordinalArray, dst []uint64) error {
+// decompressOrdinals bulk-decompresses an ordinalArray into a []uint64 slice.
+func decompressOrdinals(ord ordinalArray) ([]uint64, error) {
 	switch o := ord.(type) {
 	case ordinalView[uint8]:
-		tmp := make([]uint8, o.codec.Length())
-		if err := decompressAny(o.codec, tmp); err != nil {
-			return err
+		tmp, err := o.codec.Decompress()
+		if err != nil {
+			return nil, err
 		}
+		dst := make([]uint64, len(tmp))
 		for i, v := range tmp {
 			dst[i] = uint64(v)
 		}
-		return nil
+		return dst, nil
 	case ordinalView[uint16]:
-		tmp := make([]uint16, o.codec.Length())
-		if err := decompressAny(o.codec, tmp); err != nil {
-			return err
+		tmp, err := o.codec.Decompress()
+		if err != nil {
+			return nil, err
 		}
+		dst := make([]uint64, len(tmp))
 		for i, v := range tmp {
 			dst[i] = uint64(v)
 		}
-		return nil
+		return dst, nil
 	case ordinalView[uint32]:
-		tmp := make([]uint32, o.codec.Length())
-		if err := decompressAny(o.codec, tmp); err != nil {
-			return err
+		tmp, err := o.codec.Decompress()
+		if err != nil {
+			return nil, err
 		}
+		dst := make([]uint64, len(tmp))
 		for i, v := range tmp {
 			dst[i] = uint64(v)
 		}
-		return nil
+		return dst, nil
 	case ordinalView[uint64]:
-		return decompressAny(o.codec, dst)
+		return o.codec.Decompress()
 	default:
+		dst := make([]uint64, ord.Length())
 		for i := range dst {
 			dst[i] = ord.ValueAt(uint64(i))
 		}
-		return nil
+		return dst, nil
 	}
-}
-
-func Decompress[T Integer | Float | String](encoded EncodedArray[T]) ([]T, error) {
-	values := make([]T, encoded.Length())
-	if err := DecompressInto(encoded, values); err != nil {
-		return nil, err
-	}
-	return values, nil
 }
 
 func compressArray[T Integer | Float | String](arr array.Array[T], ctx planContext) (EncodedArray[T], error) {

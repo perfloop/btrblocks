@@ -38,6 +38,14 @@ func (c *testEncodedArrayUint32) ValueAt(offset uint64) uint32 {
 	return 0
 }
 
+func (c *testEncodedArrayUint32) Decompress() ([]uint32, error) {
+	dst := make([]uint32, c.length)
+	for i := range dst {
+		dst[i] = c.ValueAt(uint64(i))
+	}
+	return dst, nil
+}
+
 func (c *testEncodedArrayUint32) Slice(start, end uint64) (EncodedArray[uint32], error) {
 	if err := validateSliceBounds(c.length, start, end); err != nil {
 		return nil, err
@@ -93,6 +101,12 @@ func (c *spyArray[T]) ValueAt(offset uint64) T {
 	return c.values[offset]
 }
 
+func (c *spyArray[T]) Decompress() ([]T, error) {
+	dst := make([]T, len(c.values))
+	copy(dst, c.values)
+	return dst, nil
+}
+
 func (c *spyArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	if err := validateSliceBounds(uint64(len(c.values)), start, end); err != nil {
 		return nil, err
@@ -123,8 +137,8 @@ func TestCompressRoundTripInts(t *testing.T) {
 	require.NoError(t, err)
 	require.LessOrEqual(t, codec.BinarySize(), newRawArray(buildArray(values)).BinarySize())
 
-	decoded := make([]int32, len(values))
-	require.NoError(t, DecompressInto(codec, decoded))
+	decoded, err := codec.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 
 	var buf bytes.Buffer
@@ -133,8 +147,8 @@ func TestCompressRoundTripInts(t *testing.T) {
 
 	readEncodedArray, err := Read[int32](&buf)
 	require.NoError(t, err)
-	decoded = make([]int32, len(values))
-	require.NoError(t, DecompressInto(readEncodedArray, decoded))
+	decoded, err = readEncodedArray.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
 
@@ -144,8 +158,8 @@ func TestCompressRoundTripUints(t *testing.T) {
 	require.NoError(t, err)
 	require.LessOrEqual(t, codec.BinarySize(), newRawArray(buildArray(values)).BinarySize())
 
-	decoded := make([]uint32, len(values))
-	require.NoError(t, DecompressInto(codec, decoded))
+	decoded, err := codec.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 
 	var buf bytes.Buffer
@@ -154,8 +168,8 @@ func TestCompressRoundTripUints(t *testing.T) {
 
 	readEncodedArray, err := Read[uint32](&buf)
 	require.NoError(t, err)
-	decoded = make([]uint32, len(values))
-	require.NoError(t, DecompressInto(readEncodedArray, decoded))
+	decoded, err = readEncodedArray.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
 
@@ -165,8 +179,8 @@ func TestCompressRoundTripFloats(t *testing.T) {
 	require.NoError(t, err)
 	require.LessOrEqual(t, codec.BinarySize(), newRawArray(buildArray(values)).BinarySize())
 
-	decoded := make([]float64, len(values))
-	require.NoError(t, DecompressInto(codec, decoded))
+	decoded, err := codec.Decompress()
+	require.NoError(t, err)
 	require.True(t, equalFloats(values, decoded))
 
 	var buf bytes.Buffer
@@ -175,8 +189,8 @@ func TestCompressRoundTripFloats(t *testing.T) {
 
 	readEncodedArray, err := Read[float64](&buf)
 	require.NoError(t, err)
-	decoded = make([]float64, len(values))
-	require.NoError(t, DecompressInto(readEncodedArray, decoded))
+	decoded, err = readEncodedArray.Decompress()
+	require.NoError(t, err)
 	require.True(t, equalFloats(values, decoded))
 }
 
@@ -186,8 +200,8 @@ func TestCompressRoundTripStrings(t *testing.T) {
 	require.NoError(t, err)
 	require.LessOrEqual(t, codec.BinarySize(), newRawArray(buildArray(values)).BinarySize())
 
-	decoded := make([]string, len(values))
-	require.NoError(t, DecompressInto(codec, decoded))
+	decoded, err := codec.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 
 	var buf bytes.Buffer
@@ -196,8 +210,8 @@ func TestCompressRoundTripStrings(t *testing.T) {
 
 	readEncodedArray, err := Read[string](&buf)
 	require.NoError(t, err)
-	decoded = make([]string, len(values))
-	require.NoError(t, DecompressInto(readEncodedArray, decoded))
+	decoded, err = readEncodedArray.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
 
@@ -214,7 +228,7 @@ func TestDecompressFromCodec(t *testing.T) {
 	codec, err := Compress(buildArray(values), Options{})
 	require.NoError(t, err)
 
-	decompressed, err := Decompress(codec)
+	decompressed, err := codec.Decompress()
 	require.NoError(t, err)
 	require.Equal(t, values, decompressed)
 }
@@ -231,29 +245,19 @@ func TestDecompressFromReadCodec(t *testing.T) {
 	readEncodedArray, err := Read[string](&buf)
 	require.NoError(t, err)
 
-	decompressed, err := Decompress(readEncodedArray)
+	decompressed, err := readEncodedArray.Decompress()
 	require.NoError(t, err)
 	require.Equal(t, values, decompressed)
 }
 
-func TestDecompressIntoCodec(t *testing.T) {
+func TestDecompressCodec(t *testing.T) {
 	values := []uint32{1000, 1002, 1004, 1006, 1008, 1010, 1012, 1014, 1016, 1018}
 	codec, err := Compress(buildArray(values), Options{})
 	require.NoError(t, err)
 
-	decompressed := make([]uint32, len(values))
-	require.NoError(t, DecompressInto(codec, decompressed))
-	require.Equal(t, values, decompressed)
-}
-
-func TestDecompressIntoRejectsLengthMismatch(t *testing.T) {
-	values := []int32{-7, -3, -7, -3}
-	codec, err := Compress(buildArray(values), Options{})
+	decompressed, err := codec.Decompress()
 	require.NoError(t, err)
-
-	err = DecompressInto(codec, make([]int32, len(values)-1))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "copy destination length")
+	require.Equal(t, values, decompressed)
 }
 
 func TestRunEndDecompressUsesValueAt(t *testing.T) {
@@ -269,8 +273,8 @@ func TestRunEndDecompressUsesValueAt(t *testing.T) {
 		ends:   wrapOrdinalArray[uint8](ends),
 	}
 
-	decoded := make([]uint32, codec.Length())
-	require.NoError(t, DecompressInto(codec, decoded))
+	decoded, err := codec.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, []uint32{10, 10, 20, 20, 20, 30, 30}, decoded)
 }
 
@@ -287,8 +291,8 @@ func TestRunEndCodecRoundTripAfterRead(t *testing.T) {
 	readEncodedArray, err := Read[uint32](&buf)
 	require.NoError(t, err)
 
-	decoded := make([]uint32, len(values))
-	require.NoError(t, DecompressInto(readEncodedArray, decoded))
+	decoded, err := readEncodedArray.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
 
@@ -304,8 +308,8 @@ func TestDictDecompressUsesValueAt(t *testing.T) {
 		indices: wrapOrdinalArray[uint8](indices),
 	}
 
-	decoded := make([]uint32, codec.Length())
-	require.NoError(t, DecompressInto(codec, decoded))
+	decoded, err := codec.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, []uint32{20, 10, 20, 20}, decoded)
 }
 
@@ -322,8 +326,8 @@ func TestDictCodecRoundTripAfterRead(t *testing.T) {
 	readEncodedArray, err := Read[uint32](&buf)
 	require.NoError(t, err)
 
-	decoded := make([]uint32, len(values))
-	require.NoError(t, DecompressInto(readEncodedArray, decoded))
+	decoded, err := readEncodedArray.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
 
@@ -472,8 +476,8 @@ func TestCompressWithKeepsBorrowedRawWhenKeepingRaw(t *testing.T) {
 	values[0] = 99
 	values[1] = 88
 
-	decoded := make([]uint32, codec.Length())
-	require.NoError(t, DecompressInto(codec, decoded))
+	decoded, err := codec.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, []uint32{99, 88, 3, 4}, decoded)
 }
 
@@ -499,8 +503,8 @@ func TestCompressWithKeepsBorrowedRawWhenBuildFails(t *testing.T) {
 
 	values[2] = 777
 
-	decoded := make([]uint32, codec.Length())
-	require.NoError(t, DecompressInto(codec, decoded))
+	decoded, err := codec.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, []uint32{10, 20, 777, 40}, decoded)
 }
 
@@ -599,8 +603,8 @@ func TestDictSlicePreservesEncoding(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeDict, sliced.Encoding())
 
-	decoded := make([]uint32, sliced.Length())
-	require.NoError(t, DecompressInto(sliced, decoded))
+	decoded, err := sliced.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, values[1:6], decoded)
 }
 
@@ -623,8 +627,8 @@ func TestBitpackSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
 	require.NotNil(t, bitpack.patches)
 	require.Equal(t, uint64(16), bitpack.patches.offset)
 
-	decoded := make([]uint32, sliced.Length())
-	require.NoError(t, DecompressInto(sliced, decoded))
+	decoded, err := sliced.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, values[16:40], decoded)
 
 	var buf bytes.Buffer
@@ -637,8 +641,8 @@ func TestBitpackSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
 	require.NotNil(t, roundTrip.patches)
 	require.Equal(t, uint64(16), roundTrip.patches.offset)
 
-	decoded = make([]uint32, readBack.Length())
-	require.NoError(t, DecompressInto(readBack, decoded))
+	decoded, err = readBack.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, values[16:40], decoded)
 }
 
@@ -663,8 +667,8 @@ func TestALPSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
 	require.NotNil(t, alp.patches)
 	require.Equal(t, uint64(1), alp.patches.offset)
 
-	decoded := make([]float64, sliced.Length())
-	require.NoError(t, DecompressInto(sliced, decoded))
+	decoded, err := sliced.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, []float64{20.5, 3.0, 4.0, 50.5}, decoded)
 
 	var buf bytes.Buffer
@@ -677,7 +681,7 @@ func TestALPSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
 	require.NotNil(t, roundTrip.patches)
 	require.Equal(t, uint64(1), roundTrip.patches.offset)
 
-	decoded = make([]float64, readBack.Length())
-	require.NoError(t, DecompressInto(readBack, decoded))
+	decoded, err = readBack.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, []float64{20.5, 3.0, 4.0, 50.5}, decoded)
 }

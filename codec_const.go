@@ -28,11 +28,12 @@ func (c *constArray[T]) ValueAt(offset uint64) T {
 	return c.value
 }
 
-func (c *constArray[T]) decompress(dst []T) error {
+func (c *constArray[T]) Decompress() ([]T, error) {
+	dst := make([]T, c.length)
 	for i := range dst {
 		dst[i] = c.value
 	}
-	return nil
+	return dst, nil
 }
 
 func (c *constArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {

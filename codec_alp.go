@@ -315,15 +315,19 @@ func (a *alpArray64) ValueAt(offset uint64) float64 {
 	return alpDecode64(a.encoded.ValueAt(offset), a.expE, a.expF)
 }
 
-func (a *alpArray64) decompress(dst []float64) error {
-	encoded := make([]int64, a.length)
-	if err := decompressAny(a.encoded, encoded); err != nil {
-		return err
+func (a *alpArray64) Decompress() ([]float64, error) {
+	encoded, err := a.encoded.Decompress()
+	if err != nil {
+		return nil, err
 	}
+	dst := make([]float64, len(encoded))
 	for i, value := range encoded {
 		dst[i] = alpDecode64(value, a.expE, a.expF)
 	}
-	return a.patches.Apply(dst)
+	if err := a.patches.Apply(dst); err != nil {
+		return nil, err
+	}
+	return dst, nil
 }
 
 func (a *alpArray64) Slice(start, end uint64) (EncodedArray[float64], error) {
@@ -406,15 +410,19 @@ func (a *alpArray32) ValueAt(offset uint64) float32 {
 	return alpDecode32(a.encoded.ValueAt(offset), a.expE, a.expF)
 }
 
-func (a *alpArray32) decompress(dst []float32) error {
-	encoded := make([]int32, a.length)
-	if err := decompressAny(a.encoded, encoded); err != nil {
-		return err
+func (a *alpArray32) Decompress() ([]float32, error) {
+	encoded, err := a.encoded.Decompress()
+	if err != nil {
+		return nil, err
 	}
+	dst := make([]float32, len(encoded))
 	for i, value := range encoded {
 		dst[i] = alpDecode32(value, a.expE, a.expF)
 	}
-	return a.patches.Apply(dst)
+	if err := a.patches.Apply(dst); err != nil {
+		return nil, err
+	}
+	return dst, nil
 }
 
 func (a *alpArray32) Slice(start, end uint64) (EncodedArray[float32], error) {

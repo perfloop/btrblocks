@@ -20,8 +20,7 @@ const (
 	headerSize                      = 24
 	primitiveArrayHeaderSize        = 20
 	flagBitpackHasPatches    uint32 = 1 << 0
-	flagALPHasPatches        uint32 = 1 << 0
-	maxDecompressLength             = 1 << 30
+	flagALPHasPatches uint32 = 1 << 0
 )
 
 type kindSet uint16
@@ -108,24 +107,17 @@ func (c planContext) excludesString(kind CodeType) bool {
 }
 
 // EncodedArray is a typed encoded leaf node in the primitive/string compression tree.
-// Scalar access is via ValueAt. Bulk decompression is a separate concern handled by
-// DecompressInto/Decompress, not by the interface itself.
 type EncodedArray[T Integer | Float | String] interface {
 	io.WriterTo
 
 	Encoding() CodeType
 	ValueAt(offset uint64) T
+	// Decompress recursively decodes the entire tree into a flat slice.
+	Decompress() ([]T, error)
 	Slice(start, end uint64) (EncodedArray[T], error)
 	BinarySize() uint64
 	Length() uint64
 	PType() PType
-}
-
-// decompressor is an internal interface for bulk decompression.
-// It is NOT part of EncodedArray — callers use DecompressInto/Decompress instead.
-// Each codec struct implements this to provide an efficient bulk path.
-type decompressor[T Integer | Float | String] interface {
-	decompress(dst []T) error
 }
 
 // header is the fixed encoded-array stream prefix written before each node body.
@@ -169,13 +161,6 @@ func (h header) WriteTo(w io.Writer) (int64, error) {
 		err = io.ErrShortWrite
 	}
 	return int64(n), err
-}
-
-func validateCopyLength(length uint64, dstLen int) error {
-	if uint64(dstLen) != length {
-		return fmt.Errorf("codec: copy destination length = %d, want %d", dstLen, length)
-	}
-	return nil
 }
 
 func validateSliceBounds(length, start, end uint64) error {

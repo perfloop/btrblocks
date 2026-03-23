@@ -131,8 +131,8 @@ func TestReadBitpackKeepsPatchesEncodedUntilCopy(t *testing.T) {
 	require.Equal(t, values[17], bitpack.ValueAt(17))
 	require.Equal(t, values[199], bitpack.ValueAt(199))
 
-	decoded := make([]uint32, len(values))
-	require.NoError(t, DecompressInto(bitpack, decoded))
+	decoded, err := bitpack.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
 
@@ -196,8 +196,8 @@ func TestReadALP64KeepsPatchesEncodedUntilCopy(t *testing.T) {
 	require.Equal(t, 3.0, codec.ValueAt(2))
 	require.Equal(t, 40.5, codec.ValueAt(3))
 
-	decoded := make([]float64, 4)
-	require.NoError(t, DecompressInto(codec, decoded))
+	decoded, err := codec.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, []float64{1.0, 20.5, 3.0, 40.5}, decoded)
 }
 
@@ -224,7 +224,7 @@ func TestReadALP32KeepsPatchesEncodedUntilCopy(t *testing.T) {
 	require.Equal(t, float32(2.0), codec.ValueAt(1))
 	require.Equal(t, float32(7.5), codec.ValueAt(2))
 
-	decoded := make([]float32, 3)
-	require.NoError(t, DecompressInto(codec, decoded))
+	decoded, err := codec.Decompress()
+	require.NoError(t, err)
 	require.Equal(t, []float32{9.25, 2.0, 7.5}, decoded)
 }

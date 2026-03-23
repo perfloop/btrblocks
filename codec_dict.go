@@ -26,19 +26,20 @@ func (d *dictArray[T]) ValueAt(offset uint64) T {
 	return d.values.ValueAt(d.indices.ValueAt(offset))
 }
 
-func (d *dictArray[T]) decompress(dst []T) error {
-	values := make([]T, d.values.Length())
-	if err := decompressAny(d.values, values); err != nil {
-		return err
+func (d *dictArray[T]) Decompress() ([]T, error) {
+	values, err := d.values.Decompress()
+	if err != nil {
+		return nil, err
 	}
-	indices := make([]uint64, d.indices.Length())
-	if err := decompressOrdinalsInto(d.indices, indices); err != nil {
-		return err
+	indices, err := decompressOrdinals(d.indices)
+	if err != nil {
+		return nil, err
 	}
+	dst := make([]T, len(indices))
 	for i, idx := range indices {
 		dst[i] = values[idx]
 	}
-	return nil
+	return dst, nil
 }
 
 func (d *dictArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {

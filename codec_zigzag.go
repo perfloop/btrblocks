@@ -136,15 +136,16 @@ func (z *zigzagArray[T, U]) ValueAt(offset uint64) T {
 	}
 }
 
-func (z *zigzagArray[T, U]) decompress(dst []T) error {
-	encoded := make([]U, z.child.Length())
-	if err := decompressAny(z.child, encoded); err != nil {
-		return err
+func (z *zigzagArray[T, U]) Decompress() ([]T, error) {
+	encoded, err := z.child.Decompress()
+	if err != nil {
+		return nil, err
 	}
+	dst := make([]T, len(encoded))
 	for i, value := range encoded {
 		dst[i] = T(zigzagDecode64(uint64(value)))
 	}
-	return nil
+	return dst, nil
 }
 
 func (z *zigzagArray[T, U]) Slice(start, end uint64) (EncodedArray[T], error) {
