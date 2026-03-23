@@ -234,9 +234,10 @@ func estimateIntegerDict[T Integer, S statsSource[T]](distinctCount uint64, avgR
 	}
 }
 
-func estimateStringDict[S statsSource[string]](distinctRatio float64) func(S, planContext) (float64, bool) {
+func estimateStringDict[S statsSource[string]](estimatedDistinctCount uint64) func(S, planContext) (float64, bool) {
 	return func(stats S, ctx planContext) (float64, bool) {
-		if ctx.depth <= 0 || distinctRatio > 0.5 {
+		n := stats.Source().Length()
+		if ctx.depth <= 0 || n == 0 || estimatedDistinctCount > n/2 {
 			return 0, false
 		}
 		return estimateBySample(stats, ctx, buildStringDictArray[string])
@@ -245,7 +246,7 @@ func estimateStringDict[S statsSource[string]](distinctRatio float64) func(S, pl
 
 func estimateFloatDict[T Float, S statsSource[T]](distinctRatio float64) func(S, planContext) (float64, bool) {
 	return func(stats S, ctx planContext) (float64, bool) {
-		if ctx.depth <= 0 || distinctRatio > 0.5 {
+		if ctx.depth <= 0 || distinctRatio > distinctRatioThreshold {
 			return 0, false
 		}
 		return estimateBySample(stats, ctx, buildFloatDictArray[T])

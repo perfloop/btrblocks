@@ -59,42 +59,58 @@ func (a *sampledArray[T]) ValueAt(offset uint64) T {
 	return a.chunks[chunkIdx].ValueAt(offset - a.offsets[chunkIdx])
 }
 
-func (a *sampledArray[T]) CopyTo(dst []T) {
-	pos := 0
-	for _, chunk := range a.chunks {
-		end := pos + int(chunk.Length())
-		chunk.CopyTo(dst[pos:end])
-		pos = end
-	}
-}
+func (a *sampledArray[T]) CopyTo(_ []T) { panic("sampledArray.CopyTo should not be used") }
 
-func (a *sampledArray[T]) Slice(start, end uint64) (array.Array[T], error) {
-	return materializeSlice[T](a, start, end)
-}
-
-func (a *sampledArray[T]) BinarySize() uint64 {
-	values, err := materializeSlice[T](a, 0, a.length)
-	if err != nil {
-		panic(err)
-	}
-	return values.BinarySize()
-}
-
-func (a *sampledArray[T]) Length() uint64 {
-	return a.length
-}
-
-func (a *sampledArray[T]) PType() PType {
-	return a.pType
+func (a *sampledArray[T]) Slice(_, _ uint64) (array.Array[T], error) {
+	panic("sampledArray.Slice should not be used")
 }
 
 func (a *sampledArray[T]) WriteTo(w io.Writer) (int64, error) {
-	values, err := materializeSlice[T](a, 0, a.length)
-	if err != nil {
-		return 0, err
-	}
-	return values.WriteTo(w)
+	panic("sampledArray.WriteTo does not support writing")
 }
+
+func sampledStringBytes(chunk array.Array[string]) uint64 {
+	switch c := chunk.(type) {
+	case *array.Strings[uint8]:
+		return uint64(len(c.Buffer()))
+	case *array.Strings[uint16]:
+		return uint64(len(c.Buffer()))
+	case *array.Strings[uint32]:
+		return uint64(len(c.Buffer()))
+	case *array.Strings[uint64]:
+		return uint64(len(c.Buffer()))
+	default:
+		total := uint64(0)
+		for i := uint64(0); i < chunk.Length(); i++ {
+			total += uint64(len(chunk.ValueAt(i)))
+		}
+		return total
+	}
+}
+
+func (a *sampledArray[T]) BinarySize() uint64 {
+	var zero T
+	switch any(zero).(type) {
+	case string:
+		totalBytes := uint64(0)
+		for _, chunk := range a.chunks {
+			totalBytes += sampledStringBytes(any(chunk).(array.Array[string]))
+		}
+		offsetWidth := uint64(4)
+		switch {
+		case totalBytes <= uint64(^uint8(0)):
+			offsetWidth = 1
+		case totalBytes <= uint64(^uint16(0)):
+			offsetWidth = 2
+		}
+		return primitiveArrayHeaderSize + 4 + (a.length+1)*offsetWidth + totalBytes
+	default:
+		return primitiveArrayHeaderSize + a.length*uint64(a.pType.ByteWidth())
+	}
+}
+
+func (a *sampledArray[T]) Length() uint64 { return a.length }
+func (a *sampledArray[T]) PType() PType   { return a.pType }
 
 func sampleCountApproxOnePercent(length uint64) uint64 {
 	if length == 0 {

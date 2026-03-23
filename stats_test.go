@@ -1,6 +1,7 @@
 package btrblocks
 
 import (
+	"math"
 	"testing"
 
 	"github.com/axiomhq/btrblocks/array"
@@ -11,17 +12,33 @@ func TestComputeStringStatsUsesPrefixDistinctEstimate(t *testing.T) {
 	values := []string{"abcdefghX", "abcdefghY"}
 
 	stats := computeStringStats(array.NewStrings(values))
-	require.False(t, stats.isConst)
-	require.Equal(t, uint64(1), stats.distinctCount)
-	require.Equal(t, 0.5, stats.distinctRatio)
+	require.Equal(t, uint64(1), stats.estimatedDistinctCount)
 }
 
-func TestComputeStringStatsKeepsConstDetectionExact(t *testing.T) {
-	values := []string{"constant", "constant", "constant"}
+func TestComputeFloatStatsTreatsNaNsAsRunBreaks(t *testing.T) {
+	nan := math.Float64frombits(0x7ff8000000000001)
 
-	stats := computeStringStats(array.NewStrings(values))
-	require.True(t, stats.isConst)
+	stats := computeFloatStats(array.NewPrimitivesUnsafe([]float64{nan, nan}))
 	require.Equal(t, uint64(1), stats.distinctCount)
-	require.Equal(t, values[0], stats.topValue)
-	require.Equal(t, uint64(len(values)), stats.topCount)
+	require.Equal(t, 1.0, stats.avgRunLength)
+}
+
+func TestComputeFloatStatsTreatsSignedZeroAsOneRun(t *testing.T) {
+	values := []float64{math.Copysign(0, 1), math.Copysign(0, -1)}
+
+	stats := computeFloatStats(array.NewPrimitivesUnsafe(values))
+	require.Equal(t, uint64(2), stats.distinctCount)
+	require.Equal(t, 2.0, stats.avgRunLength)
+}
+
+func TestComputeFloatStatsTracksNonFiniteRatio(t *testing.T) {
+	values := []float64{
+		1,
+		math.Inf(1),
+		math.NaN(),
+		2,
+	}
+
+	stats := computeFloatStats(array.NewPrimitivesUnsafe(values))
+	require.Equal(t, 0.5, stats.nonFiniteRatio)
 }

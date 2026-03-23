@@ -221,6 +221,14 @@ func TestCompressRoundTripStrings(t *testing.T) {
 	require.Equal(t, values, decoded)
 }
 
+func TestCompressConstantStringsUsesConst(t *testing.T) {
+	values := []string{"constant", "constant", "constant", "constant"}
+
+	codec, err := Compress(buildArray(values), Options{})
+	require.NoError(t, err)
+	require.Equal(t, CodecTypeConst, codec.Encoding())
+}
+
 func TestDecompressFromCodec(t *testing.T) {
 	values := []int32{-7, -3, -7, -3, -7, -3, -7, -3, -7, -3, -7, -3}
 	codec, err := Compress(buildArray(values), Options{})

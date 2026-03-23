@@ -115,6 +115,8 @@ func (c *Strings[T]) Slice(start, end uint64) (Array[string], error) {
 func (c *Strings[T]) BinarySize() uint64 { return uint64(headerSize) + c.bodySize() }
 func (c *Strings[T]) Length() uint64     { return uint64(len(c.offsets) - 1) }
 func (c *Strings[T]) PType() PType       { return PTypeString }
+func (c *Strings[T]) Buffer() []byte     { return c.buf }
+func (c *Strings[T]) Offsets() []T       { return c.offsets }
 
 // bodySize returns the size in bytes of the string body: 4-byte buf length + offsets + raw string bytes.
 func (c *Strings[T]) bodySize() uint64 {

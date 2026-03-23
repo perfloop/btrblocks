@@ -101,6 +101,8 @@ func cmpFloats[T Float](a, b T) bool {
 	}
 }
 
+func cmpFloatRuns[T Float](a, b T) bool { return a == b }
+
 type cmpFn[T Integer | Float | String] func(T, T) bool
 
 func cmpIntegers[T Integer](a, b T) bool { return a == b }

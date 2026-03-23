@@ -37,7 +37,7 @@ func (floatCompressor[T]) Schemes() []scheme[T, baseStats[T]] {
 		registeredScheme[T, baseStats[T]]{
 			kind: CodecTypeRunEnd,
 			estimate: func(stats baseStats[T], ctx planContext) (float64, bool) {
-				return estimateRunEnd[T, baseStats[T]](stats.avgRunLength, cmpFloats[T])(stats, ctx)
+				return estimateRunEnd[T, baseStats[T]](stats.avgRunLength, cmpFloatRuns[T])(stats, ctx)
 			},
 			build: func(arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
 				return buildRunEndArray(arr, ctx, cmpFloats[T])

@@ -1,6 +1,7 @@
 package btrblocks
 
 import (
+	"io"
 	"testing"
 
 	"github.com/axiomhq/btrblocks/array"
@@ -25,7 +26,43 @@ func TestSampleArrayBuildsChunkedSlices(t *testing.T) {
 		}
 	}
 
-	decoded := make([]uint32, chunked.Length())
-	chunked.CopyTo(decoded)
-	require.Equal(t, decoded[0]+1, decoded[1])
+	materialized, err := materializeSlice[uint32](chunked, 0, chunked.Length())
+	require.NoError(t, err)
+	require.Equal(t, materialized.BinarySize(), chunked.BinarySize())
+
+	require.Panics(t, func() {
+		chunked.CopyTo(make([]uint32, chunked.Length()))
+	})
+	require.Panics(t, func() {
+		_, _ = chunked.Slice(0, 1)
+	})
+	require.Panics(t, func() {
+		_ = chunked.PType()
+	})
+	require.Panics(t, func() {
+		_, _ = chunked.WriteTo(io.Discard)
+	})
+}
+
+func TestSampleArrayBinarySizeMatchesMaterializedStrings(t *testing.T) {
+	values := make([]string, 4096)
+	for i := range values {
+		if i%3 == 0 {
+			values[i] = "alpha"
+			continue
+		}
+		if i%3 == 1 {
+			values[i] = "bravo-bravo"
+			continue
+		}
+		values[i] = "charlie-charlie-charlie"
+	}
+
+	sampled := sampleArray(array.NewStrings(values))
+	chunked, ok := sampled.(*sampledArray[string])
+	require.True(t, ok)
+
+	materialized, err := materializeSlice[string](chunked, 0, chunked.Length())
+	require.NoError(t, err)
+	require.Equal(t, materialized.BinarySize(), chunked.BinarySize())
 }
