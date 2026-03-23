@@ -7,28 +7,20 @@ import (
 	"github.com/axiomhq/btrblocks/array"
 )
 
-func CompressInts[T SignedInteger](values []T, opts Options) (EncodedArray[T], error) {
-	return compressArray[T](array.NewPrimitivesUnsafe(values), newPlanContext(opts))
-}
-
-func CompressUints[T UnsignedInteger](values []T, opts Options) (EncodedArray[T], error) {
-	return compressArray[T](array.NewPrimitivesUnsafe(values), newPlanContext(opts))
-}
-
-func CompressFloats[T Float](values []T, opts Options) (EncodedArray[T], error) {
-	return compressArray[T](array.NewPrimitivesUnsafe(values), newPlanContext(opts))
-}
-
-func CompressStrings(values []string, opts Options) (EncodedArray[string], error) {
-	return compressArray[string](array.NewStrings(values), newPlanContext(opts))
+// Compress encodes arr according to opts. The returned encoded array is detached
+// from arr when Compress returns.
+func Compress[T Integer | Float | String](arr array.Array[T], opts Options) (EncodedArray[T], error) {
+	return compressArray[T](arr, newPlanContext(opts))
 }
 
 func Read[T Integer | Float | String](r io.Reader) (EncodedArray[T], error) {
 	return readEncodedArray[T](r)
 }
 
-func rawBinarySize[T Integer | Float | String](arr array.Array[T]) uint64 {
-	return newRawArray(arr).BinarySize()
+func snapshotRawArray[T Integer | Float | String](arr array.Array[T]) EncodedArray[T] {
+	values := make([]T, arr.Length())
+	arr.CopyTo(values)
+	return newRawArray(buildArray(values))
 }
 
 func DecompressInto[T Integer | Float | String](encoded EncodedArray[T], dst []T) error {

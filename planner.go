@@ -50,19 +50,19 @@ type compressor[T Integer | Float | String, S statsSource[T]] interface {
 
 func compressWith[T Integer | Float | String, S statsSource[T]](arr array.Array[T], ctx planContext, c compressor[T, S]) (EncodedArray[T], error) {
 	stats := c.ComputeStats(arr)
-	raw := EncodedArray[T](newRawArray(arr))
+	rawSize := newRawArray(arr).BinarySize()
 
 	scheme, ok := chooseScheme(stats, ctx, c)
 	if !ok {
-		return raw, nil
+		return snapshotRawArray(arr), nil
 	}
 
 	codec, err := scheme.Build(arr, ctx)
 	if err != nil {
-		return raw, nil
+		return snapshotRawArray(arr), nil
 	}
-	if codec.BinarySize() >= raw.BinarySize() {
-		return raw, nil
+	if codec.BinarySize() >= rawSize {
+		return snapshotRawArray(arr), nil
 	}
 	return codec, nil
 }
@@ -93,7 +93,7 @@ func estimateBySample[T Integer | Float | String, S statsSource[T]](stats S, ctx
 	if err != nil {
 		return 0, false
 	}
-	before := rawBinarySize(sample)
+	before := newRawArray(sample).BinarySize()
 	after := codec.BinarySize()
 	if after == 0 {
 		return 0, false

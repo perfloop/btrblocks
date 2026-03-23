@@ -213,5 +213,5 @@ func estimateSequence[T Integer](arr array.Array[T], _ planContext) (float64, bo
 	if err != nil {
 		return 0, false
 	}
-	return float64(rawBinarySize(arr)) / float64(codec.BinarySize()), true
+	return float64(newRawArray(arr).BinarySize()) / float64(codec.BinarySize()), true
 }

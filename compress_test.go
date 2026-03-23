@@ -137,11 +137,11 @@ func equalFloats[T Float](a, b []T) bool {
 	return true
 }
 
-func TestCompressIntsRoundTrip(t *testing.T) {
+func TestCompressRoundTripInts(t *testing.T) {
 	values := []int32{-7, -3, -7, -3, -7, -3, -7, -3, -7, -3, -7, -3}
-	codec, err := CompressInts(values, Options{})
+	codec, err := Compress(buildArray(values), Options{})
 	require.NoError(t, err)
-	require.LessOrEqual(t, codec.BinarySize(), rawBinarySize(buildArray(values)))
+	require.LessOrEqual(t, codec.BinarySize(), newRawArray(buildArray(values)).BinarySize())
 
 	decoded := make([]int32, len(values))
 	require.NoError(t, codec.CopyTo(decoded))
@@ -158,11 +158,11 @@ func TestCompressIntsRoundTrip(t *testing.T) {
 	require.Equal(t, values, decoded)
 }
 
-func TestCompressUintsRoundTrip(t *testing.T) {
+func TestCompressRoundTripUints(t *testing.T) {
 	values := []uint32{1000, 1002, 1004, 1006, 1008, 1010, 1012, 1014, 1016, 1018}
-	codec, err := CompressUints(values, Options{})
+	codec, err := Compress(buildArray(values), Options{})
 	require.NoError(t, err)
-	require.LessOrEqual(t, codec.BinarySize(), rawBinarySize(buildArray(values)))
+	require.LessOrEqual(t, codec.BinarySize(), newRawArray(buildArray(values)).BinarySize())
 
 	decoded := make([]uint32, len(values))
 	require.NoError(t, codec.CopyTo(decoded))
@@ -179,11 +179,11 @@ func TestCompressUintsRoundTrip(t *testing.T) {
 	require.Equal(t, values, decoded)
 }
 
-func TestCompressFloatsRoundTrip(t *testing.T) {
+func TestCompressRoundTripFloats(t *testing.T) {
 	values := []float64{12.34, 12.35, 12.34, 12.35, 12.34, 12.35, 12.34, 12.35}
-	codec, err := CompressFloats(values, Options{})
+	codec, err := Compress(buildArray(values), Options{})
 	require.NoError(t, err)
-	require.LessOrEqual(t, codec.BinarySize(), rawBinarySize(buildArray(values)))
+	require.LessOrEqual(t, codec.BinarySize(), newRawArray(buildArray(values)).BinarySize())
 
 	decoded := make([]float64, len(values))
 	require.NoError(t, codec.CopyTo(decoded))
@@ -200,11 +200,11 @@ func TestCompressFloatsRoundTrip(t *testing.T) {
 	require.True(t, equalFloats(values, decoded))
 }
 
-func TestCompressStringsRoundTrip(t *testing.T) {
+func TestCompressRoundTripStrings(t *testing.T) {
 	values := []string{"foo", "foo", "bar", "foo", "foo", "bar", "foo", "foo", "bar"}
-	codec, err := CompressStrings(values, Options{})
+	codec, err := Compress(buildArray(values), Options{})
 	require.NoError(t, err)
-	require.LessOrEqual(t, codec.BinarySize(), rawBinarySize(buildArray(values)))
+	require.LessOrEqual(t, codec.BinarySize(), newRawArray(buildArray(values)).BinarySize())
 
 	decoded := make([]string, len(values))
 	require.NoError(t, codec.CopyTo(decoded))
@@ -223,7 +223,7 @@ func TestCompressStringsRoundTrip(t *testing.T) {
 
 func TestDecompressFromCodec(t *testing.T) {
 	values := []int32{-7, -3, -7, -3, -7, -3, -7, -3, -7, -3, -7, -3}
-	codec, err := CompressInts(values, Options{})
+	codec, err := Compress(buildArray(values), Options{})
 	require.NoError(t, err)
 
 	decompressed, err := Decompress(codec)
@@ -233,7 +233,7 @@ func TestDecompressFromCodec(t *testing.T) {
 
 func TestDecompressFromReadCodec(t *testing.T) {
 	values := []string{"foo", "foo", "bar", "foo", "foo", "bar", "foo", "foo", "bar"}
-	codec, err := CompressStrings(values, Options{})
+	codec, err := Compress(buildArray(values), Options{})
 	require.NoError(t, err)
 
 	var buf bytes.Buffer
@@ -250,7 +250,7 @@ func TestDecompressFromReadCodec(t *testing.T) {
 
 func TestDecompressIntoCodec(t *testing.T) {
 	values := []uint32{1000, 1002, 1004, 1006, 1008, 1010, 1012, 1014, 1016, 1018}
-	codec, err := CompressUints(values, Options{})
+	codec, err := Compress(buildArray(values), Options{})
 	require.NoError(t, err)
 
 	decompressed := make([]uint32, len(values))
@@ -260,7 +260,7 @@ func TestDecompressIntoCodec(t *testing.T) {
 
 func TestDecompressIntoRejectsLengthMismatch(t *testing.T) {
 	values := []int32{-7, -3, -7, -3}
-	codec, err := CompressInts(values, Options{})
+	codec, err := Compress(buildArray(values), Options{})
 	require.NoError(t, err)
 
 	err = DecompressInto(codec, make([]int32, len(values)-1))
@@ -345,7 +345,7 @@ func TestDictCodecRoundTripAfterRead(t *testing.T) {
 
 func TestSequenceSelected(t *testing.T) {
 	values := []uint32{1000000, 1000003, 1000006, 1000009, 1000012, 1000015}
-	codec, err := CompressUints(values, Options{})
+	codec, err := Compress(buildArray(values), Options{})
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeSequence, codec.Encoding())
 }
@@ -387,26 +387,26 @@ func requireSupportedEncoding(t *testing.T, kind CodeType) {
 	}
 }
 
-func TestCompressIntsUsesSupportedCodec(t *testing.T) {
-	codec, err := CompressInts([]int32{0, 0, 0, 5, 0, 0, 0}, Options{})
+func TestCompressUsesSupportedCodecInts(t *testing.T) {
+	codec, err := Compress(buildArray([]int32{0, 0, 0, 5, 0, 0, 0}), Options{})
 	require.NoError(t, err)
 	requireSupportedEncoding(t, codec.Encoding())
 }
 
-func TestCompressUintsUsesSupportedCodec(t *testing.T) {
-	codec, err := CompressUints([]uint32{0, 0, 0, 5, 0, 0, 0}, Options{})
+func TestCompressUsesSupportedCodecUints(t *testing.T) {
+	codec, err := Compress(buildArray([]uint32{0, 0, 0, 5, 0, 0, 0}), Options{})
 	require.NoError(t, err)
 	requireSupportedEncoding(t, codec.Encoding())
 }
 
-func TestCompressFloatsUsesSupportedCodec(t *testing.T) {
-	codec, err := CompressFloats([]float64{0, 0, 0, 5.5, 0, 0, 0}, Options{})
+func TestCompressUsesSupportedCodecFloats(t *testing.T) {
+	codec, err := Compress(buildArray([]float64{0, 0, 0, 5.5, 0, 0, 0}), Options{})
 	require.NoError(t, err)
 	requireSupportedEncoding(t, codec.Encoding())
 }
 
-func TestCompressStringsUsesSupportedCodec(t *testing.T) {
-	codec, err := CompressStrings([]string{"", "", "", "x", "", "", ""}, Options{})
+func TestCompressUsesSupportedCodecStrings(t *testing.T) {
+	codec, err := Compress(buildArray([]string{"", "", "", "x", "", "", ""}), Options{})
 	require.NoError(t, err)
 	requireSupportedEncoding(t, codec.Encoding())
 }
@@ -477,6 +477,47 @@ func TestCompressWithKeepsRawWhenWinnerDoesNotBeatIt(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeRaw, codec.Encoding())
 	require.Equal(t, rawSize, codec.BinarySize())
+}
+
+func TestCompressWithSnapshotsSourceWhenKeepingRaw(t *testing.T) {
+	values := []uint32{1, 2, 3, 4}
+	codec, err := compressWith(array.NewPrimitivesUnsafe(values), newPlanContext(Options{}), testCompressorUint32{})
+	require.NoError(t, err)
+	require.Equal(t, CodecTypeRaw, codec.Encoding())
+
+	values[0] = 99
+	values[1] = 88
+
+	decoded := make([]uint32, codec.Length())
+	require.NoError(t, codec.CopyTo(decoded))
+	require.Equal(t, []uint32{1, 2, 3, 4}, decoded)
+}
+
+func TestCompressWithSnapshotsSourceWhenBuildFails(t *testing.T) {
+	values := []uint32{10, 20, 30, 40}
+	compressor := testCompressorUint32{
+		schemes: []scheme[uint32, testStatsUint32]{
+			registeredScheme[uint32, testStatsUint32]{
+				kind: CodecTypeBitpack,
+				estimate: func(testStatsUint32, planContext) (float64, bool) {
+					return 2, true
+				},
+				build: func(array.Array[uint32], planContext) (EncodedArray[uint32], error) {
+					return nil, io.ErrUnexpectedEOF
+				},
+			},
+		},
+	}
+
+	codec, err := compressWith(array.NewPrimitivesUnsafe(values), newPlanContext(Options{}), compressor)
+	require.NoError(t, err)
+	require.Equal(t, CodecTypeRaw, codec.Encoding())
+
+	values[2] = 777
+
+	decoded := make([]uint32, codec.Length())
+	require.NoError(t, codec.CopyTo(decoded))
+	require.Equal(t, []uint32{10, 20, 30, 40}, decoded)
 }
 
 func TestUnsignedOffsetRangeChoosesFoRWhenBitpackIsExcludedByCost(t *testing.T) {
@@ -624,10 +665,10 @@ func TestALPSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
 		expF:    0,
 		encoded: newRawArray(buildArray([]int64{1, 2, 3, 4, 5})),
 		patches: &patches[float64]{
-			length: 5,
-			offset: 0,
+			length:  5,
+			offset:  0,
 			indices: buildOrdinalSlice(4, []uint64{1, 4}),
-			values: newRawArray(buildArray([]float64{20.5, 50.5})),
+			values:  newRawArray(buildArray([]float64{20.5, 50.5})),
 		},
 	}
 

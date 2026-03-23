@@ -287,7 +287,7 @@ func estimateFoR[T UnsignedInteger, S statsSource[T]](minValue, maxValue T) func
 		}
 
 		after := uint64(headerSize) + uint64(unsafe.Sizeof(minValue)) + childSize
-		before := rawBinarySize(stats.Source())
+		before := newRawArray(stats.Source()).BinarySize()
 		if after >= before {
 			return 0, false
 		}

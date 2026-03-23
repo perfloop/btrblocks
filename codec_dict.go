@@ -226,7 +226,7 @@ func estimateIntegerDict[T Integer, S statsSource[T]](distinctCount uint64, avgR
 		}
 
 		after := uint64(headerSize) + valuesSize + codesSize
-		before := rawBinarySize(stats.Source())
+		before := newRawArray(stats.Source()).BinarySize()
 		if after >= before {
 			return 0, false
 		}
