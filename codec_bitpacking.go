@@ -48,19 +48,6 @@ func newBitPackedArrayAtWidth[T UnsignedInteger](arr interface {
 	return codec
 }
 
-func newBitPackedArray[T UnsignedInteger](arr interface {
-	Length() uint64
-	ValueAt(uint64) T
-}) *bitPackedArray[T] {
-	var max uint64
-	for i := uint64(0); i < arr.Length(); i++ {
-		if value := uint64(arr.ValueAt(i)); value > max {
-			max = value
-		}
-	}
-	return newBitPackedArrayAtWidth(arr, bitWidthForUnsigned(max))
-}
-
 func unsignedBitWidthHistogram[T UnsignedInteger](arr interface {
 	Length() uint64
 	ValueAt(uint64) T

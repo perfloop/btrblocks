@@ -92,7 +92,7 @@ func (r *runEndArray[T]) Decompress() ([]T, error) {
 }
 
 func (r *runEndArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
-	return sliceToRawArray[T](r, start, end)
+	return sliceToRawArray(r, start, end)
 }
 
 func (r *runEndArray[T]) WriteTo(w io.Writer) (int64, error) {

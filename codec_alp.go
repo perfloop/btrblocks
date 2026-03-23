@@ -134,7 +134,7 @@ func (a alpEncodedArray64) Length() uint64 { return a.length }
 func (a alpEncodedArray64) PType() PType   { return pTypeForType[int64]() }
 
 func (a alpEncodedArray64) Slice(start, end uint64) (array.Array[int64], error) {
-	return materializeSlice[int64](a, start, end)
+	return materializeSlice(a, start, end)
 }
 
 func (a alpEncodedArray64) WriteTo(w io.Writer) (int64, error) {
@@ -161,7 +161,7 @@ func (a alpEncodedArray64) WriteTo(w io.Writer) (int64, error) {
 		if remaining := a.length - offset; remaining < uint64(chunk) {
 			chunk = int(remaining)
 		}
-		for i := 0; i < chunk; i++ {
+		for i := range chunk {
 			buf[i] = alpEncode64(a.valueAt(offset+uint64(i)), a.expE, a.expF)
 		}
 		bytes := unsafe.Slice((*byte)(unsafe.Pointer(&buf[0])), chunk*width)
@@ -204,7 +204,7 @@ func (a alpEncodedArray32) Length() uint64 { return a.length }
 func (a alpEncodedArray32) PType() PType   { return pTypeForType[int32]() }
 
 func (a alpEncodedArray32) Slice(start, end uint64) (array.Array[int32], error) {
-	return materializeSlice[int32](a, start, end)
+	return materializeSlice(a, start, end)
 }
 
 func (a alpEncodedArray32) WriteTo(w io.Writer) (int64, error) {
@@ -231,7 +231,7 @@ func (a alpEncodedArray32) WriteTo(w io.Writer) (int64, error) {
 		if remaining := a.length - offset; remaining < uint64(chunk) {
 			chunk = int(remaining)
 		}
-		for i := 0; i < chunk; i++ {
+		for i := range chunk {
 			buf[i] = alpEncode32(a.valueAt(offset+uint64(i)), a.expE, a.expF)
 		}
 		bytes := unsafe.Slice((*byte)(unsafe.Pointer(&buf[0])), chunk*width)
@@ -641,7 +641,7 @@ func buildALPArray[T Float](arr array.Array[T], ctx planContext) (EncodedArray[T
 		if uint64(len(patchIdx))*2 > n {
 			return nil, errALPHighPatchRatio
 		}
-		child, err := compressArray[int64](alpEncodedArray64{
+		child, err := compressArray(alpEncodedArray64{
 			length:  n,
 			expE:    e,
 			expF:    f,
@@ -675,7 +675,7 @@ func buildALPArray[T Float](arr array.Array[T], ctx planContext) (EncodedArray[T
 		if uint64(len(patchIdx))*2 > n {
 			return nil, errALPHighPatchRatio
 		}
-		child, err := compressArray[int32](alpEncodedArray32{
+		child, err := compressArray(alpEncodedArray32{
 			length:  n,
 			expE:    e,
 			expF:    f,

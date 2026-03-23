@@ -10,7 +10,7 @@ import (
 // Compress encodes arr according to opts. Raw fallback may continue to reference
 // arr after Compress returns.
 func Compress[T Integer | Float | String](arr array.Array[T], opts Options) (EncodedArray[T], error) {
-	return compressArray[T](arr, newPlanContext(opts))
+	return compressArray(arr, newPlanContext(opts))
 }
 
 func Read[T Integer | Float | String](r io.Reader) (EncodedArray[T], error) {

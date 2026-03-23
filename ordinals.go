@@ -61,23 +61,23 @@ func buildOrdinalSlice(maxValue uint64, values []uint64) ordinalArray {
 		for i, value := range values {
 			narrow[i] = uint8(value)
 		}
-		return wrapOrdinalArray[uint8](newRawArray(array.NewPrimitivesUnsafe(narrow)))
+		return wrapOrdinalArray(newRawArray(array.NewPrimitivesUnsafe(narrow)))
 	case maxValue <= uint64(^uint16(0)):
 		narrow := make([]uint16, len(values))
 		for i, value := range values {
 			narrow[i] = uint16(value)
 		}
-		return wrapOrdinalArray[uint16](newRawArray(array.NewPrimitivesUnsafe(narrow)))
+		return wrapOrdinalArray(newRawArray(array.NewPrimitivesUnsafe(narrow)))
 	case maxValue <= uint64(^uint32(0)):
 		narrow := make([]uint32, len(values))
 		for i, value := range values {
 			narrow[i] = uint32(value)
 		}
-		return wrapOrdinalArray[uint32](newRawArray(array.NewPrimitivesUnsafe(narrow)))
+		return wrapOrdinalArray(newRawArray(array.NewPrimitivesUnsafe(narrow)))
 	default:
 		narrow := make([]uint64, len(values))
 		copy(narrow, values)
-		return wrapOrdinalArray[uint64](newRawArray(array.NewPrimitivesUnsafe(narrow)))
+		return wrapOrdinalArray(newRawArray(array.NewPrimitivesUnsafe(narrow)))
 	}
 }
 
@@ -99,7 +99,7 @@ func buildCompressedOrdinals(values []uint64, ctx planContext, excludes ...CodeT
 		for i, value := range values {
 			narrow[i] = uint8(value)
 		}
-		codec, err := compressArray[uint8](array.NewPrimitivesUnsafe(narrow), childCtx)
+		codec, err := compressArray(array.NewPrimitivesUnsafe(narrow), childCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -109,7 +109,7 @@ func buildCompressedOrdinals(values []uint64, ctx planContext, excludes ...CodeT
 		for i, value := range values {
 			narrow[i] = uint16(value)
 		}
-		codec, err := compressArray[uint16](array.NewPrimitivesUnsafe(narrow), childCtx)
+		codec, err := compressArray(array.NewPrimitivesUnsafe(narrow), childCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -119,7 +119,7 @@ func buildCompressedOrdinals(values []uint64, ctx planContext, excludes ...CodeT
 		for i, value := range values {
 			narrow[i] = uint32(value)
 		}
-		codec, err := compressArray[uint32](array.NewPrimitivesUnsafe(narrow), childCtx)
+		codec, err := compressArray(array.NewPrimitivesUnsafe(narrow), childCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -127,7 +127,7 @@ func buildCompressedOrdinals(values []uint64, ctx planContext, excludes ...CodeT
 	default:
 		narrow := make([]uint64, len(values))
 		copy(narrow, values)
-		codec, err := compressArray[uint64](array.NewPrimitivesUnsafe(narrow), childCtx)
+		codec, err := compressArray(array.NewPrimitivesUnsafe(narrow), childCtx)
 		if err != nil {
 			return nil, err
 		}

@@ -37,7 +37,7 @@ func (a zigzagEncodedArray[T, U]) Length() uint64 { return a.length }
 func (a zigzagEncodedArray[T, U]) PType() PType   { return pTypeForType[U]() }
 
 func (a zigzagEncodedArray[T, U]) Slice(start, end uint64) (array.Array[U], error) {
-	return materializeSlice[U](a, start, end)
+	return materializeSlice(a, start, end)
 }
 
 func (a zigzagEncodedArray[T, U]) WriteTo(w io.Writer) (int64, error) {
@@ -64,7 +64,7 @@ func (a zigzagEncodedArray[T, U]) WriteTo(w io.Writer) (int64, error) {
 		if remaining := a.length - offset; remaining < uint64(chunk) {
 			chunk = int(remaining)
 		}
-		for i := 0; i < chunk; i++ {
+		for i := range chunk {
 			buf[i] = U(zigzagEncodeValue(a.valueAt(offset + uint64(i))))
 		}
 		bytes := unsafe.Slice((*byte)(unsafe.Pointer(&buf[0])), chunk*width)
@@ -260,25 +260,25 @@ func buildZigZagArray[T SignedInteger](arr array.Array[T], ctx planContext) (Enc
 	max := zigzagMaxEncoded(arr.Length(), arr.ValueAt)
 	switch {
 	case max <= uint64(^uint8(0)):
-		child, err := compressArray[uint8](zigzagEncodedArray[T, uint8]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
+		child, err := compressArray(zigzagEncodedArray[T, uint8]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
 		if err != nil {
 			return nil, err
 		}
 		return &zigzagArray[T, uint8]{child: child}, nil
 	case max <= uint64(^uint16(0)):
-		child, err := compressArray[uint16](zigzagEncodedArray[T, uint16]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
+		child, err := compressArray(zigzagEncodedArray[T, uint16]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
 		if err != nil {
 			return nil, err
 		}
 		return &zigzagArray[T, uint16]{child: child}, nil
 	case max <= uint64(^uint32(0)):
-		child, err := compressArray[uint32](zigzagEncodedArray[T, uint32]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
+		child, err := compressArray(zigzagEncodedArray[T, uint32]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
 		if err != nil {
 			return nil, err
 		}
 		return &zigzagArray[T, uint32]{child: child}, nil
 	default:
-		child, err := compressArray[uint64](zigzagEncodedArray[T, uint64]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
+		child, err := compressArray(zigzagEncodedArray[T, uint64]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
 		if err != nil {
 			return nil, err
 		}

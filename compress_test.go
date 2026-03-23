@@ -270,7 +270,7 @@ func TestRunEndDecompressUsesValueAt(t *testing.T) {
 	codec := &runEndArray[uint32]{
 		length: 7,
 		runs:   runs,
-		ends:   wrapOrdinalArray[uint8](ends),
+		ends:   wrapOrdinalArray(ends),
 	}
 
 	decoded, err := codec.Decompress()
@@ -305,7 +305,7 @@ func TestDictDecompressUsesValueAt(t *testing.T) {
 	}
 	codec := &dictArray[uint32]{
 		values:  values,
-		indices: wrapOrdinalArray[uint8](indices),
+		indices: wrapOrdinalArray(indices),
 	}
 
 	decoded, err := codec.Decompress()
@@ -401,7 +401,7 @@ func TestCompressUsesSupportedCodecStrings(t *testing.T) {
 
 func TestChooseSchemeBuildsOnlyWinner(t *testing.T) {
 	arr := array.NewPrimitivesUnsafe([]uint32{1, 2, 3, 4})
-	rawSize := newRawArray[uint32](arr).BinarySize()
+	rawSize := newRawArray(arr).BinarySize()
 	firstBuilds := 0
 	secondBuilds := 0
 	compressor := testCompressorUint32{
@@ -438,7 +438,7 @@ func TestChooseSchemeBuildsOnlyWinner(t *testing.T) {
 
 func TestCompressWithKeepsRawWhenWinnerDoesNotBeatIt(t *testing.T) {
 	arr := array.NewPrimitivesUnsafe([]uint32{1, 2, 3, 4})
-	rawSize := newRawArray[uint32](arr).BinarySize()
+	rawSize := newRawArray(arr).BinarySize()
 	compressor := testCompressorUint32{
 		schemes: []scheme[uint32, testStatsUint32]{
 			registeredScheme[uint32, testStatsUint32]{

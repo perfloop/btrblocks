@@ -20,7 +20,7 @@ const (
 	headerSize                      = 24
 	primitiveArrayHeaderSize        = 20
 	flagBitpackHasPatches    uint32 = 1 << 0
-	flagALPHasPatches uint32 = 1 << 0
+	flagALPHasPatches        uint32 = 1 << 0
 )
 
 type kindSet uint16
@@ -109,15 +109,14 @@ func (c planContext) excludesString(kind CodeType) bool {
 // EncodedArray is a typed encoded leaf node in the primitive/string compression tree.
 type EncodedArray[T Integer | Float | String] interface {
 	io.WriterTo
-
 	Encoding() CodeType
 	ValueAt(offset uint64) T
-	// Decompress recursively decodes the entire tree into a flat slice.
-	Decompress() ([]T, error)
 	Slice(start, end uint64) (EncodedArray[T], error)
 	BinarySize() uint64
 	Length() uint64
 	PType() PType
+	// Decompress recursively decodes the entire tree into a flat slice.
+	Decompress() ([]T, error)
 }
 
 // header is the fixed encoded-array stream prefix written before each node body.

@@ -40,7 +40,7 @@ func (a forEncodedArray[T]) Length() uint64 { return a.length }
 func (a forEncodedArray[T]) PType() PType   { return pTypeForType[T]() }
 
 func (a forEncodedArray[T]) Slice(start, end uint64) (array.Array[T], error) {
-	return materializeSlice[T](a, start, end)
+	return materializeSlice(a, start, end)
 }
 
 func (a forEncodedArray[T]) WriteTo(w io.Writer) (int64, error) {
@@ -67,7 +67,7 @@ func (a forEncodedArray[T]) WriteTo(w io.Writer) (int64, error) {
 		if remaining := a.length - offset; remaining < uint64(chunk) {
 			chunk = int(remaining)
 		}
-		for i := 0; i < chunk; i++ {
+		for i := range chunk {
 			buf[i] = a.valueAt(offset+uint64(i)) - a.min
 		}
 		bytes := unsafe.Slice((*byte)(unsafe.Pointer(&buf[0])), chunk*width)
