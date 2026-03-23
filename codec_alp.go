@@ -315,20 +315,6 @@ func (a *alpArray64) ValueAt(offset uint64) float64 {
 	return alpDecode64(a.encoded.ValueAt(offset), a.expE, a.expF)
 }
 
-func (a *alpArray64) CopyTo(dst []float64) error {
-	if err := validateCopyLength(a.length, len(dst)); err != nil {
-		return err
-	}
-	encoded := make([]int64, a.length)
-	if err := a.encoded.CopyTo(encoded); err != nil {
-		return err
-	}
-	for i, value := range encoded {
-		dst[i] = alpDecode64(value, a.expE, a.expF)
-	}
-	return a.patches.Apply(dst)
-}
-
 func (a *alpArray64) Slice(start, end uint64) (EncodedArray[float64], error) {
 	if err := validateSliceBounds(a.length, start, end); err != nil {
 		return nil, err
@@ -407,20 +393,6 @@ func (a *alpArray32) ValueAt(offset uint64) float32 {
 		return value
 	}
 	return alpDecode32(a.encoded.ValueAt(offset), a.expE, a.expF)
-}
-
-func (a *alpArray32) CopyTo(dst []float32) error {
-	if err := validateCopyLength(a.length, len(dst)); err != nil {
-		return err
-	}
-	encoded := make([]int32, a.length)
-	if err := a.encoded.CopyTo(encoded); err != nil {
-		return err
-	}
-	for i, value := range encoded {
-		dst[i] = alpDecode32(value, a.expE, a.expF)
-	}
-	return a.patches.Apply(dst)
 }
 
 func (a *alpArray32) Slice(start, end uint64) (EncodedArray[float32], error) {

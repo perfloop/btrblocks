@@ -72,28 +72,6 @@ func fillRun[T Integer | Float | String](dst []T, start, end int, value T) {
 	}
 }
 
-func (r *runEndArray[T]) CopyTo(dst []T) error {
-	if err := validateCopyLength(r.length, len(dst)); err != nil {
-		return err
-	}
-	runs := make([]T, r.runs.Length())
-	if err := r.runs.CopyTo(runs); err != nil {
-		return err
-	}
-	ends := make([]uint64, r.ends.Length())
-	if err := r.ends.CopyToU64(ends); err != nil {
-		return err
-	}
-	pos := 0
-	for i, rawEnd := range ends {
-		end := int(rawEnd)
-		fillRun(dst, pos, end, runs[i])
-		pos = end
-	}
-	fillRun(dst, pos, len(dst), runs[len(ends)])
-	return nil
-}
-
 func (r *runEndArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	return sliceToRawArray[T](r, start, end)
 }

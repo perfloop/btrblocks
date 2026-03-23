@@ -54,16 +54,6 @@ func (s *sequenceArray[T]) ValueAt(offset uint64) T {
 	return s.base + T(offset)*s.step
 }
 
-func (s *sequenceArray[T]) CopyTo(dst []T) error {
-	if err := validateCopyLength(s.length, len(dst)); err != nil {
-		return err
-	}
-	for i := range dst {
-		dst[i] = s.base + T(i)*s.step
-	}
-	return nil
-}
-
 func (s *sequenceArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	if err := validateSliceBounds(s.length, start, end); err != nil {
 		return nil, err

@@ -14,7 +14,6 @@ type ordinalArray interface {
 	Length() uint64
 	PType() PType
 	ValueAt(offset uint64) uint64
-	CopyToU64(dst []uint64) error
 	Slice(start, end uint64) (ordinalArray, error)
 }
 
@@ -41,17 +40,6 @@ func (o ordinalView[T]) PType() PType {
 
 func (o ordinalView[T]) ValueAt(offset uint64) uint64 {
 	return uint64(o.codec.ValueAt(offset))
-}
-
-func (o ordinalView[T]) CopyToU64(dst []uint64) error {
-	decoded := make([]T, o.codec.Length())
-	if err := o.codec.CopyTo(decoded); err != nil {
-		return err
-	}
-	for i, value := range decoded {
-		dst[i] = uint64(value)
-	}
-	return nil
 }
 
 func (o ordinalView[T]) Slice(start, end uint64) (ordinalArray, error) {

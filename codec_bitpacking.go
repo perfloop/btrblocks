@@ -189,23 +189,6 @@ func (c *bitPackedArray[T]) ValueAt(offset uint64) T {
 	return T(unpackUnsigned(c.buf, offset*uint64(c.bitWidth), c.bitWidth))
 }
 
-func (c *bitPackedArray[T]) CopyTo(dst []T) error {
-	if err := validateCopyLength(c.length, len(dst)); err != nil {
-		return err
-	}
-	if c.bitWidth == 0 {
-		var zero T
-		for i := range dst {
-			dst[i] = zero
-		}
-		return nil
-	}
-	for i := range dst {
-		dst[i] = T(unpackUnsigned(c.buf, uint64(i)*uint64(c.bitWidth), c.bitWidth))
-	}
-	return c.patches.Apply(dst)
-}
-
 func (c *bitPackedArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	if err := validateSliceBounds(c.length, start, end); err != nil {
 		return nil, err

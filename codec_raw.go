@@ -28,14 +28,6 @@ func (r *rawArray[T]) ValueAt(offset uint64) T {
 	return r.arr.ValueAt(offset)
 }
 
-func (r *rawArray[T]) CopyTo(dst []T) error {
-	if err := validateCopyLength(r.arr.Length(), len(dst)); err != nil {
-		return err
-	}
-	r.arr.CopyTo(dst)
-	return nil
-}
-
 func (r *rawArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	return sliceToRawArray[T](r, start, end)
 }

@@ -108,12 +108,13 @@ func (c planContext) excludesString(kind CodeType) bool {
 }
 
 // EncodedArray is a typed encoded leaf node in the primitive/string compression tree.
+// Scalar access is via ValueAt. Bulk decompression is a separate concern handled by
+// DecompressInto/Decompress, not by the interface itself.
 type EncodedArray[T Integer | Float | String] interface {
 	io.WriterTo
 
 	Encoding() CodeType
 	ValueAt(offset uint64) T
-	CopyTo(dst []T) error
 	Slice(start, end uint64) (EncodedArray[T], error)
 	BinarySize() uint64
 	Length() uint64

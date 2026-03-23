@@ -26,24 +26,6 @@ func (d *dictArray[T]) ValueAt(offset uint64) T {
 	return d.values.ValueAt(d.indices.ValueAt(offset))
 }
 
-func (d *dictArray[T]) CopyTo(dst []T) error {
-	if err := validateCopyLength(d.indices.Length(), len(dst)); err != nil {
-		return err
-	}
-	values := make([]T, d.values.Length())
-	if err := d.values.CopyTo(values); err != nil {
-		return err
-	}
-	indices := make([]uint64, d.indices.Length())
-	if err := d.indices.CopyToU64(indices); err != nil {
-		return err
-	}
-	for i, index := range indices {
-		dst[i] = values[int(index)]
-	}
-	return nil
-}
-
 func (d *dictArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	indices, err := d.indices.Slice(start, end)
 	if err != nil {
