@@ -9,6 +9,10 @@ func (stringCompressor) ComputeStats(arr array.Array[string]) stringStats {
 	return computeStringStats(arr)
 }
 
+func (stringCompressor) DefaultScheme() scheme[string, stringStats] {
+	return rawScheme[string, stringStats]()
+}
+
 func (stringCompressor) Schemes() []scheme[string, stringStats] {
 	return []scheme[string, stringStats]{
 		registeredScheme[string, stringStats]{

@@ -110,7 +110,7 @@ func (a *sampledArray[T]) BinarySize() uint64 {
 }
 
 func (a *sampledArray[T]) Length() uint64 { return a.length }
-func (a *sampledArray[T]) PType() PType   { return a.pType }
+func (a *sampledArray[T]) PType() PType   { panic("sampledArray.PType should not be used") }
 
 func sampleCountApproxOnePercent(length uint64) uint64 {
 	if length == 0 {

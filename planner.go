@@ -44,6 +44,7 @@ func (s registeredScheme[T, S]) Build(arr array.Array[T], ctx planContext) (Enco
 // compressor owns stats generation, scheme registration, and exclusion policy for one type family.
 type compressor[T Integer | Float | String, S statsSource[T]] interface {
 	ComputeStats(arr array.Array[T]) S
+	DefaultScheme() scheme[T, S]
 	Schemes() []scheme[T, S]
 	IsExcluded(ctx planContext, kind CodeType) bool
 }
@@ -52,23 +53,19 @@ func compressWith[T Integer | Float | String, S statsSource[T]](arr array.Array[
 	stats := c.ComputeStats(arr)
 	rawSize := newRawArray(arr).BinarySize()
 
-	scheme, ok := chooseScheme(stats, ctx, c)
-	if !ok {
-		return snapshotRawArray(arr), nil
-	}
-
+	scheme := chooseScheme(stats, ctx, c)
 	codec, err := scheme.Build(arr, ctx)
 	if err != nil {
-		return snapshotRawArray(arr), nil
+		return newRawArray(arr), nil
 	}
 	if codec.BinarySize() >= rawSize {
-		return snapshotRawArray(arr), nil
+		return newRawArray(arr), nil
 	}
 	return codec, nil
 }
 
-func chooseScheme[T Integer | Float | String, S statsSource[T]](stats S, ctx planContext, c compressor[T, S]) (scheme[T, S], bool) {
-	var best scheme[T, S]
+func chooseScheme[T Integer | Float | String, S statsSource[T]](stats S, ctx planContext, c compressor[T, S]) scheme[T, S] {
+	best := c.DefaultScheme()
 	bestRatio := 1.0
 	for _, candidate := range c.Schemes() {
 		if c.IsExcluded(ctx, candidate.Encoding()) {
@@ -83,7 +80,16 @@ func chooseScheme[T Integer | Float | String, S statsSource[T]](stats S, ctx pla
 			bestRatio = ratio
 		}
 	}
-	return best, best != nil
+	return best
+}
+
+func rawScheme[T Integer | Float | String, S statsSource[T]]() scheme[T, S] {
+	return registeredScheme[T, S]{
+		kind: CodecTypeRaw,
+		build: func(arr array.Array[T], _ planContext) (EncodedArray[T], error) {
+			return newRawArray(arr), nil
+		},
+	}
 }
 
 func estimateBySample[T Integer | Float | String, S statsSource[T]](stats S, ctx planContext, build func(array.Array[T], planContext) (EncodedArray[T], error)) (float64, bool) {

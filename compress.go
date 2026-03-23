@@ -7,20 +7,14 @@ import (
 	"github.com/axiomhq/btrblocks/array"
 )
 
-// Compress encodes arr according to opts. The returned encoded array is detached
-// from arr when Compress returns.
+// Compress encodes arr according to opts. Raw fallback may continue to reference
+// arr after Compress returns.
 func Compress[T Integer | Float | String](arr array.Array[T], opts Options) (EncodedArray[T], error) {
 	return compressArray[T](arr, newPlanContext(opts))
 }
 
 func Read[T Integer | Float | String](r io.Reader) (EncodedArray[T], error) {
 	return readEncodedArray[T](r)
-}
-
-func snapshotRawArray[T Integer | Float | String](arr array.Array[T]) EncodedArray[T] {
-	values := make([]T, arr.Length())
-	arr.CopyTo(values)
-	return newRawArray(buildArray(values))
 }
 
 func DecompressInto[T Integer | Float | String](encoded EncodedArray[T], dst []T) error {

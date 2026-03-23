@@ -9,6 +9,10 @@ func (floatCompressor[T]) ComputeStats(arr array.Array[T]) baseStats[T] {
 	return computeFloatStats(arr)
 }
 
+func (floatCompressor[T]) DefaultScheme() scheme[T, baseStats[T]] {
+	return rawScheme[T, baseStats[T]]()
+}
+
 func (floatCompressor[T]) Schemes() []scheme[T, baseStats[T]] {
 	return []scheme[T, baseStats[T]]{
 		registeredScheme[T, baseStats[T]]{

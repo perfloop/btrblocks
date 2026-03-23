@@ -9,6 +9,10 @@ func (unsignedIntCompressor[T]) ComputeStats(arr array.Array[T]) unsignedStats[T
 	return computeUnsignedStats(arr)
 }
 
+func (unsignedIntCompressor[T]) DefaultScheme() scheme[T, unsignedStats[T]] {
+	return rawScheme[T, unsignedStats[T]]()
+}
+
 func (unsignedIntCompressor[T]) Schemes() []scheme[T, unsignedStats[T]] {
 	return []scheme[T, unsignedStats[T]]{
 		registeredScheme[T, unsignedStats[T]]{

@@ -81,6 +81,10 @@ func (c testCompressorUint32) ComputeStats(arr array.Array[uint32]) testStatsUin
 	return testStatsUint32{arr: arr}
 }
 
+func (testCompressorUint32) DefaultScheme() scheme[uint32, testStatsUint32] {
+	return rawScheme[uint32, testStatsUint32]()
+}
+
 func (c testCompressorUint32) Schemes() []scheme[uint32, testStatsUint32] {
 	return c.schemes
 }
@@ -487,7 +491,7 @@ func TestCompressWithKeepsRawWhenWinnerDoesNotBeatIt(t *testing.T) {
 	require.Equal(t, rawSize, codec.BinarySize())
 }
 
-func TestCompressWithSnapshotsSourceWhenKeepingRaw(t *testing.T) {
+func TestCompressWithKeepsBorrowedRawWhenKeepingRaw(t *testing.T) {
 	values := []uint32{1, 2, 3, 4}
 	codec, err := compressWith(array.NewPrimitivesUnsafe(values), newPlanContext(Options{}), testCompressorUint32{})
 	require.NoError(t, err)
@@ -498,10 +502,10 @@ func TestCompressWithSnapshotsSourceWhenKeepingRaw(t *testing.T) {
 
 	decoded := make([]uint32, codec.Length())
 	require.NoError(t, codec.CopyTo(decoded))
-	require.Equal(t, []uint32{1, 2, 3, 4}, decoded)
+	require.Equal(t, []uint32{99, 88, 3, 4}, decoded)
 }
 
-func TestCompressWithSnapshotsSourceWhenBuildFails(t *testing.T) {
+func TestCompressWithKeepsBorrowedRawWhenBuildFails(t *testing.T) {
 	values := []uint32{10, 20, 30, 40}
 	compressor := testCompressorUint32{
 		schemes: []scheme[uint32, testStatsUint32]{
@@ -525,7 +529,7 @@ func TestCompressWithSnapshotsSourceWhenBuildFails(t *testing.T) {
 
 	decoded := make([]uint32, codec.Length())
 	require.NoError(t, codec.CopyTo(decoded))
-	require.Equal(t, []uint32{10, 20, 30, 40}, decoded)
+	require.Equal(t, []uint32{10, 20, 777, 40}, decoded)
 }
 
 func TestUnsignedOffsetRangeChoosesFoRWhenBitpackIsExcludedByCost(t *testing.T) {
