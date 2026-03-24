@@ -589,7 +589,7 @@ func TestALPPropagatesFloatDictExcludesToIntegerChild(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	alp, ok := codec.(*alpArray64)
+	alp, ok := codec.(*alpArray[float64, int64])
 	require.True(t, ok)
 	require.NotEqual(t, CodecTypeDict, alp.encoded.Encoding())
 }
@@ -648,11 +648,12 @@ func TestBitpackSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
 }
 
 func TestALPSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
-	encoded := &alpArray64{
+	encoded := &alpArray[float64, int64]{
 		length:  5,
 		expE:    0,
 		expF:    0,
 		encoded: newRawArray(buildArray([]int64{1, 2, 3, 4, 5})),
+		decode:  alpDecode64,
 		patches: &patches[float64]{
 			length:  5,
 			offset:  0,
@@ -664,7 +665,7 @@ func TestALPSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
 	sliced, err := encoded.Slice(1, 5)
 	require.NoError(t, err)
 
-	alp := sliced.(*alpArray64)
+	alp := sliced.(*alpArray[float64, int64])
 	require.NotNil(t, alp.patches)
 	require.Equal(t, uint64(1), alp.patches.offset)
 
@@ -678,7 +679,7 @@ func TestALPSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
 
 	readBack, err := Read[float64](&buf)
 	require.NoError(t, err)
-	roundTrip := readBack.(*alpArray64)
+	roundTrip := readBack.(*alpArray[float64, int64])
 	require.NotNil(t, roundTrip.patches)
 	require.Equal(t, uint64(1), roundTrip.patches.offset)
 

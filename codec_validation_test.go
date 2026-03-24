@@ -137,7 +137,7 @@ func TestReadBitpackKeepsPatchesEncodedUntilCopy(t *testing.T) {
 }
 
 func TestReadALP64RejectsEmptyPatches(t *testing.T) {
-	data := mustWriteEncodedArray(t, &alpArray64{
+	data := mustWriteEncodedArray(t, &alpArray[float64, int64]{decode: alpDecode64,
 		length:  3,
 		expE:    0,
 		expF:    0,
@@ -155,7 +155,7 @@ func TestReadALP64RejectsEmptyPatches(t *testing.T) {
 }
 
 func TestReadALP32RejectsOutOfRangePatchIndex(t *testing.T) {
-	data := mustWriteEncodedArray(t, &alpArray32{
+	data := mustWriteEncodedArray(t, &alpArray[float32, int32]{decode: alpDecode32,
 		length:  3,
 		expE:    0,
 		expF:    0,
@@ -173,7 +173,7 @@ func TestReadALP32RejectsOutOfRangePatchIndex(t *testing.T) {
 }
 
 func TestReadALP64KeepsPatchesEncodedUntilCopy(t *testing.T) {
-	data := mustWriteEncodedArray(t, &alpArray64{
+	data := mustWriteEncodedArray(t, &alpArray[float64, int64]{decode: alpDecode64,
 		length:  4,
 		expE:    0,
 		expF:    0,
@@ -188,7 +188,7 @@ func TestReadALP64KeepsPatchesEncodedUntilCopy(t *testing.T) {
 	readEncodedArray, err := Read[float64](bytes.NewReader(data))
 	require.NoError(t, err)
 
-	codec := readEncodedArray.(*alpArray64)
+	codec := readEncodedArray.(*alpArray[float64, int64])
 	require.NotNil(t, codec.patches)
 
 	require.Equal(t, 1.0, codec.ValueAt(0))
@@ -202,7 +202,7 @@ func TestReadALP64KeepsPatchesEncodedUntilCopy(t *testing.T) {
 }
 
 func TestReadALP32KeepsPatchesEncodedUntilCopy(t *testing.T) {
-	data := mustWriteEncodedArray(t, &alpArray32{
+	data := mustWriteEncodedArray(t, &alpArray[float32, int32]{decode: alpDecode32,
 		length:  3,
 		expE:    0,
 		expF:    0,
@@ -217,7 +217,7 @@ func TestReadALP32KeepsPatchesEncodedUntilCopy(t *testing.T) {
 	readEncodedArray, err := Read[float32](bytes.NewReader(data))
 	require.NoError(t, err)
 
-	codec := readEncodedArray.(*alpArray32)
+	codec := readEncodedArray.(*alpArray[float32, int32])
 	require.NotNil(t, codec.patches)
 
 	require.Equal(t, float32(9.25), codec.ValueAt(0))

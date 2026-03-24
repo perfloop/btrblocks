@@ -120,7 +120,7 @@ func TestALPRDDictSizeSmall(t *testing.T) {
 	codec, err := buildALPRDArray[float64](array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 
-	alprd, ok := codec.(*alprdArray64)
+	alprd, ok := codec.(*alprdArray[float64])
 	require.True(t, ok)
 	require.LessOrEqual(t, alprd.dictSize, uint8(8))
 }

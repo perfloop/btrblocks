@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"sync"
 	"unsafe"
 
 	"github.com/axiomhq/btrblocks/array"
@@ -18,16 +17,7 @@ type fsstArray struct {
 	codes    []byte       // concatenated compressed string bytes
 	offsets  ordinalArray // length+1 offsets into codes
 	lengths  ordinalArray // length original uncompressed string lengths
-
-	tableOnce sync.Once
-	table     *fsst.Table
-}
-
-func (f *fsstArray) ensureTable() {
-	f.tableOnce.Do(func() {
-		f.table = &fsst.Table{}
-		_ = f.table.UnmarshalBinary(f.tableRaw)
-	})
+	table    *fsst.Table
 }
 
 func (f *fsstArray) Encoding() CodeType { return CodecTypeFSST }
@@ -42,7 +32,6 @@ func (f *fsstArray) ValueAt(offset uint64) string {
 	if offset >= f.length {
 		panic(errOffsetOutOfRange)
 	}
-	f.ensureTable()
 	start := f.offsets.ValueAt(offset)
 	end := f.offsets.ValueAt(offset + 1)
 	if start == end {
@@ -62,7 +51,6 @@ func (f *fsstArray) Decompress() ([]string, error) {
 		return nil, err
 	}
 
-	f.ensureTable()
 	decoded := f.table.DecodeAll(f.codes)
 
 	dst := make([]string, f.length)
@@ -183,12 +171,18 @@ func readFSSTArray(r io.Reader, h header) (EncodedArray[string], error) {
 		return nil, fmt.Errorf("codec: fsst lengths length = %d, want %d", lengths.Length(), h.Length)
 	}
 
+	table := &fsst.Table{}
+	if err := table.UnmarshalBinary(tableRaw); err != nil {
+		return nil, fmt.Errorf("codec: fsst table: %w", err)
+	}
+
 	return &fsstArray{
 		length:   h.Length,
 		tableRaw: tableRaw,
 		codes:    codes,
 		offsets:  offsets,
 		lengths:  lengths,
+		table:    table,
 	}, nil
 }
 
@@ -261,6 +255,7 @@ func buildFSSTArray(arr array.Array[string], ctx planContext) (EncodedArray[stri
 		codes:    allCodes,
 		offsets:  offsetsCodec,
 		lengths:  lengthsCodec,
+		table:    table,
 	}, nil
 }
 

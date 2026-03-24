@@ -4,8 +4,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-
-	// "fmt"
 	"io"
 
 	"github.com/axiomhq/btrblocks/array"
