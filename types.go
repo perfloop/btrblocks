@@ -46,6 +46,7 @@ const (
 	CodecTypeSequence
 	CodecTypeALP
 	CodecTypeFSST
+	CodecTypeALPRD
 )
 
 func (k CodeType) String() string {
@@ -70,14 +71,86 @@ func (k CodeType) String() string {
 		return "alp"
 	case CodecTypeFSST:
 		return "fsst"
+	case CodecTypeALPRD:
+		return "alprd"
 	default:
 		return "unknown"
 	}
 }
 
-// Options configures recursive planning behavior for compression entrypoints.
+// Options configures compression behavior. The zero value enables all schemes
+// with the default cascade depth.
+//
+// Use the fluent With* methods to customise, or start from EmptySchemes() to
+// build an allowlist:
+//
+//	// Exclude specific schemes (blocklist):
+//	opts := Options{}.WithExcludeFloat(CodecTypeALP)
+//
+//	// Only allow specific schemes (allowlist):
+//	opts := EmptySchemes().WithIncludeInteger(CodecTypeBitpack, CodecTypeFor)
 type Options struct {
 	MaxDepth int
+	excludes plannerExcludes
+}
+
+// EmptySchemes returns Options with every scheme excluded. Call WithInclude*
+// to selectively enable schemes — mirrors BtrBlocksCompressorBuilder::empty()
+// in the Rust reference.
+func EmptySchemes() Options {
+	return Options{excludes: plannerExcludes{
+		integers: ^kindSet(0),
+		floats:   ^kindSet(0),
+		strings:  ^kindSet(0),
+	}}
+}
+
+// WithMaxDepth sets the maximum cascade depth.
+func (o Options) WithMaxDepth(d int) Options {
+	o.MaxDepth = d
+	return o
+}
+
+// WithExcludeInteger removes the given integer schemes from the enabled set.
+func (o Options) WithExcludeInteger(kinds ...CodeType) Options {
+	o.excludes.integers = o.excludes.integers.with(kinds...)
+	return o
+}
+
+// WithIncludeInteger adds the given integer schemes back into the enabled set.
+func (o Options) WithIncludeInteger(kinds ...CodeType) Options {
+	for _, k := range kinds {
+		o.excludes.integers &^= 1 << k
+	}
+	return o
+}
+
+// WithExcludeFloat removes the given float schemes from the enabled set.
+func (o Options) WithExcludeFloat(kinds ...CodeType) Options {
+	o.excludes.floats = o.excludes.floats.with(kinds...)
+	return o
+}
+
+// WithIncludeFloat adds the given float schemes back into the enabled set.
+func (o Options) WithIncludeFloat(kinds ...CodeType) Options {
+	for _, k := range kinds {
+		o.excludes.floats &^= 1 << k
+	}
+	return o
+}
+
+// WithExcludeString removes the given string schemes from the enabled set.
+func (o Options) WithExcludeString(kinds ...CodeType) Options {
+	o.excludes.strings = o.excludes.strings.with(kinds...)
+	return o
+}
+
+// WithIncludeString adds the given string schemes back into the enabled set.
+func (o Options) WithIncludeString(kinds ...CodeType) Options {
+	for _, k := range kinds {
+		o.excludes.strings &^= 1 << k
+	}
+	return o
 }
 
 const defaultMaxDepth = 3

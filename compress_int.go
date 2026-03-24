@@ -3,17 +3,22 @@ package btrblocks
 import "github.com/axiomhq/btrblocks/array"
 
 // signedIntCompressor registers the dense signed-integer schemes and stats policy.
-type signedIntCompressor[T SignedInteger] struct{}
-
-func (signedIntCompressor[T]) ComputeStats(arr array.Array[T]) signedStats[T] {
-	return computeSignedStats(arr)
+type signedIntCompressor[T SignedInteger] struct {
+	distinct intDistinctValues[T]
 }
 
-func (signedIntCompressor[T]) DefaultScheme() scheme[T, signedStats[T]] {
+func (c *signedIntCompressor[T]) ComputeStats(arr array.Array[T]) signedStats[T] {
+	stats, distinct := computeSignedStats(arr)
+	c.distinct = distinct
+	return stats
+}
+
+func (*signedIntCompressor[T]) DefaultScheme() scheme[T, signedStats[T]] {
 	return rawScheme[T, signedStats[T]]()
 }
 
-func (signedIntCompressor[T]) Schemes() []scheme[T, signedStats[T]] {
+func (c *signedIntCompressor[T]) Schemes() []scheme[T, signedStats[T]] {
+	distinct := c.distinct
 	return []scheme[T, signedStats[T]]{
 		registeredScheme[T, signedStats[T]]{
 			kind: CodecTypeConst,
@@ -45,7 +50,9 @@ func (signedIntCompressor[T]) Schemes() []scheme[T, signedStats[T]] {
 			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
 				return estimateIntegerDict[T, signedStats[T]](stats.base.distinctCount, stats.base.avgRunLength)(stats, ctx)
 			},
-			build: buildIntegerDictArray[T],
+			build: func(arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
+				return buildIntegerDictFromDistinct(arr, distinct, ctx)
+			},
 		},
 		registeredScheme[T, signedStats[T]]{
 			kind: CodecTypeRunEnd,
@@ -59,6 +66,6 @@ func (signedIntCompressor[T]) Schemes() []scheme[T, signedStats[T]] {
 	}
 }
 
-func (signedIntCompressor[T]) IsExcluded(ctx planContext, kind CodeType) bool {
+func (*signedIntCompressor[T]) IsExcluded(ctx planContext, kind CodeType) bool {
 	return ctx.excludesInteger(kind)
 }

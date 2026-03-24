@@ -21,26 +21,39 @@ func (s unsignedStats[T]) Sample(ctx planContext) array.Array[T] {
 // cardinality, min/max, top value, and run-length statistics. Dict planning for
 // integers uses exact distinct counts in the Rust reference, so we keep this
 // path exact as well.
-func computeUnsignedStats[T UnsignedInteger](arr array.Array[T]) unsignedStats[T] {
+func computeUnsignedStats[T UnsignedInteger](arr array.Array[T]) (unsignedStats[T], intDistinctValues[T]) {
 	n := arr.Length()
 	if n == 0 {
 		return unsignedStats[T]{
 			base: baseStats[T]{
 				src: arr,
 			},
-		}
+		}, intDistinctValues[T]{}
 	}
 
-	counts := make(map[T]uint64, 256)
+	type entry struct {
+		count   uint64
+		ordinal uint64
+	}
+
+	counts := make(map[T]entry, 256)
+	var distinctValues []T
 	runs := uint64(1)
 	prev := arr.ValueAt(0)
 	minValue := prev
 	maxValue := prev
-	counts[prev]++
+	counts[prev] = entry{count: 1, ordinal: 0}
+	distinctValues = append(distinctValues, prev)
 
 	for i := uint64(1); i < n; i++ {
 		v := arr.ValueAt(i)
-		counts[v]++
+		e, exists := counts[v]
+		if !exists {
+			e = entry{ordinal: uint64(len(distinctValues))}
+			distinctValues = append(distinctValues, v)
+		}
+		e.count++
+		counts[v] = e
 		if v < minValue {
 			minValue = v
 		}
@@ -55,11 +68,16 @@ func computeUnsignedStats[T UnsignedInteger](arr array.Array[T]) unsignedStats[T
 
 	var topValue T
 	var topCount uint64
-	for v, count := range counts {
-		if count > topCount {
+	for v, e := range counts {
+		if e.count > topCount {
 			topValue = v
-			topCount = count
+			topCount = e.count
 		}
+	}
+
+	byKey := make(map[T]uint64, len(counts))
+	for v, e := range counts {
+		byKey[v] = e.ordinal
 	}
 
 	return unsignedStats[T]{
@@ -74,5 +92,5 @@ func computeUnsignedStats[T UnsignedInteger](arr array.Array[T]) unsignedStats[T
 		},
 		min: minValue,
 		max: maxValue,
-	}
+	}, intDistinctValues[T]{byKey: byKey, values: distinctValues}
 }

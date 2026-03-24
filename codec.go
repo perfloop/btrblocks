@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+
+	// "fmt"
 	"io"
 
 	"github.com/axiomhq/btrblocks/array"
@@ -52,7 +54,7 @@ type planContext struct {
 
 func newPlanContext(opts Options) planContext {
 	opts = normalizeOptions(opts)
-	return planContext{depth: opts.MaxDepth}
+	return planContext{depth: opts.MaxDepth, excludes: opts.excludes}
 }
 
 func (c planContext) descend() planContext {
@@ -205,7 +207,7 @@ func validateHeaderForType[T Integer | Float | String](h header) error {
 		return fmt.Errorf("codec: reserved byte = %d, want 0", h.Reserved)
 	}
 	switch h.Kind {
-	case CodecTypeConst, CodecTypeRaw, CodecTypeDict, CodecTypeRunEnd, CodecTypeZigZag, CodecTypeBitpack, CodecTypeFor, CodecTypeSequence, CodecTypeALP, CodecTypeFSST:
+	case CodecTypeConst, CodecTypeRaw, CodecTypeDict, CodecTypeRunEnd, CodecTypeZigZag, CodecTypeBitpack, CodecTypeFor, CodecTypeSequence, CodecTypeALP, CodecTypeFSST, CodecTypeALPRD:
 	default:
 		return fmt.Errorf("codec: unknown kind = %d", h.Kind)
 	}
@@ -216,6 +218,10 @@ func validateHeaderForType[T Integer | Float | String](h header) error {
 	} else if h.Kind == CodecTypeALP {
 		if h.Flags&^flagALPHasPatches != 0 {
 			return fmt.Errorf("codec: unsupported ALP flags = 0x%x", h.Flags)
+		}
+	} else if h.Kind == CodecTypeALPRD {
+		if h.Flags&^flagALPRDHasPatches != 0 {
+			return fmt.Errorf("codec: unsupported ALPRD flags = 0x%x", h.Flags)
 		}
 	} else if h.Flags != 0 {
 		return fmt.Errorf("codec: unsupported flags = 0x%x", h.Flags)
@@ -259,6 +265,8 @@ func readEncodedArrayWithHeader[T Integer | Float | String](r io.Reader, h heade
 		return readAnySequenceArray[T](r, h)
 	case CodecTypeALP:
 		return readAnyALPArray[T](r, h)
+	case CodecTypeALPRD:
+		return readAnyALPRDArray[T](r, h)
 	case CodecTypeFSST:
 		return readAnyFSSTArray[T](r, h)
 	default:

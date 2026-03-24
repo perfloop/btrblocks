@@ -315,7 +315,7 @@ func TestDictDecompressUsesValueAt(t *testing.T) {
 
 func TestDictCodecRoundTripAfterRead(t *testing.T) {
 	values := []uint32{7, 9, 7, 9, 7, 9}
-	codec, err := buildIntegerDictArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
+	codec, err := buildIntegerDictFromDistinct(array.NewPrimitivesUnsafe(values), intDistinctValues[uint32]{}, newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeDict, codec.Encoding())
 
@@ -348,7 +348,7 @@ func TestFoRUsesBitpackChild(t *testing.T) {
 }
 
 func TestIntegerDictCompressesValues(t *testing.T) {
-	codec, err := buildIntegerDictArray(array.NewPrimitivesUnsafe([]int32{7, 9, 7, 9, 7, 9}), newPlanContext(Options{MaxDepth: 3}))
+	codec, err := buildIntegerDictFromDistinct(array.NewPrimitivesUnsafe([]int32{7, 9, 7, 9, 7, 9}), intDistinctValues[int32]{}, newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 
 	dict, ok := codec.(*dictArray[int32])
@@ -519,7 +519,7 @@ func TestUnsignedOffsetRangeChoosesFoRWhenBitpackIsExcludedByCost(t *testing.T) 
 	codec, err := compressWith(
 		array.NewPrimitivesUnsafe(values),
 		newPlanContext(Options{MaxDepth: 3}).withIntegerExcludes(CodecTypeDict, CodecTypeSequence, CodecTypeRunEnd),
-		unsignedIntCompressor[uint32]{},
+		&unsignedIntCompressor[uint32]{},
 	)
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeFor, codec.Encoding())
@@ -531,7 +531,7 @@ func TestUnsignedSmallOffsetRangeKeepsBitpackWhenFoROverheadIsTooHigh(t *testing
 	codec, err := compressWith(
 		array.NewPrimitivesUnsafe(values),
 		newPlanContext(Options{MaxDepth: 3}).withIntegerExcludes(CodecTypeDict, CodecTypeSequence, CodecTypeRunEnd),
-		unsignedIntCompressor[uint32]{},
+		&unsignedIntCompressor[uint32]{},
 	)
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeBitpack, codec.Encoding())
@@ -547,7 +547,7 @@ func TestUnsignedLowCardinalityLargeValuesChooseDict(t *testing.T) {
 	codec, err := compressWith(
 		array.NewPrimitivesUnsafe(values),
 		newPlanContext(Options{MaxDepth: 3}).withIntegerExcludes(CodecTypeSequence, CodecTypeRunEnd),
-		unsignedIntCompressor[uint32]{},
+		&unsignedIntCompressor[uint32]{},
 	)
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeDict, codec.Encoding())
@@ -565,7 +565,7 @@ func TestUnsignedOutliersChoosePatchedBitpack(t *testing.T) {
 	codec, err := compressWith(
 		array.NewPrimitivesUnsafe(values),
 		newPlanContext(Options{MaxDepth: 3}).withIntegerExcludes(CodecTypeDict, CodecTypeSequence, CodecTypeRunEnd, CodecTypeFor),
-		unsignedIntCompressor[uint32]{},
+		&unsignedIntCompressor[uint32]{},
 	)
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeBitpack, codec.Encoding())
@@ -597,7 +597,7 @@ func TestALPPropagatesFloatDictExcludesToIntegerChild(t *testing.T) {
 func TestDictSlicePreservesEncoding(t *testing.T) {
 	values := []uint32{9, 7, 9, 8, 7, 8, 9}
 
-	encoded, err := buildIntegerDictArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
+	encoded, err := buildIntegerDictFromDistinct(array.NewPrimitivesUnsafe(values), intDistinctValues[uint32]{}, newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 
 	sliced, err := encoded.Slice(1, 6)
@@ -700,7 +700,7 @@ func TestExcludeIntegerPreventsDict(t *testing.T) {
 	require.Equal(t, CodecTypeDict, codec.Encoding())
 
 	// With exclude: dict is blocked, something else is chosen.
-	codec, err = Compress(buildArray(values), Options{ExcludeInteger: []CodeType{CodecTypeDict}})
+	codec, err = Compress(buildArray(values), Options{}.WithExcludeInteger(CodecTypeDict))
 	require.NoError(t, err)
 	require.NotEqual(t, CodecTypeDict, codec.Encoding())
 
@@ -715,7 +715,7 @@ func TestExcludeFloatPreventsALP(t *testing.T) {
 		values[i] = float64(i%50) * 0.01
 	}
 
-	codec, err := Compress(buildArray(values), Options{ExcludeFloat: []CodeType{CodecTypeALP, CodecTypeALPRD}})
+	codec, err := Compress(buildArray(values), Options{}.WithExcludeFloat(CodecTypeALP, CodecTypeALPRD))
 	require.NoError(t, err)
 	require.NotEqual(t, CodecTypeALP, codec.Encoding())
 	require.NotEqual(t, CodecTypeALPRD, codec.Encoding())
@@ -725,7 +725,7 @@ func TestExcludeFloatPreventsALP(t *testing.T) {
 	require.True(t, equalFloats(values, decoded))
 }
 
-func TestIncludeOnlyIntegerRestrictsSchemes(t *testing.T) {
+func TestEmptySchemesWithIncludeRestrictsSchemes(t *testing.T) {
 	// Arithmetic sequence: would normally select Sequence codec.
 	values := make([]uint32, 100)
 	for i := range values {
@@ -736,10 +736,8 @@ func TestIncludeOnlyIntegerRestrictsSchemes(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeSequence, codec.Encoding())
 
-	// IncludeOnly bitpack+for: sequence is excluded.
-	codec, err = Compress(buildArray(values), Options{
-		IncludeOnlyInteger: []CodeType{CodecTypeBitpack, CodecTypeFor},
-	})
+	// Start from empty, only enable bitpack+for: sequence is excluded.
+	codec, err = Compress(buildArray(values), EmptySchemes().WithIncludeInteger(CodecTypeBitpack, CodecTypeFor))
 	require.NoError(t, err)
 	require.NotEqual(t, CodecTypeSequence, codec.Encoding())
 
@@ -748,18 +746,15 @@ func TestIncludeOnlyIntegerRestrictsSchemes(t *testing.T) {
 	require.Equal(t, values, decoded)
 }
 
-func TestIncludeOnlyTakesPrecedenceOverExclude(t *testing.T) {
+func TestIncludeAfterExcludeReEnables(t *testing.T) {
 	values := make([]uint32, 100)
 	for i := range values {
 		values[i] = 1000 + uint32(i)*3
 	}
 
-	// Both set: IncludeOnly wins. Sequence is in IncludeOnly, so it's allowed
-	// despite also being in Exclude.
-	codec, err := Compress(buildArray(values), Options{
-		ExcludeInteger:     []CodeType{CodecTypeSequence},
-		IncludeOnlyInteger: []CodeType{CodecTypeSequence, CodecTypeBitpack},
-	})
+	// Exclude sequence, then include it back — should still select sequence.
+	codec, err := Compress(buildArray(values),
+		Options{}.WithExcludeInteger(CodecTypeSequence).WithIncludeInteger(CodecTypeSequence))
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeSequence, codec.Encoding())
 }

@@ -103,45 +103,76 @@ func readDictArray[T Integer | Float | String](r io.Reader, h header) (EncodedAr
 	return &dictArray[T]{values: values, indices: indices}, nil
 }
 
-func buildIntegerDictArray[T Integer](arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
+// buildIntegerDictFromDistinct builds a dictionary-encoded array using
+// pre-computed distinct values from stats when available. Falls back to
+// scanning the array if distinct is empty (e.g. during sample estimation).
+func buildIntegerDictFromDistinct[T Integer](arr array.Array[T], distinct intDistinctValues[T], ctx planContext) (EncodedArray[T], error) {
 	if ctx.depth <= 0 {
 		return nil, errDepthExhausted
 	}
-	dict := make(map[T]uint64)
-	values := make([]T, 0, arr.Length())
-	indices := make([]uint64, arr.Length())
-	for i := uint64(0); i < arr.Length(); i++ {
-		value := arr.ValueAt(i)
-		index, ok := dict[value]
-		if !ok {
-			index = uint64(len(values))
-			dict[value] = index
-			values = append(values, value)
+
+	var values []T
+	var byKey map[T]uint64
+
+	if len(distinct.byKey) > 0 {
+		values = distinct.values
+		byKey = distinct.byKey
+	} else {
+		byKey = make(map[T]uint64)
+		for i := uint64(0); i < arr.Length(); i++ {
+			value := arr.ValueAt(i)
+			if _, ok := byKey[value]; !ok {
+				byKey[value] = uint64(len(values))
+				values = append(values, value)
+			}
 		}
-		indices[i] = index
 	}
 
-	valuesCodec := newRawArray(buildArray(values))
+	indices := make([]uint64, arr.Length())
+	for i := uint64(0); i < arr.Length(); i++ {
+		indices[i] = byKey[arr.ValueAt(i)]
+	}
+
+	valuesCodec, err := compressArray(buildArray(values), ctx.descend().withIntegerExcludes(CodecTypeDict))
+	if err != nil {
+		return nil, err
+	}
 	return buildDictIndicesArray(valuesCodec, indices, ctx)
 }
 
-func buildFloatDictArray[T Float](arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
+// buildFloatDictFromDistinct builds a dictionary-encoded array using
+// pre-computed distinct values from stats, avoiding a redundant array scan.
+// If distinct is empty (e.g. during sample estimation), it falls back to
+// scanning the array.
+func buildFloatDictFromDistinct[T Float](arr array.Array[T], distinct floatDistinctValues[T], ctx planContext) (EncodedArray[T], error) {
 	if ctx.depth <= 0 {
 		return nil, errDepthExhausted
 	}
-	dict := make(map[uint64]uint64)
-	values := make([]T, 0, arr.Length())
+
+	var values []T
+	var byKey map[uint64]uint64
+
+	if len(distinct.byKey) > 0 {
+		// Use pre-computed distinct values from stats.
+		values = distinct.values
+		byKey = distinct.byKey
+	} else {
+		// Fallback: scan the array (used during sample estimation).
+		byKey = make(map[uint64]uint64)
+		for i := uint64(0); i < arr.Length(); i++ {
+			value := arr.ValueAt(i)
+			key := floatDictKey(value)
+			if _, ok := byKey[key]; !ok {
+				byKey[key] = uint64(len(values))
+				values = append(values, value)
+			}
+		}
+	}
+
+	// Build ordinal indices by scanning the array once.
 	indices := make([]uint64, arr.Length())
 	for i := uint64(0); i < arr.Length(); i++ {
-		value := arr.ValueAt(i)
-		key := floatDictKey(value)
-		index, ok := dict[key]
-		if !ok {
-			index = uint64(len(values))
-			dict[key] = index
-			values = append(values, value)
-		}
-		indices[i] = index
+		indices[i] = byKey[floatDictKey(arr.ValueAt(i))]
 	}
 
 	valuesCodec, err := compressArray(buildArray(values), ctx.descend().withFloatExcludes(CodecTypeDict))
@@ -247,6 +278,8 @@ func estimateFloatDict[T Float, S statsSource[T]](distinctRatio float64) func(S,
 		if ctx.depth <= 0 || distinctRatio > distinctRatioThreshold {
 			return 0, false
 		}
-		return estimateBySample(stats, ctx, buildFloatDictArray[T])
+		return estimateBySample(stats, ctx, func(arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
+			return buildFloatDictFromDistinct(arr, floatDistinctValues[T]{}, ctx)
+		})
 	}
 }

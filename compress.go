@@ -65,61 +65,61 @@ func compressArray[T Integer | Float | String](arr array.Array[T], ctx planConte
 	var zero T
 	switch any(zero).(type) {
 	case int8:
-		codec, err := compressWith(any(arr).(array.Array[int8]), ctx, signedIntCompressor[int8]{})
+		codec, err := compressWith(any(arr).(array.Array[int8]), ctx, &signedIntCompressor[int8]{})
 		if err != nil {
 			return nil, err
 		}
 		return any(codec).(EncodedArray[T]), nil
 	case int16:
-		codec, err := compressWith(any(arr).(array.Array[int16]), ctx, signedIntCompressor[int16]{})
+		codec, err := compressWith(any(arr).(array.Array[int16]), ctx, &signedIntCompressor[int16]{})
 		if err != nil {
 			return nil, err
 		}
 		return any(codec).(EncodedArray[T]), nil
 	case int32:
-		codec, err := compressWith(any(arr).(array.Array[int32]), ctx, signedIntCompressor[int32]{})
+		codec, err := compressWith(any(arr).(array.Array[int32]), ctx, &signedIntCompressor[int32]{})
 		if err != nil {
 			return nil, err
 		}
 		return any(codec).(EncodedArray[T]), nil
 	case int64:
-		codec, err := compressWith(any(arr).(array.Array[int64]), ctx, signedIntCompressor[int64]{})
+		codec, err := compressWith(any(arr).(array.Array[int64]), ctx, &signedIntCompressor[int64]{})
 		if err != nil {
 			return nil, err
 		}
 		return any(codec).(EncodedArray[T]), nil
 	case uint8:
-		codec, err := compressWith(any(arr).(array.Array[uint8]), ctx, unsignedIntCompressor[uint8]{})
+		codec, err := compressWith(any(arr).(array.Array[uint8]), ctx, &unsignedIntCompressor[uint8]{})
 		if err != nil {
 			return nil, err
 		}
 		return any(codec).(EncodedArray[T]), nil
 	case uint16:
-		codec, err := compressWith(any(arr).(array.Array[uint16]), ctx, unsignedIntCompressor[uint16]{})
+		codec, err := compressWith(any(arr).(array.Array[uint16]), ctx, &unsignedIntCompressor[uint16]{})
 		if err != nil {
 			return nil, err
 		}
 		return any(codec).(EncodedArray[T]), nil
 	case uint32:
-		codec, err := compressWith(any(arr).(array.Array[uint32]), ctx, unsignedIntCompressor[uint32]{})
+		codec, err := compressWith(any(arr).(array.Array[uint32]), ctx, &unsignedIntCompressor[uint32]{})
 		if err != nil {
 			return nil, err
 		}
 		return any(codec).(EncodedArray[T]), nil
 	case uint64:
-		codec, err := compressWith(any(arr).(array.Array[uint64]), ctx, unsignedIntCompressor[uint64]{})
+		codec, err := compressWith(any(arr).(array.Array[uint64]), ctx, &unsignedIntCompressor[uint64]{})
 		if err != nil {
 			return nil, err
 		}
 		return any(codec).(EncodedArray[T]), nil
 	case float32:
-		codec, err := compressWith(any(arr).(array.Array[float32]), ctx, floatCompressor[float32]{})
+		codec, err := compressWith(any(arr).(array.Array[float32]), ctx, &floatCompressor[float32]{})
 		if err != nil {
 			return nil, err
 		}
 		return any(codec).(EncodedArray[T]), nil
 	case float64:
-		codec, err := compressWith(any(arr).(array.Array[float64]), ctx, floatCompressor[float64]{})
+		codec, err := compressWith(any(arr).(array.Array[float64]), ctx, &floatCompressor[float64]{})
 		if err != nil {
 			return nil, err
 		}

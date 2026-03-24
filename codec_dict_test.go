@@ -100,7 +100,7 @@ func TestDictValueAt(t *testing.T) {
 }
 
 func TestDictEncodingType(t *testing.T) {
-	codec, err := buildIntegerDictArray(buildArray([]uint32{1, 2, 1, 2, 1, 2}), newPlanContext(Options{MaxDepth: 3}))
+	codec, err := buildIntegerDictFromDistinct(buildArray([]uint32{1, 2, 1, 2, 1, 2}), intDistinctValues[uint32]{}, newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeDict, codec.Encoding())
 }
@@ -181,7 +181,7 @@ func FuzzDictRoundTrip(f *testing.F) {
 			return
 		}
 
-		codec, err := buildIntegerDictFromDistinct(buildArray(values), intDistinctValues[int32]{}, newPlanContext(Options{MaxDepth: 3}))
+		codec, err := buildIntegerDictFromDistinct(buildArray(values), intDistinctValues[uint16]{}, newPlanContext(Options{MaxDepth: 3}))
 		if err != nil {
 			return
 		}

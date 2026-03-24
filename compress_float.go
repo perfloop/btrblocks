@@ -3,17 +3,24 @@ package btrblocks
 import "github.com/axiomhq/btrblocks/array"
 
 // floatCompressor registers the dense floating-point schemes and stats policy.
-type floatCompressor[T Float] struct{}
-
-func (floatCompressor[T]) ComputeStats(arr array.Array[T]) baseStats[T] {
-	return computeFloatStats(arr)
+// It caches the distinct-values map from ComputeStats so the dict build path
+// can reuse it instead of re-scanning the array.
+type floatCompressor[T Float] struct {
+	distinct floatDistinctValues[T]
 }
 
-func (floatCompressor[T]) DefaultScheme() scheme[T, baseStats[T]] {
+func (c *floatCompressor[T]) ComputeStats(arr array.Array[T]) baseStats[T] {
+	stats, distinct := computeFloatStats(arr)
+	c.distinct = distinct
+	return stats
+}
+
+func (*floatCompressor[T]) DefaultScheme() scheme[T, baseStats[T]] {
 	return rawScheme[T, baseStats[T]]()
 }
 
-func (floatCompressor[T]) Schemes() []scheme[T, baseStats[T]] {
+func (c *floatCompressor[T]) Schemes() []scheme[T, baseStats[T]] {
+	distinct := c.distinct
 	return []scheme[T, baseStats[T]]{
 		registeredScheme[T, baseStats[T]]{
 			kind: CodecTypeConst,
@@ -36,7 +43,16 @@ func (floatCompressor[T]) Schemes() []scheme[T, baseStats[T]] {
 			estimate: func(stats baseStats[T], ctx planContext) (float64, bool) {
 				return estimateFloatDict[T, baseStats[T]](stats.distinctRatio)(stats, ctx)
 			},
-			build: buildFloatDictArray[T],
+			build: func(arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
+				return buildFloatDictFromDistinct(arr, distinct, ctx)
+			},
+		},
+		registeredScheme[T, baseStats[T]]{
+			kind: CodecTypeALPRD,
+			estimate: func(stats baseStats[T], ctx planContext) (float64, bool) {
+				return estimateALPRD[T, baseStats[T]](stats.isConst)(stats, ctx)
+			},
+			build: buildALPRDArray[T],
 		},
 		registeredScheme[T, baseStats[T]]{
 			kind: CodecTypeRunEnd,
@@ -50,6 +66,6 @@ func (floatCompressor[T]) Schemes() []scheme[T, baseStats[T]] {
 	}
 }
 
-func (floatCompressor[T]) IsExcluded(ctx planContext, kind CodeType) bool {
+func (*floatCompressor[T]) IsExcluded(ctx planContext, kind CodeType) bool {
 	return ctx.excludesFloat(kind)
 }
