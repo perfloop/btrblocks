@@ -28,10 +28,17 @@ func (r *rawArray[T]) ValueAt(offset uint64) T {
 	return r.arr.ValueAt(offset)
 }
 
+func (r *rawArray[T]) DecompressInto(dst []T) error {
+	if err := checkDstLen(dst, r.arr.Length()); err != nil {
+		return err
+	}
+	r.arr.CopyTo(dst[:r.arr.Length()])
+	return nil
+}
+
 func (r *rawArray[T]) Decompress() ([]T, error) {
 	dst := make([]T, r.arr.Length())
-	r.arr.CopyTo(dst)
-	return dst, nil
+	return dst, r.DecompressInto(dst)
 }
 
 func (r *rawArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {

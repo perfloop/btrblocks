@@ -251,19 +251,23 @@ func (a *alpArray[T, I]) ValueAt(offset uint64) T {
 	return a.decode(a.encoded.ValueAt(offset), a.expE, a.expF)
 }
 
-func (a *alpArray[T, I]) Decompress() ([]T, error) {
+func (a *alpArray[T, I]) DecompressInto(dst []T) error {
+	if err := checkDstLen(dst, a.length); err != nil {
+		return err
+	}
 	encoded, err := a.encoded.Decompress()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	dst := make([]T, len(encoded))
 	for i, value := range encoded {
 		dst[i] = a.decode(value, a.expE, a.expF)
 	}
-	if err := a.patches.Apply(dst); err != nil {
-		return nil, err
-	}
-	return dst, nil
+	return a.patches.Apply(dst[:a.length])
+}
+
+func (a *alpArray[T, I]) Decompress() ([]T, error) {
+	dst := make([]T, a.length)
+	return dst, a.DecompressInto(dst)
 }
 
 func (a *alpArray[T, I]) Slice(start, end uint64) (EncodedArray[T], error) {

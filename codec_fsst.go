@@ -41,19 +41,21 @@ func (f *fsstArray) ValueAt(offset uint64) string {
 	return unsafe.String(&decoded[0], len(decoded))
 }
 
-func (f *fsstArray) Decompress() ([]string, error) {
+func (f *fsstArray) DecompressInto(dst []string) error {
+	if err := checkDstLen(dst, f.length); err != nil {
+		return err
+	}
 	offsets, err := decompressOrdinals(f.offsets)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	lengths, err := decompressOrdinals(f.lengths)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	decoded := f.table.DecodeAll(f.codes)
 
-	dst := make([]string, f.length)
 	pos := uint64(0)
 	for i := uint64(0); i < f.length; i++ {
 		l := lengths[i]
@@ -61,7 +63,12 @@ func (f *fsstArray) Decompress() ([]string, error) {
 		dst[i] = string(decoded[pos : pos+l])
 		pos += l
 	}
-	return dst, nil
+	return nil
+}
+
+func (f *fsstArray) Decompress() ([]string, error) {
+	dst := make([]string, f.length)
+	return dst, f.DecompressInto(dst)
 }
 
 func (f *fsstArray) Slice(start, end uint64) (EncodedArray[string], error) {

@@ -181,8 +181,10 @@ func (a *alprdArray[T]) ValueAt(offset uint64) T {
 	return a.decode(offset)
 }
 
-func (a *alprdArray[T]) Decompress() ([]T, error) {
-	dst := make([]T, a.length)
+func (a *alprdArray[T]) DecompressInto(dst []T) error {
+	if err := checkDstLen(dst, a.length); err != nil {
+		return err
+	}
 	for i := uint64(0); i < a.length; i++ {
 		code := unpackUnsigned(a.leftParts, i*uint64(a.leftBitWidth), uint(a.leftBitWidth))
 		left := uint64(a.dict[code])
@@ -197,7 +199,12 @@ func (a *alprdArray[T]) Decompress() ([]T, error) {
 			dst[idx] = a.floatFromBits((left << a.rightBitWidth) | right)
 		}
 	}
-	return dst, nil
+	return nil
+}
+
+func (a *alprdArray[T]) Decompress() ([]T, error) {
+	dst := make([]T, a.length)
+	return dst, a.DecompressInto(dst)
 }
 
 func (a *alprdArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {

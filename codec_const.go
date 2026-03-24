@@ -28,12 +28,19 @@ func (c *constArray[T]) ValueAt(offset uint64) T {
 	return c.value
 }
 
-func (c *constArray[T]) Decompress() ([]T, error) {
-	dst := make([]T, c.length)
-	for i := range dst {
+func (c *constArray[T]) DecompressInto(dst []T) error {
+	if err := checkDstLen(dst, c.length); err != nil {
+		return err
+	}
+	for i := uint64(0); i < c.length; i++ {
 		dst[i] = c.value
 	}
-	return dst, nil
+	return nil
+}
+
+func (c *constArray[T]) Decompress() ([]T, error) {
+	dst := make([]T, c.length)
+	return dst, c.DecompressInto(dst)
 }
 
 func (c *constArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {

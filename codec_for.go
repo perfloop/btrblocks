@@ -96,15 +96,19 @@ func (f *forArray[T]) ValueAt(offset uint64) T {
 	return f.child.ValueAt(offset) + f.min
 }
 
-func (f *forArray[T]) Decompress() ([]T, error) {
-	dst, err := f.child.Decompress()
-	if err != nil {
-		return nil, err
+func (f *forArray[T]) DecompressInto(dst []T) error {
+	if err := f.child.DecompressInto(dst); err != nil {
+		return err
 	}
-	for i := range dst {
+	for i := uint64(0); i < f.child.Length(); i++ {
 		dst[i] += f.min
 	}
-	return dst, nil
+	return nil
+}
+
+func (f *forArray[T]) Decompress() ([]T, error) {
+	dst := make([]T, f.child.Length())
+	return dst, f.DecompressInto(dst)
 }
 
 func (f *forArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {

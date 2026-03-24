@@ -29,25 +29,6 @@ func bitpackEncodedSize(length uint64, bitWidth uint) (uint64, bool) {
 	return uint64(headerSize) + 1 + uint64(bodySize), true
 }
 
-func newBitPackedArrayAtWidth[T UnsignedInteger](arr interface {
-	Length() uint64
-	ValueAt(uint64) T
-}, bitWidth uint) *bitPackedArray[T] {
-	codec := &bitPackedArray[T]{length: arr.Length(), bitWidth: bitWidth}
-	if arr.Length() == 0 {
-		return codec
-	}
-	if codec.bitWidth == 0 {
-		return codec
-	}
-
-	codec.buf = make([]byte, packedByteSize(codec.length, codec.bitWidth))
-	for i := uint64(0); i < arr.Length(); i++ {
-		packUnsigned(codec.buf, i*uint64(codec.bitWidth), codec.bitWidth, uint64(arr.ValueAt(i)))
-	}
-	return codec
-}
-
 func unsignedBitWidthHistogram[T UnsignedInteger](arr interface {
 	Length() uint64
 	ValueAt(uint64) T
@@ -86,27 +67,31 @@ func findBestBitpackWidth[T UnsignedInteger](histogram []uint64) uint {
 
 func buildBitPackedArray[T UnsignedInteger](arr array.Array[T], _ planContext) (EncodedArray[T], error) {
 	bitWidth := findBestBitpackWidth[T](unsignedBitWidthHistogram(arr))
-	codec := newBitPackedArrayAtWidth(arr, bitWidth)
-
-	patchCount := uint64(0)
-	for i := uint64(0); i < arr.Length(); i++ {
-		if bitWidthForUnsigned(uint64(arr.ValueAt(i))) > bitWidth {
-			patchCount++
-		}
-	}
-	if patchCount == 0 {
+	n := arr.Length()
+	codec := &bitPackedArray[T]{length: n, bitWidth: bitWidth}
+	if n == 0 {
 		return codec, nil
 	}
 
-	patchIdx := make([]uint64, 0, patchCount)
-	patchVals := make([]T, 0, patchCount)
-	for i := uint64(0); i < arr.Length(); i++ {
+	// Single pass: pack values and collect patches simultaneously.
+	if bitWidth > 0 {
+		codec.buf = make([]byte, packedByteSize(n, bitWidth))
+	}
+	var patchIdx []uint64
+	var patchVals []T
+	for i := uint64(0); i < n; i++ {
 		value := arr.ValueAt(i)
-		if bitWidthForUnsigned(uint64(value)) <= bitWidth {
-			continue
+		v := uint64(value)
+		if bitWidth > 0 {
+			packUnsigned(codec.buf, i*uint64(bitWidth), bitWidth, v)
 		}
-		patchIdx = append(patchIdx, i)
-		patchVals = append(patchVals, value)
+		if bitWidthForUnsigned(v) > bitWidth {
+			patchIdx = append(patchIdx, i)
+			patchVals = append(patchVals, value)
+		}
+	}
+	if len(patchIdx) == 0 {
+		return codec, nil
 	}
 
 	patchIdxCodec, err := buildBitpackPatchIndices(patchIdx)
@@ -117,7 +102,7 @@ func buildBitPackedArray[T UnsignedInteger](arr array.Array[T], _ planContext) (
 	if err != nil {
 		return nil, err
 	}
-	patches, err := newPatches(arr.Length(), 0, patchIdxCodec, patchValCodec)
+	patches, err := newPatches(n, 0, patchIdxCodec, patchValCodec)
 	if err != nil {
 		return nil, err
 	}
@@ -176,18 +161,23 @@ func (c *bitPackedArray[T]) ValueAt(offset uint64) T {
 	return T(unpackUnsigned(c.buf, offset*uint64(c.bitWidth), c.bitWidth))
 }
 
+func (c *bitPackedArray[T]) DecompressInto(dst []T) error {
+	if err := checkDstLen(dst, c.length); err != nil {
+		return err
+	}
+	if c.bitWidth == 0 {
+		clear(dst[:c.length])
+		return nil
+	}
+	for i := uint64(0); i < c.length; i++ {
+		dst[i] = T(unpackUnsigned(c.buf, i*uint64(c.bitWidth), c.bitWidth))
+	}
+	return c.patches.Apply(dst[:c.length])
+}
+
 func (c *bitPackedArray[T]) Decompress() ([]T, error) {
 	dst := make([]T, c.length)
-	if c.bitWidth == 0 {
-		return dst, nil
-	}
-	for i := range dst {
-		dst[i] = T(unpackUnsigned(c.buf, uint64(i)*uint64(c.bitWidth), c.bitWidth))
-	}
-	if err := c.patches.Apply(dst); err != nil {
-		return nil, err
-	}
-	return dst, nil
+	return dst, c.DecompressInto(dst)
 }
 
 func (c *bitPackedArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {

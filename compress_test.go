@@ -38,12 +38,16 @@ func (c *testEncodedArrayUint32) ValueAt(offset uint64) uint32 {
 	return 0
 }
 
+func (c *testEncodedArrayUint32) DecompressInto(dst []uint32) error {
+	for i := uint64(0); i < c.length; i++ {
+		dst[i] = c.ValueAt(i)
+	}
+	return nil
+}
+
 func (c *testEncodedArrayUint32) Decompress() ([]uint32, error) {
 	dst := make([]uint32, c.length)
-	for i := range dst {
-		dst[i] = c.ValueAt(uint64(i))
-	}
-	return dst, nil
+	return dst, c.DecompressInto(dst)
 }
 
 func (c *testEncodedArrayUint32) Slice(start, end uint64) (EncodedArray[uint32], error) {
@@ -101,10 +105,14 @@ func (c *spyArray[T]) ValueAt(offset uint64) T {
 	return c.values[offset]
 }
 
+func (c *spyArray[T]) DecompressInto(dst []T) error {
+	copy(dst, c.values)
+	return nil
+}
+
 func (c *spyArray[T]) Decompress() ([]T, error) {
 	dst := make([]T, len(c.values))
-	copy(dst, c.values)
-	return dst, nil
+	return dst, c.DecompressInto(dst)
 }
 
 func (c *spyArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {

@@ -15,6 +15,13 @@ var (
 	errDataEmpty        = errors.New("data is empty")
 )
 
+func checkDstLen[T Integer | Float | String](dst []T, need uint64) error {
+	if uint64(len(dst)) < need {
+		return fmt.Errorf("codec: dst length = %d, need >= %d", len(dst), need)
+	}
+	return nil
+}
+
 const (
 	versionNumber                   = 1
 	headerSize                      = 24
@@ -115,8 +122,10 @@ type EncodedArray[T Integer | Float | String] interface {
 	BinarySize() uint64
 	Length() uint64
 	PType() PType
-	// Decompress recursively decodes the entire tree into a flat slice.
+	// Decompress recursively decodes the entire tree into a newly allocated slice.
 	Decompress() ([]T, error)
+	// DecompressInto recursively decodes into dst, which must have length >= Length().
+	DecompressInto(dst []T) error
 }
 
 // header is the fixed encoded-array stream prefix written before each node body.
