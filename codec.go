@@ -205,7 +205,7 @@ func validateHeaderForType[T Integer | Float | String](h header) error {
 		return fmt.Errorf("codec: reserved byte = %d, want 0", h.Reserved)
 	}
 	switch h.Kind {
-	case CodecTypeConst, CodecTypeRaw, CodecTypeDict, CodecTypeRunEnd, CodecTypeZigZag, CodecTypeBitpack, CodecTypeFor, CodecTypeSequence, CodecTypeALP:
+	case CodecTypeConst, CodecTypeRaw, CodecTypeDict, CodecTypeRunEnd, CodecTypeZigZag, CodecTypeBitpack, CodecTypeFor, CodecTypeSequence, CodecTypeALP, CodecTypeFSST:
 	default:
 		return fmt.Errorf("codec: unknown kind = %d", h.Kind)
 	}
@@ -259,6 +259,8 @@ func readEncodedArrayWithHeader[T Integer | Float | String](r io.Reader, h heade
 		return readAnySequenceArray[T](r, h)
 	case CodecTypeALP:
 		return readAnyALPArray[T](r, h)
+	case CodecTypeFSST:
+		return readAnyFSSTArray[T](r, h)
 	default:
 		return nil, fmt.Errorf("codec: unknown kind = %d", h.Kind)
 	}

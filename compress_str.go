@@ -40,6 +40,11 @@ func (stringCompressor) Schemes() []scheme[string, stringStats] {
 				return buildRunEndArray(arr, ctx, cmpStrings[string])
 			},
 		},
+		registeredScheme[string, stringStats]{
+			kind:     CodecTypeFSST,
+			estimate: estimateFSST,
+			build:    buildFSSTArray,
+		},
 	}
 }
 

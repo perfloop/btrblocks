@@ -45,6 +45,7 @@ const (
 	_ // reserved for removed sparse encoding kind
 	CodecTypeSequence
 	CodecTypeALP
+	CodecTypeFSST
 )
 
 func (k CodeType) String() string {
@@ -67,6 +68,8 @@ func (k CodeType) String() string {
 		return "sequence"
 	case CodecTypeALP:
 		return "alp"
+	case CodecTypeFSST:
+		return "fsst"
 	default:
 		return "unknown"
 	}
