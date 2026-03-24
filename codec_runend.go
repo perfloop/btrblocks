@@ -34,7 +34,7 @@ func validateRunEndChildren[T Integer | Float | String](length uint64, runs Enco
 
 func (r *runEndArray[T]) Encoding() CodeType { return CodecTypeRunEnd }
 func (r *runEndArray[T]) Length() uint64     { return r.length }
-func (r *runEndArray[T]) PType() PType       { return pTypeForType[T]() }
+func (r *runEndArray[T]) PType() PType       { return array.PTypeForType[T]() }
 
 func (r *runEndArray[T]) BinarySize() uint64 {
 	return uint64(headerSize) + r.runs.BinarySize() + r.ends.BinarySize()
@@ -106,7 +106,7 @@ func (r *runEndArray[T]) WriteTo(w io.Writer) (int64, error) {
 	n, err := header{
 		Version:  versionNumber,
 		Kind:     CodecTypeRunEnd,
-		ElemType: pTypeForType[T](),
+		ElemType: array.PTypeForType[T](),
 		Length:   r.length,
 		BodySize: 0,
 	}.WriteTo(w)

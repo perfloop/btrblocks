@@ -3,22 +3,17 @@ package btrblocks
 import "github.com/axiomhq/btrblocks/array"
 
 // unsignedIntCompressor registers the dense unsigned-integer schemes and stats policy.
-type unsignedIntCompressor[T UnsignedInteger] struct {
-	distinct intDistinctValues[T]
-}
+type unsignedIntCompressor[T UnsignedInteger] struct{}
 
 func (c *unsignedIntCompressor[T]) ComputeStats(arr array.Array[T]) unsignedStats[T] {
-	stats, distinct := computeUnsignedStats(arr)
-	c.distinct = distinct
-	return stats
+	return computeUnsignedStats(arr)
 }
 
 func (*unsignedIntCompressor[T]) DefaultScheme() scheme[T, unsignedStats[T]] {
 	return rawScheme[T, unsignedStats[T]]()
 }
 
-func (c *unsignedIntCompressor[T]) Schemes() []scheme[T, unsignedStats[T]] {
-	distinct := c.distinct
+func (c *unsignedIntCompressor[T]) Schemes(stats unsignedStats[T]) []scheme[T, unsignedStats[T]] {
 	return []scheme[T, unsignedStats[T]]{
 		registeredScheme[T, unsignedStats[T]]{
 			kind: CodecTypeConst,
@@ -58,7 +53,7 @@ func (c *unsignedIntCompressor[T]) Schemes() []scheme[T, unsignedStats[T]] {
 				return estimateIntegerDict[T, unsignedStats[T]](stats.base.distinctCount, stats.base.avgRunLength)(stats, ctx)
 			},
 			build: func(arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
-				return buildIntegerDictFromDistinct(arr, distinct, ctx)
+				return buildIntegerDictFromDistinct(arr, stats.distinct, ctx)
 			},
 		},
 		registeredScheme[T, unsignedStats[T]]{

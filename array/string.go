@@ -96,7 +96,7 @@ func (c *Strings[T]) CopyTo(dst []string) {
 }
 
 func (c *Strings[T]) Slice(start, end uint64) (Array[string], error) {
-	if err := validateSliceBounds(c.Length(), start, end); err != nil {
+	if err := ValidateSliceBounds(c.Length(), start, end); err != nil {
 		return nil, err
 	}
 	base := c.offsets[start]
@@ -125,10 +125,10 @@ func (c *Strings[T]) bodySize() uint64 {
 
 func (c *Strings[T]) header() Header {
 	return Header{
-		Version:  1,
-		PType:    PTypeString,
-		Length:   c.Length(),
-		BodySize: c.bodySize(),
+		Version: 1,
+		PType:   PTypeString,
+		Length:  c.Length(),
+		NBytes:  c.bodySize(),
 	}
 }
 
@@ -177,7 +177,7 @@ func readStringsWithHeader(r io.Reader, h Header) (Array[string], error) {
 	if h.PType != PTypeString {
 		return nil, errors.New("array: not a string array")
 	}
-	if h.BodySize < 5 || h.Length == ^uint64(0) {
+	if h.NBytes < 5 || h.Length == ^uint64(0) {
 		return nil, errors.New("array: invalid string body")
 	}
 	numOffsets := h.Length + 1
@@ -185,10 +185,10 @@ func readStringsWithHeader(r io.Reader, h Header) (Array[string], error) {
 	if err := binary.Read(r, binary.LittleEndian, &bufLen); err != nil {
 		return nil, err
 	}
-	if uint64(bufLen)+4 > h.BodySize {
+	if uint64(bufLen)+4 > h.NBytes {
 		return nil, errors.New("array: invalid string body")
 	}
-	offsetsSize := h.BodySize - 4 - uint64(bufLen)
+	offsetsSize := h.NBytes - 4 - uint64(bufLen)
 	if offsetsSize == 0 {
 		return nil, errors.New("array: invalid string body")
 	}

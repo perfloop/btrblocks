@@ -13,7 +13,7 @@ func (stringCompressor) DefaultScheme() scheme[string, stringStats] {
 	return rawScheme[string, stringStats]()
 }
 
-func (stringCompressor) Schemes() []scheme[string, stringStats] {
+func (stringCompressor) Schemes(_ stringStats) []scheme[string, stringStats] {
 	return []scheme[string, stringStats]{
 		registeredScheme[string, stringStats]{
 			kind: CodecTypeConst,

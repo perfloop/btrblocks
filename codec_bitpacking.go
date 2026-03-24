@@ -33,7 +33,7 @@ func unsignedBitWidthHistogram[T UnsignedInteger](arr interface {
 	Length() uint64
 	ValueAt(uint64) T
 }) []uint64 {
-	histogram := make([]uint64, pTypeForType[T]().ByteWidth()*8+1)
+	histogram := make([]uint64, array.PTypeForType[T]().ByteWidth()*8+1)
 	for i := uint64(0); i < arr.Length(); i++ {
 		histogram[bitWidthForUnsigned(uint64(arr.ValueAt(i)))]++
 	}
@@ -41,7 +41,7 @@ func unsignedBitWidthHistogram[T UnsignedInteger](arr interface {
 }
 
 func bytesPerBitpackException[T UnsignedInteger]() uint64 {
-	return uint64(pTypeForType[T]().ByteWidth() + 4)
+	return uint64(array.PTypeForType[T]().ByteWidth() + 4)
 }
 
 func findBestBitpackWidth[T UnsignedInteger](histogram []uint64) uint {
@@ -138,7 +138,7 @@ func isAllSameUnsigned[T UnsignedInteger](values []T) bool {
 
 func (c *bitPackedArray[T]) Encoding() CodeType { return CodecTypeBitpack }
 func (c *bitPackedArray[T]) Length() uint64     { return c.length }
-func (c *bitPackedArray[T]) PType() PType       { return pTypeForType[T]() }
+func (c *bitPackedArray[T]) PType() PType       { return array.PTypeForType[T]() }
 func (c *bitPackedArray[T]) BinarySize() uint64 {
 	size := uint64(headerSize) + 1 + uint64(len(c.buf))
 	if c.patches != nil {
@@ -181,7 +181,7 @@ func (c *bitPackedArray[T]) Decompress() ([]T, error) {
 }
 
 func (c *bitPackedArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
-	if err := validateSliceBounds(c.length, start, end); err != nil {
+	if err := array.ValidateSliceBounds(c.length, start, end); err != nil {
 		return nil, err
 	}
 	length := end - start
@@ -209,7 +209,7 @@ func (c *bitPackedArray[T]) WriteTo(w io.Writer) (int64, error) {
 	n, err := header{
 		Version:  versionNumber,
 		Kind:     CodecTypeBitpack,
-		ElemType: pTypeForType[T](),
+		ElemType: array.PTypeForType[T](),
 		Flags:    flags,
 		Length:   c.length,
 		BodySize: 1 + uint64(len(c.buf)),
@@ -297,7 +297,7 @@ func readBitPackedArray[T UnsignedInteger](r io.Reader, h header) (EncodedArray[
 		return nil, err
 	}
 	bitWidth := uint(widthByte[0])
-	maxBitWidth := uint(pTypeForType[T]().ByteWidth() * 8)
+	maxBitWidth := uint(array.PTypeForType[T]().ByteWidth() * 8)
 	if bitWidth > maxBitWidth {
 		return nil, fmt.Errorf("codec: bit width = %d exceeds %T width", bitWidth, *new(T))
 	}

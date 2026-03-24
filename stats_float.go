@@ -38,16 +38,22 @@ type floatDistinctValues[T Float] struct {
 	values []T
 }
 
+// floatStats extends baseStats with pre-computed distinct values for float arrays.
+type floatStats[T Float] struct {
+	base     baseStats[T]
+	distinct floatDistinctValues[T]
+}
+
+func (s floatStats[T]) Source() array.Array[T]                { return s.base.Source() }
+func (s floatStats[T]) Sample(ctx planContext) array.Array[T] { return s.base.Sample(ctx) }
+
 // computeFloatStats keeps exact distinct counts using bit-pattern equality so
 // dict/const decisions remain bit-exact, but run detection follows normal float
 // equality to match the Rust planner's RLE heuristic.
-//
-// It also returns the full distinct-values map so that dict encoding can skip
-// the redundant array scan.
-func computeFloatStats[T Float](arr array.Array[T]) (baseStats[T], floatDistinctValues[T]) {
+func computeFloatStats[T Float](arr array.Array[T]) floatStats[T] {
 	n := arr.Length()
 	if n == 0 {
-		return baseStats[T]{src: arr}, floatDistinctValues[T]{}
+		return floatStats[T]{base: baseStats[T]{src: arr}}
 	}
 
 	type entry struct {
@@ -102,19 +108,20 @@ func computeFloatStats[T Float](arr array.Array[T]) (baseStats[T], floatDistinct
 		byKey[key] = item.ordinal
 	}
 
-	stats := baseStats[T]{
-		src:            arr,
-		isConst:        len(counts) == 1 && topCount == n,
-		distinctCount:  uint64(len(counts)),
-		distinctRatio:  float64(len(counts)) / float64(n),
-		nonFiniteRatio: float64(nonFiniteCount) / float64(n),
-		avgRunLength:   float64(n) / float64(runs),
-		topValue:       topValue,
-		topCount:       topCount,
+	return floatStats[T]{
+		base: baseStats[T]{
+			src:            arr,
+			isConst:        len(counts) == 1 && topCount == n,
+			distinctCount:  uint64(len(counts)),
+			distinctRatio:  float64(len(counts)) / float64(n),
+			nonFiniteRatio: float64(nonFiniteCount) / float64(n),
+			avgRunLength:   float64(n) / float64(runs),
+			topValue:       topValue,
+			topCount:       topCount,
+		},
+		distinct: floatDistinctValues[T]{
+			byKey:  byKey,
+			values: distinctValues,
+		},
 	}
-	distinct := floatDistinctValues[T]{
-		byKey:  byKey,
-		values: distinctValues,
-	}
-	return stats, distinct
 }

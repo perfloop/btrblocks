@@ -18,7 +18,7 @@ func newRawArray[T Integer | Float | String](arr array.Array[T]) *rawArray[T] {
 
 func (r *rawArray[T]) Encoding() CodeType { return CodecTypeRaw }
 func (r *rawArray[T]) Length() uint64     { return r.arr.Length() }
-func (r *rawArray[T]) PType() PType       { return pTypeForType[T]() }
+func (r *rawArray[T]) PType() PType       { return array.PTypeForType[T]() }
 func (r *rawArray[T]) BinarySize() uint64 { return uint64(headerSize) + r.arr.BinarySize() }
 
 func (r *rawArray[T]) ValueAt(offset uint64) T {
@@ -49,7 +49,7 @@ func (r *rawArray[T]) WriteTo(w io.Writer) (int64, error) {
 	n, err := header{
 		Version:  versionNumber,
 		Kind:     CodecTypeRaw,
-		ElemType: pTypeForType[T](),
+		ElemType: array.PTypeForType[T](),
 		Length:   r.arr.Length(),
 		BodySize: r.arr.BinarySize(),
 	}.WriteTo(w)

@@ -3,22 +3,17 @@ package btrblocks
 import "github.com/axiomhq/btrblocks/array"
 
 // signedIntCompressor registers the dense signed-integer schemes and stats policy.
-type signedIntCompressor[T SignedInteger] struct {
-	distinct intDistinctValues[T]
-}
+type signedIntCompressor[T SignedInteger] struct{}
 
 func (c *signedIntCompressor[T]) ComputeStats(arr array.Array[T]) signedStats[T] {
-	stats, distinct := computeSignedStats(arr)
-	c.distinct = distinct
-	return stats
+	return computeSignedStats(arr)
 }
 
 func (*signedIntCompressor[T]) DefaultScheme() scheme[T, signedStats[T]] {
 	return rawScheme[T, signedStats[T]]()
 }
 
-func (c *signedIntCompressor[T]) Schemes() []scheme[T, signedStats[T]] {
-	distinct := c.distinct
+func (c *signedIntCompressor[T]) Schemes(stats signedStats[T]) []scheme[T, signedStats[T]] {
 	return []scheme[T, signedStats[T]]{
 		registeredScheme[T, signedStats[T]]{
 			kind: CodecTypeConst,
@@ -51,7 +46,7 @@ func (c *signedIntCompressor[T]) Schemes() []scheme[T, signedStats[T]] {
 				return estimateIntegerDict[T, signedStats[T]](stats.base.distinctCount, stats.base.avgRunLength)(stats, ctx)
 			},
 			build: func(arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
-				return buildIntegerDictFromDistinct(arr, distinct, ctx)
+				return buildIntegerDictFromDistinct(arr, stats.distinct, ctx)
 			},
 		},
 		registeredScheme[T, signedStats[T]]{

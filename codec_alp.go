@@ -154,23 +154,23 @@ func (a alpEncodedArray[T, I]) CopyTo(dst []I) {
 }
 
 func (a alpEncodedArray[T, I]) BinarySize() uint64 {
-	return primitiveArrayHeaderSize + a.length*uint64(pTypeForType[I]().ByteWidth())
+	return array.HeaderSize + a.length*uint64(array.PTypeForType[I]().ByteWidth())
 }
 
 func (a alpEncodedArray[T, I]) Length() uint64 { return a.length }
-func (a alpEncodedArray[T, I]) PType() PType   { return pTypeForType[I]() }
+func (a alpEncodedArray[T, I]) PType() PType   { return array.PTypeForType[I]() }
 
 func (a alpEncodedArray[T, I]) Slice(start, end uint64) (array.Array[I], error) {
 	return materializeSlice(a, start, end)
 }
 
 func (a alpEncodedArray[T, I]) WriteTo(w io.Writer) (int64, error) {
-	bodySize := a.length * uint64(pTypeForType[I]().ByteWidth())
+	bodySize := a.length * uint64(array.PTypeForType[I]().ByteWidth())
 	n, err := array.Header{
-		Version:  versionNumber,
-		PType:    array.PTypeForType[I](),
-		Length:   a.length,
-		BodySize: bodySize,
+		Version: versionNumber,
+		PType:   array.PTypeForType[I](),
+		Length:  a.length,
+		NBytes:  bodySize,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
@@ -232,7 +232,7 @@ const alpBodySize = 2
 
 func (a *alpArray[T, I]) Encoding() CodeType { return CodecTypeALP }
 func (a *alpArray[T, I]) Length() uint64     { return a.length }
-func (a *alpArray[T, I]) PType() PType       { return pTypeForType[T]() }
+func (a *alpArray[T, I]) PType() PType       { return array.PTypeForType[T]() }
 func (a *alpArray[T, I]) BinarySize() uint64 {
 	size := uint64(headerSize) + alpBodySize + a.encoded.BinarySize()
 	if a.patches != nil {
@@ -271,7 +271,7 @@ func (a *alpArray[T, I]) Decompress() ([]T, error) {
 }
 
 func (a *alpArray[T, I]) Slice(start, end uint64) (EncodedArray[T], error) {
-	if err := validateSliceBounds(a.length, start, end); err != nil {
+	if err := array.ValidateSliceBounds(a.length, start, end); err != nil {
 		return nil, err
 	}
 	encoded, err := a.encoded.Slice(start, end)
@@ -293,7 +293,7 @@ func (a *alpArray[T, I]) WriteTo(w io.Writer) (int64, error) {
 	n, err := header{
 		Version:  versionNumber,
 		Kind:     CodecTypeALP,
-		ElemType: pTypeForType[T](),
+		ElemType: array.PTypeForType[T](),
 		Flags:    flags,
 		Length:   a.length,
 		BodySize: alpBodySize,

@@ -30,23 +30,23 @@ func (a zigzagEncodedArray[T, U]) CopyTo(dst []U) {
 }
 
 func (a zigzagEncodedArray[T, U]) BinarySize() uint64 {
-	return primitiveArrayHeaderSize + a.length*uint64(pTypeForType[U]().ByteWidth())
+	return array.HeaderSize + a.length*uint64(array.PTypeForType[U]().ByteWidth())
 }
 
 func (a zigzagEncodedArray[T, U]) Length() uint64 { return a.length }
-func (a zigzagEncodedArray[T, U]) PType() PType   { return pTypeForType[U]() }
+func (a zigzagEncodedArray[T, U]) PType() PType   { return array.PTypeForType[U]() }
 
 func (a zigzagEncodedArray[T, U]) Slice(start, end uint64) (array.Array[U], error) {
 	return materializeSlice(a, start, end)
 }
 
 func (a zigzagEncodedArray[T, U]) WriteTo(w io.Writer) (int64, error) {
-	bodySize := a.length * uint64(pTypeForType[U]().ByteWidth())
+	bodySize := a.length * uint64(array.PTypeForType[U]().ByteWidth())
 	n, err := array.Header{
-		Version:  versionNumber,
-		PType:    array.PTypeForType[U](),
-		Length:   a.length,
-		BodySize: bodySize,
+		Version: versionNumber,
+		PType:   array.PTypeForType[U](),
+		Length:  a.length,
+		NBytes:  bodySize,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
@@ -116,7 +116,7 @@ func zigzagMaxEncoded[T SignedInteger](length uint64, valueAt func(uint64) T) ui
 
 func (z *zigzagArray[T, U]) Encoding() CodeType { return CodecTypeZigZag }
 func (z *zigzagArray[T, U]) Length() uint64     { return z.child.Length() }
-func (z *zigzagArray[T, U]) PType() PType       { return pTypeForType[T]() }
+func (z *zigzagArray[T, U]) PType() PType       { return array.PTypeForType[T]() }
 func (z *zigzagArray[T, U]) BinarySize() uint64 { return uint64(headerSize) + z.child.BinarySize() }
 
 func (z *zigzagArray[T, U]) ValueAt(offset uint64) T {
@@ -167,7 +167,7 @@ func (z *zigzagArray[T, U]) WriteTo(w io.Writer) (int64, error) {
 	n, err := header{
 		Version:  versionNumber,
 		Kind:     CodecTypeZigZag,
-		ElemType: pTypeForType[T](),
+		ElemType: array.PTypeForType[T](),
 		Length:   z.child.Length(),
 		BodySize: 0,
 	}.WriteTo(w)

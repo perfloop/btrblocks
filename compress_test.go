@@ -51,7 +51,7 @@ func (c *testEncodedArrayUint32) Decompress() ([]uint32, error) {
 }
 
 func (c *testEncodedArrayUint32) Slice(start, end uint64) (EncodedArray[uint32], error) {
-	if err := validateSliceBounds(c.length, start, end); err != nil {
+	if err := array.ValidateSliceBounds(c.length, start, end); err != nil {
 		return nil, err
 	}
 	return &testEncodedArrayUint32{kind: c.kind, length: end - start, size: c.size}, nil
@@ -85,7 +85,7 @@ func (testCompressorUint32) DefaultScheme() scheme[uint32, testStatsUint32] {
 	return rawScheme[uint32, testStatsUint32]()
 }
 
-func (c testCompressorUint32) Schemes() []scheme[uint32, testStatsUint32] {
+func (c testCompressorUint32) Schemes(_ testStatsUint32) []scheme[uint32, testStatsUint32] {
 	return c.schemes
 }
 
@@ -95,7 +95,7 @@ func (testCompressorUint32) IsExcluded(ctx planContext, kind CodeType) bool {
 
 func (c *spyArray[T]) Encoding() CodeType { return CodecTypeRaw }
 func (c *spyArray[T]) Length() uint64     { return uint64(len(c.values)) }
-func (c *spyArray[T]) PType() PType       { return pTypeForType[T]() }
+func (c *spyArray[T]) PType() PType       { return array.PTypeForType[T]() }
 func (c *spyArray[T]) BinarySize() uint64 { return 0 }
 
 func (c *spyArray[T]) ValueAt(offset uint64) T {
@@ -116,7 +116,7 @@ func (c *spyArray[T]) Decompress() ([]T, error) {
 }
 
 func (c *spyArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
-	if err := validateSliceBounds(uint64(len(c.values)), start, end); err != nil {
+	if err := array.ValidateSliceBounds(uint64(len(c.values)), start, end); err != nil {
 		return nil, err
 	}
 	values := append([]T(nil), c.values[int(start):int(end)]...)

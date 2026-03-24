@@ -23,10 +23,9 @@ func checkDstLen[T Integer | Float | String](dst []T, need uint64) error {
 }
 
 const (
-	versionNumber                   = 1
-	headerSize                      = 24
-	primitiveArrayHeaderSize        = 20
-	flagBitpackHasPatches    uint32 = 1 << 0
+	versionNumber                = 1
+	headerSize                   = 24
+	flagBitpackHasPatches uint32 = 1 << 0
 	flagALPHasPatches        uint32 = 1 << 0
 )
 
@@ -129,6 +128,14 @@ type EncodedArray[T Integer | Float | String] interface {
 }
 
 // header is the fixed encoded-array stream prefix written before each node body.
+//
+// BodySize is the number of bytes of inline data written directly after this
+// header and before any recursive EncodedArray children or patch streams.
+// For leaf-wrapping codecs (raw, const) this equals the wrapped array.Array's
+// BinarySize (which includes the array header). For codecs that delegate to
+// recursive children (dict, runend, zigzag) BodySize is 0. For codecs with
+// fixed inline fields followed by children (for, bitpack, alp, alprd, fsst,
+// sequence) BodySize covers only the inline portion.
 type header struct {
 	Version  uint8
 	Kind     CodeType
@@ -171,21 +178,11 @@ func (h header) WriteTo(w io.Writer) (int64, error) {
 	return int64(n), err
 }
 
-func validateSliceBounds(length, start, end uint64) error {
-	if start > end {
-		return fmt.Errorf("codec: slice start = %d, want <= %d", start, end)
-	}
-	if end > length {
-		return fmt.Errorf("codec: slice end = %d, want <= %d", end, length)
-	}
-	return nil
-}
-
 func materializeSlice[T Integer | Float | String](src interface {
 	Length() uint64
 	ValueAt(uint64) T
 }, start, end uint64) (array.Array[T], error) {
-	if err := validateSliceBounds(src.Length(), start, end); err != nil {
+	if err := array.ValidateSliceBounds(src.Length(), start, end); err != nil {
 		return nil, err
 	}
 	values := make([]T, end-start)
@@ -234,7 +231,7 @@ func validateHeaderForType[T Integer | Float | String](h header) error {
 		return fmt.Errorf("codec: unsupported flags = 0x%x", h.Flags)
 	}
 
-	expected := pTypeForType[T]()
+	expected := array.PTypeForType[T]()
 	if h.ElemType != expected {
 		return fmt.Errorf("codec: element type = %v, want %v", h.ElemType, expected)
 	}

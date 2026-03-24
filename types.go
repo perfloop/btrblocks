@@ -162,10 +162,6 @@ func normalizeOptions(opts Options) Options {
 	return opts
 }
 
-func pTypeForType[T Integer | Float | String]() PType {
-	return array.PTypeForType[T]()
-}
-
 func cmpFloats[T Float](a, b T) bool {
 	switch av := any(a).(type) {
 	case float32:

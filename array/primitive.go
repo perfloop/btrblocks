@@ -48,7 +48,7 @@ func (c *Primitives[T]) PType() PType            { return c.pType }
 func (c *Primitives[T]) bodySize() uint64        { return uint64(len(c.data)) * uint64(c.width()) }
 
 func (c *Primitives[T]) Slice(start, end uint64) (Array[T], error) {
-	if err := validateSliceBounds(c.Length(), start, end); err != nil {
+	if err := ValidateSliceBounds(c.Length(), start, end); err != nil {
 		return nil, err
 	}
 	return &Primitives[T]{pType: c.pType, data: c.data[int(start):int(end)]}, nil
@@ -70,10 +70,10 @@ func (c *Primitives[T]) writeBody(w io.Writer) (int64, error) {
 
 func (c *Primitives[T]) WriteTo(w io.Writer) (int64, error) {
 	hn, err := Header{
-		Version:  1,
-		PType:    c.pType,
-		Length:   c.Length(),
-		BodySize: c.bodySize(),
+		Version: 1,
+		PType:   c.pType,
+		Length:  c.Length(),
+		NBytes:  c.bodySize(),
 	}.WriteTo(w)
 	if err != nil {
 		return hn, err
@@ -96,7 +96,7 @@ func readPrimitivesWithHeader[T PrimitiveType](r io.Reader, h Header) (*Primitiv
 		return nil, fmt.Errorf("array: unknown PType %v", h.PType)
 	}
 	if h.Length == 0 {
-		if h.BodySize != 0 {
+		if h.NBytes != 0 {
 			return nil, errors.New("array: invalid primitive body size")
 		}
 		return &Primitives[T]{pType: h.PType, data: nil}, nil
@@ -105,11 +105,11 @@ func readPrimitivesWithHeader[T PrimitiveType](r io.Reader, h Header) (*Primitiv
 	if h.Length > platformSliceLimit()/width64 {
 		return nil, errors.New("array: primitive payload exceeds platform limit")
 	}
-	if h.BodySize != h.Length*width64 {
+	if h.NBytes != h.Length*width64 {
 		return nil, errors.New("array: invalid primitive body size")
 	}
 	n := int(h.Length)
-	bodySize := int(h.BodySize)
+	bodySize := int(h.NBytes)
 	data := make([]T, n)
 	b := unsafe.Slice((*byte)(unsafe.Pointer(&data[0])), bodySize)
 	if _, err := io.ReadFull(r, b); err != nil {

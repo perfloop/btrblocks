@@ -33,23 +33,23 @@ func (a forEncodedArray[T]) CopyTo(dst []T) {
 }
 
 func (a forEncodedArray[T]) BinarySize() uint64 {
-	return primitiveArrayHeaderSize + a.length*uint64(pTypeForType[T]().ByteWidth())
+	return array.HeaderSize + a.length*uint64(array.PTypeForType[T]().ByteWidth())
 }
 
 func (a forEncodedArray[T]) Length() uint64 { return a.length }
-func (a forEncodedArray[T]) PType() PType   { return pTypeForType[T]() }
+func (a forEncodedArray[T]) PType() PType   { return array.PTypeForType[T]() }
 
 func (a forEncodedArray[T]) Slice(start, end uint64) (array.Array[T], error) {
 	return materializeSlice(a, start, end)
 }
 
 func (a forEncodedArray[T]) WriteTo(w io.Writer) (int64, error) {
-	bodySize := a.length * uint64(pTypeForType[T]().ByteWidth())
+	bodySize := a.length * uint64(array.PTypeForType[T]().ByteWidth())
 	n, err := array.Header{
-		Version:  versionNumber,
-		PType:    array.PTypeForType[T](),
-		Length:   a.length,
-		BodySize: bodySize,
+		Version: versionNumber,
+		PType:   array.PTypeForType[T](),
+		Length:  a.length,
+		NBytes:  bodySize,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
@@ -86,7 +86,7 @@ func (a forEncodedArray[T]) WriteTo(w io.Writer) (int64, error) {
 
 func (f *forArray[T]) Encoding() CodeType { return CodecTypeFor }
 func (f *forArray[T]) Length() uint64     { return f.child.Length() }
-func (f *forArray[T]) PType() PType       { return pTypeForType[T]() }
+func (f *forArray[T]) PType() PType       { return array.PTypeForType[T]() }
 
 func (f *forArray[T]) BinarySize() uint64 {
 	return uint64(headerSize) + uint64(unsafe.Sizeof(f.min)) + f.child.BinarySize()
@@ -124,7 +124,7 @@ func (f *forArray[T]) WriteTo(w io.Writer) (int64, error) {
 	n, err := header{
 		Version:  versionNumber,
 		Kind:     CodecTypeFor,
-		ElemType: pTypeForType[T](),
+		ElemType: array.PTypeForType[T](),
 		Length:   f.child.Length(),
 		BodySize: minSize,
 	}.WriteTo(w)

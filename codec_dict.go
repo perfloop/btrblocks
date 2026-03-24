@@ -16,7 +16,7 @@ type dictArray[T Integer | Float | String] struct {
 
 func (d *dictArray[T]) Encoding() CodeType { return CodecTypeDict }
 func (d *dictArray[T]) Length() uint64     { return d.indices.Length() }
-func (d *dictArray[T]) PType() PType       { return pTypeForType[T]() }
+func (d *dictArray[T]) PType() PType       { return array.PTypeForType[T]() }
 
 func (d *dictArray[T]) BinarySize() uint64 {
 	return uint64(headerSize) + d.values.BinarySize() + d.indices.BinarySize()
@@ -61,7 +61,7 @@ func (d *dictArray[T]) WriteTo(w io.Writer) (int64, error) {
 	n, err := header{
 		Version:  versionNumber,
 		Kind:     CodecTypeDict,
-		ElemType: pTypeForType[T](),
+		ElemType: array.PTypeForType[T](),
 		Length:   d.indices.Length(),
 		BodySize: 0,
 	}.WriteTo(w)
@@ -234,8 +234,8 @@ func estimateIntegerDict[T Integer, S statsSource[T]](distinctCount uint64, avgR
 			return 0, false
 		}
 
-		elemWidth := uint64(pTypeForType[T]().ByteWidth())
-		valuesSize := uint64(headerSize) + uint64(primitiveArrayHeaderSize) + distinctCount*elemWidth
+		elemWidth := uint64(array.PTypeForType[T]().ByteWidth())
+		valuesSize := uint64(headerSize) + uint64(array.HeaderSize) + distinctCount*elemWidth
 
 		codesWidth := bitWidthForUnsigned(distinctCount - 1)
 		codesSize, ok := bitpackEncodedSize(n, codesWidth)

@@ -18,7 +18,7 @@ type constArray[T Integer | Float | String] struct {
 
 func (c *constArray[T]) Encoding() CodeType { return CodecTypeConst }
 func (c *constArray[T]) Length() uint64     { return c.length }
-func (c *constArray[T]) PType() PType       { return pTypeForType[T]() }
+func (c *constArray[T]) PType() PType       { return array.PTypeForType[T]() }
 func (c *constArray[T]) BinarySize() uint64 { return uint64(headerSize) + constBodyBinarySize(c.value) }
 
 func (c *constArray[T]) ValueAt(offset uint64) T {
@@ -44,7 +44,7 @@ func (c *constArray[T]) Decompress() ([]T, error) {
 }
 
 func (c *constArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
-	if err := validateSliceBounds(c.length, start, end); err != nil {
+	if err := array.ValidateSliceBounds(c.length, start, end); err != nil {
 		return nil, err
 	}
 	return &constArray[T]{length: end - start, value: c.value}, nil
@@ -55,7 +55,7 @@ func (c *constArray[T]) WriteTo(w io.Writer) (int64, error) {
 	n, err := header{
 		Version:  versionNumber,
 		Kind:     CodecTypeConst,
-		ElemType: pTypeForType[T](),
+		ElemType: array.PTypeForType[T](),
 		Length:   c.length,
 		BodySize: body.BinarySize(),
 	}.WriteTo(w)
@@ -131,9 +131,9 @@ func constBodyBinarySize[T Integer | Float | String](value T) uint64 {
 		default:
 			offsetWidth = 4
 		}
-		return uint64(primitiveArrayHeaderSize) + 4 + 2*offsetWidth + size
+		return uint64(array.HeaderSize) + 4 + 2*offsetWidth + size
 	default:
-		return uint64(primitiveArrayHeaderSize) + uint64(pTypeForType[T]().ByteWidth())
+		return uint64(array.HeaderSize) + uint64(array.PTypeForType[T]().ByteWidth())
 	}
 }
 

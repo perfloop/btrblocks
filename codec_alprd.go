@@ -155,7 +155,7 @@ func alprdBodySize(dictSize uint8, leftBuf, rightBuf []byte) uint64 {
 
 func (a *alprdArray[T]) Encoding() CodeType { return CodecTypeALPRD }
 func (a *alprdArray[T]) Length() uint64      { return a.length }
-func (a *alprdArray[T]) PType() PType        { return pTypeForType[T]() }
+func (a *alprdArray[T]) PType() PType        { return array.PTypeForType[T]() }
 func (a *alprdArray[T]) BinarySize() uint64 {
 	size := uint64(headerSize) + alprdBodySize(a.dictSize, a.leftParts, a.rightParts)
 	if a.patches != nil {
@@ -208,7 +208,7 @@ func (a *alprdArray[T]) Decompress() ([]T, error) {
 }
 
 func (a *alprdArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
-	if err := validateSliceBounds(a.length, start, end); err != nil {
+	if err := array.ValidateSliceBounds(a.length, start, end); err != nil {
 		return nil, err
 	}
 	length := end - start
@@ -249,7 +249,7 @@ func (a *alprdArray[T]) WriteTo(w io.Writer) (int64, error) {
 	n, err := header{
 		Version:  versionNumber,
 		Kind:     CodecTypeALPRD,
-		ElemType: pTypeForType[T](),
+		ElemType: array.PTypeForType[T](),
 		Flags:    flags,
 		Length:   a.length,
 		BodySize: bodySize,

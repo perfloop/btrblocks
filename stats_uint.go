@@ -4,9 +4,10 @@ import "github.com/axiomhq/btrblocks/array"
 
 // unsignedStats extends baseStats with min/max bounds for unsigned arrays.
 type unsignedStats[T UnsignedInteger] struct {
-	base baseStats[T]
-	min  T
-	max  T
+	base     baseStats[T]
+	distinct intDistinctValues[T]
+	min      T
+	max      T
 }
 
 func (s unsignedStats[T]) Source() array.Array[T] {
@@ -21,14 +22,14 @@ func (s unsignedStats[T]) Sample(ctx planContext) array.Array[T] {
 // cardinality, min/max, top value, and run-length statistics. Dict planning for
 // integers uses exact distinct counts in the Rust reference, so we keep this
 // path exact as well.
-func computeUnsignedStats[T UnsignedInteger](arr array.Array[T]) (unsignedStats[T], intDistinctValues[T]) {
+func computeUnsignedStats[T UnsignedInteger](arr array.Array[T]) unsignedStats[T] {
 	n := arr.Length()
 	if n == 0 {
 		return unsignedStats[T]{
 			base: baseStats[T]{
 				src: arr,
 			},
-		}, intDistinctValues[T]{}
+		}
 	}
 
 	type entry struct {
@@ -90,7 +91,8 @@ func computeUnsignedStats[T UnsignedInteger](arr array.Array[T]) (unsignedStats[
 			topValue:      topValue,
 			topCount:      topCount,
 		},
-		min: minValue,
-		max: maxValue,
-	}, intDistinctValues[T]{byKey: byKey, values: distinctValues}
+		distinct: intDistinctValues[T]{byKey: byKey, values: distinctValues},
+		min:      minValue,
+		max:      maxValue,
+	}
 }

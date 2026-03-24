@@ -31,7 +31,7 @@ type Array[T Integer | Float | String] interface {
 	PType() PType
 }
 
-func validateSliceBounds(length, start, end uint64) error {
+func ValidateSliceBounds(length, start, end uint64) error {
 	if start > end {
 		return fmt.Errorf("array: slice start = %d, want <= %d", start, end)
 	}

@@ -45,7 +45,7 @@ func (s registeredScheme[T, S]) Build(arr array.Array[T], ctx planContext) (Enco
 type compressor[T Integer | Float | String, S statsSource[T]] interface {
 	ComputeStats(arr array.Array[T]) S
 	DefaultScheme() scheme[T, S]
-	Schemes() []scheme[T, S]
+	Schemes(stats S) []scheme[T, S]
 	IsExcluded(ctx planContext, kind CodeType) bool
 }
 
@@ -67,7 +67,7 @@ func compressWith[T Integer | Float | String, S statsSource[T]](arr array.Array[
 func chooseScheme[T Integer | Float | String, S statsSource[T]](stats S, ctx planContext, c compressor[T, S]) scheme[T, S] {
 	best := c.DefaultScheme()
 	bestRatio := 1.0
-	for _, candidate := range c.Schemes() {
+	for _, candidate := range c.Schemes(stats) {
 		if c.IsExcluded(ctx, candidate.Encoding()) {
 			continue
 		}

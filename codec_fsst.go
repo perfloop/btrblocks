@@ -22,7 +22,7 @@ type fsstArray struct {
 
 func (f *fsstArray) Encoding() CodeType { return CodecTypeFSST }
 func (f *fsstArray) Length() uint64     { return f.length }
-func (f *fsstArray) PType() PType       { return pTypeForType[string]() }
+func (f *fsstArray) PType() PType       { return array.PTypeForType[string]() }
 
 func (f *fsstArray) BinarySize() uint64 {
 	return uint64(headerSize) + 4 + uint64(len(f.tableRaw)) + 4 + uint64(len(f.codes)) + f.offsets.BinarySize() + f.lengths.BinarySize()
@@ -80,7 +80,7 @@ func (f *fsstArray) WriteTo(w io.Writer) (int64, error) {
 	n, err := header{
 		Version:  versionNumber,
 		Kind:     CodecTypeFSST,
-		ElemType: pTypeForType[string](),
+		ElemType: array.PTypeForType[string](),
 		Length:   f.length,
 		BodySize: bodySize,
 	}.WriteTo(w)
@@ -149,6 +149,10 @@ func readFSSTArray(r io.Reader, h header) (EncodedArray[string], error) {
 	codes := make([]byte, codesSize)
 	if _, err := io.ReadFull(r, codes); err != nil {
 		return nil, err
+	}
+
+	if expectedBody := uint64(4) + uint64(tableSize) + uint64(4) + uint64(codesSize); h.BodySize != expectedBody {
+		return nil, fmt.Errorf("codec: fsst body size = %d, want %d", h.BodySize, expectedBody)
 	}
 
 	// read offsets child

@@ -29,11 +29,11 @@ func (w *shortWriter) Write(p []byte) (int, error) {
 
 func TestHeaderWriteTo(t *testing.T) {
 	header := Header{
-		Version:  2,
-		PType:    PTypeUint32,
-		Flags:    0x1122,
-		Length:   0x0102030405060708,
-		BodySize: 0x1112131415161718,
+		Version: 2,
+		PType:   PTypeUint32,
+		Flags:   0x1122,
+		Length:  0x0102030405060708,
+		NBytes:  0x1112131415161718,
 	}
 
 	var buf bytes.Buffer
@@ -47,11 +47,11 @@ func TestHeaderWriteTo(t *testing.T) {
 	require.Equal(t, header.PType, PType(got[1]))
 	require.Equal(t, header.Flags, binary.LittleEndian.Uint16(got[2:4]))
 	require.Equal(t, header.Length, binary.LittleEndian.Uint64(got[4:12]))
-	require.Equal(t, header.BodySize, binary.LittleEndian.Uint64(got[12:20]))
+	require.Equal(t, header.NBytes, binary.LittleEndian.Uint64(got[12:20]))
 }
 
 func BenchmarkHeaderWriteTo(b *testing.B) {
-	h := Header{Version: 1, PType: PTypeUint32, Length: 1000, BodySize: 4000}
+	h := Header{Version: 1, PType: PTypeUint32, Length: 1000, NBytes: 4000}
 	var buf bytes.Buffer
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -61,7 +61,7 @@ func BenchmarkHeaderWriteTo(b *testing.B) {
 }
 
 func TestHeaderWriteToShortWrite(t *testing.T) {
-	header := Header{Version: 1, PType: PTypeUint32, Length: 9, BodySize: 32}
+	header := Header{Version: 1, PType: PTypeUint32, Length: 9, NBytes: 32}
 	writer := &shortWriter{remaining: headerSize - 1}
 
 	n, err := header.WriteTo(writer)

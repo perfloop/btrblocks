@@ -103,9 +103,9 @@ func (a *sampledArray[T]) BinarySize() uint64 {
 		case totalBytes <= uint64(^uint16(0)):
 			offsetWidth = 2
 		}
-		return primitiveArrayHeaderSize + 4 + (a.length+1)*offsetWidth + totalBytes
+		return array.HeaderSize + 4 + (a.length+1)*offsetWidth + totalBytes
 	default:
-		return primitiveArrayHeaderSize + a.length*uint64(a.pType.ByteWidth())
+		return array.HeaderSize + a.length*uint64(a.pType.ByteWidth())
 	}
 }
 

@@ -12,6 +12,7 @@ type intDistinctValues[T Integer] struct {
 // signedStats extends baseStats with negative-value tracking for signed arrays.
 type signedStats[T SignedInteger] struct {
 	base        baseStats[T]
+	distinct    intDistinctValues[T]
 	hasNegative bool
 	min         T
 	max         T
@@ -27,14 +28,14 @@ func (s signedStats[T]) Sample(ctx planContext) array.Array[T] {
 
 // computeSignedStats matches the unsigned path but also tracks whether any
 // negative value was observed so zigzag can be gated without a second pass.
-func computeSignedStats[T SignedInteger](arr array.Array[T]) (signedStats[T], intDistinctValues[T]) {
+func computeSignedStats[T SignedInteger](arr array.Array[T]) signedStats[T] {
 	n := arr.Length()
 	if n == 0 {
 		return signedStats[T]{
 			base: baseStats[T]{
 				src: arr,
 			},
-		}, intDistinctValues[T]{}
+		}
 	}
 
 	type entry struct {
@@ -100,8 +101,9 @@ func computeSignedStats[T SignedInteger](arr array.Array[T]) (signedStats[T], in
 			topValue:      topValue,
 			topCount:      topCount,
 		},
+		distinct:    intDistinctValues[T]{byKey: byKey, values: distinctValues},
 		hasNegative: hasNegative,
 		min:         minValue,
 		max:         maxValue,
-	}, intDistinctValues[T]{byKey: byKey, values: distinctValues}
+	}
 }

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/axiomhq/btrblocks/array"
 )
 
 // patches stores sparse override positions and values for a base encoded array.
@@ -128,7 +130,7 @@ func (p *patches[T]) Slice(start, end uint64) (*patches[T], error) {
 	if p == nil {
 		return nil, nil
 	}
-	if err := validateSliceBounds(p.length, start, end); err != nil {
+	if err := array.ValidateSliceBounds(p.length, start, end); err != nil {
 		return nil, err
 	}
 	absStart := p.offset + start

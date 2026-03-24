@@ -41,7 +41,7 @@ func newSequenceArray[T Integer](arr array.Array[T]) (*sequenceArray[T], error) 
 
 func (s *sequenceArray[T]) Encoding() CodeType { return CodecTypeSequence }
 func (s *sequenceArray[T]) Length() uint64     { return s.length }
-func (s *sequenceArray[T]) PType() PType       { return pTypeForType[T]() }
+func (s *sequenceArray[T]) PType() PType       { return array.PTypeForType[T]() }
 
 func (s *sequenceArray[T]) BinarySize() uint64 {
 	return uint64(headerSize) + 2*uint64(unsafe.Sizeof(s.base))
@@ -70,7 +70,7 @@ func (s *sequenceArray[T]) Decompress() ([]T, error) {
 }
 
 func (s *sequenceArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
-	if err := validateSliceBounds(s.length, start, end); err != nil {
+	if err := array.ValidateSliceBounds(s.length, start, end); err != nil {
 		return nil, err
 	}
 	return &sequenceArray[T]{
@@ -85,7 +85,7 @@ func (s *sequenceArray[T]) WriteTo(w io.Writer) (int64, error) {
 	n, err := header{
 		Version:  versionNumber,
 		Kind:     CodecTypeSequence,
-		ElemType: pTypeForType[T](),
+		ElemType: array.PTypeForType[T](),
 		Length:   s.length,
 		BodySize: bodySize,
 	}.WriteTo(w)

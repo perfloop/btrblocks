@@ -42,7 +42,7 @@ func TestStringsMetadataAndHeader(t *testing.T) {
 	require.EqualValues(t, 38, arr.BinarySize())
 	require.Equal(t, "", arr.ValueAt(1))
 	require.Equal(t, "lang", arr.ValueAt(2))
-	require.Equal(t, Header{Version: 1, PType: PTypeString, Length: 3, BodySize: 18}, arr.header())
+	require.Equal(t, Header{Version: 1, PType: PTypeString, Length: 3, NBytes: 18}, arr.header())
 }
 
 func TestStringsValueAtUsesBackingBuffer(t *testing.T) {
@@ -73,10 +73,10 @@ func TestStringsWriteToIncludesHeaderOffsetsAndBuffer(t *testing.T) {
 
 	got := buf.Bytes()
 	assertHeaderBytes(t, got[:headerSize], Header{
-		Version:  1,
-		PType:    PTypeString,
-		Length:   2,
-		BodySize: uint64(len(wantBody)),
+		Version: 1,
+		PType:   PTypeString,
+		Length:  2,
+		NBytes:  uint64(len(wantBody)),
 	})
 	require.Equal(t, wantBody, got[headerSize:])
 }
@@ -115,7 +115,7 @@ func TestStringsLargeCorpus(t *testing.T) {
 		require.Equal(t, values[idx], arr.ValueAt(idx), "ValueAt(%d)", idx)
 	}
 
-	require.Equal(t, Header{Version: 1, PType: PTypeString, Length: largeCorpusSize, BodySize: 4 + uint64(total) + uint64(largeCorpusSize+1)*4}, stringsArr.header())
+	require.Equal(t, Header{Version: 1, PType: PTypeString, Length: largeCorpusSize, NBytes: 4 + uint64(total) + uint64(largeCorpusSize+1)*4}, stringsArr.header())
 
 	n, err := arr.WriteTo(io.Discard)
 	require.NoError(t, err)
@@ -158,12 +158,12 @@ func TestReadStringsRejectsUnsupportedHeader(t *testing.T) {
 	}{
 		{
 			name:   "version",
-			header: Header{Version: 2, PType: PTypeString, Length: 0, BodySize: 4},
+			header: Header{Version: 2, PType: PTypeString, Length: 0, NBytes: 4},
 			want:   "version",
 		},
 		{
 			name:   "flags",
-			header: Header{Version: 1, PType: PTypeString, Flags: 1, Length: 0, BodySize: 4},
+			header: Header{Version: 1, PType: PTypeString, Flags: 1, Length: 0, NBytes: 4},
 			want:   "flags",
 		},
 	}
@@ -184,10 +184,10 @@ func TestReadStringsRejectsInvalidBodySize(t *testing.T) {
 	t.Run("too small for offsets", func(t *testing.T) {
 		var buf bytes.Buffer
 		_, err := Header{
-			Version:  1,
-			PType:    PTypeString,
-			Length:   1,
-			BodySize: 4,
+			Version: 1,
+			PType:   PTypeString,
+			Length:  1,
+			NBytes:  4,
 		}.WriteTo(&buf)
 		require.NoError(t, err)
 
@@ -198,10 +198,10 @@ func TestReadStringsRejectsInvalidBodySize(t *testing.T) {
 	t.Run("buffer exceeds declared body", func(t *testing.T) {
 		var buf bytes.Buffer
 		_, err := Header{
-			Version:  1,
-			PType:    PTypeString,
-			Length:   0,
-			BodySize: 5,
+			Version: 1,
+			PType:   PTypeString,
+			Length:  0,
+			NBytes:  5,
 		}.WriteTo(&buf)
 		require.NoError(t, err)
 		require.NoError(t, binary.Write(&buf, binary.LittleEndian, uint32(2)))

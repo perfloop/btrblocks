@@ -6,8 +6,10 @@ import (
 	"io"
 )
 
-// headerSize is the fixed size of the binary header (20 bytes). Layout: Version(1) + PType(1) + Flags(2) + Length(8) + BodySize(8).
-const headerSize = 20
+// HeaderSize is the fixed size of the binary array header (20 bytes).
+const HeaderSize = 20
+
+const headerSize = HeaderSize
 
 // Header is the fixed 20-byte prefix written before every array body.
 // Layout: Version(1) + PType(1) + Flags(2) + Length(8) + BodySize(8), all
@@ -17,11 +19,11 @@ const headerSize = 20
 // through array/encoded-array read paths that already know they are at an array
 // boundary, so version and flags carry the format-evolution contract.
 type Header struct {
-	Version  uint8  // Format version; currently 1.
-	PType    PType  // Element type (int8, uint32, string, etc.).
-	Flags    uint16 // Reserved for future use.
-	Length   uint64 // Number of elements in the array.
-	BodySize uint64 // Size in bytes of the body following this header.
+	Version uint8  // Format version; currently 1.
+	PType   PType  // Element type (int8, uint32, string, etc.).
+	Flags   uint16 // Reserved for future use.
+	Length  uint64 // Number of elements in the array.
+	NBytes  uint64 // Number of bytes in the body following this header.
 }
 
 // readHeader reads a 20-byte header from r.
@@ -31,11 +33,11 @@ func readHeader(r io.Reader) (Header, error) {
 		return Header{}, err
 	}
 	return Header{
-		Version:  buf[0],
-		PType:    PType(buf[1]),
-		Flags:    binary.LittleEndian.Uint16(buf[2:4]),
-		Length:   binary.LittleEndian.Uint64(buf[4:12]),
-		BodySize: binary.LittleEndian.Uint64(buf[12:20]),
+		Version: buf[0],
+		PType:   PType(buf[1]),
+		Flags:   binary.LittleEndian.Uint16(buf[2:4]),
+		Length:  binary.LittleEndian.Uint64(buf[4:12]),
+		NBytes:  binary.LittleEndian.Uint64(buf[12:20]),
 	}, nil
 }
 
@@ -60,7 +62,7 @@ func (h Header) WriteTo(w io.Writer) (int64, error) {
 	buf[1] = byte(h.PType)
 	binary.LittleEndian.PutUint16(buf[2:4], h.Flags)
 	binary.LittleEndian.PutUint64(buf[4:12], h.Length)
-	binary.LittleEndian.PutUint64(buf[12:20], h.BodySize)
+	binary.LittleEndian.PutUint64(buf[12:20], h.NBytes)
 	n, err := w.Write(buf[:])
 	if err == nil && n != len(buf) {
 		err = io.ErrShortWrite
