@@ -123,7 +123,7 @@ func (z *zigzagArray[T, U]) Slice(start, end uint64) (EncodedArray[T], error) {
 }
 
 func (z *zigzagArray[T, U]) WriteTo(w io.Writer) (int64, error) {
-	n, err := header{
+	n, err := codecHeader{
 		Version:  versionNumber,
 		Kind:     CodecTypeZigZag,
 		ElemType: array.PTypeForType[T](),
@@ -137,39 +137,23 @@ func (z *zigzagArray[T, U]) WriteTo(w io.Writer) (int64, error) {
 	return n + nn, err
 }
 
-func readAnyZigZagArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readAnyZigZagArray[T Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case int8:
-		c, err := readZigZagArray[int8](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readZigZagArray[int8](br, h, opts))
 	case int16:
-		c, err := readZigZagArray[int16](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readZigZagArray[int16](br, h, opts))
 	case int32:
-		c, err := readZigZagArray[int32](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readZigZagArray[int32](br, h, opts))
 	case int64:
-		c, err := readZigZagArray[int64](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readZigZagArray[int64](br, h, opts))
 	default:
 		return nil, fmt.Errorf("codec: zigzag not supported for %v", h.ElemType)
 	}
 }
 
-func readZigZagArray[T SignedInteger](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readZigZagArray[T SignedInteger](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
 	if h.NumBytes != 0 {
 		return nil, fmt.Errorf("codec: zigzag body size = %d, want 0", h.NumBytes)
 	}
@@ -191,7 +175,7 @@ func readZigZagArray[T SignedInteger](br *array.BufReader, h header, opts ReadOp
 	}
 }
 
-func readZigZagChild[T SignedInteger, U UnsignedInteger](br *array.BufReader, h header, childHeader header, opts ReadOptions) (EncodedArray[T], error) {
+func readZigZagChild[T SignedInteger, U UnsignedInteger](br *array.BufReader, h codecHeader, childHeader codecHeader, opts ReadOptions) (EncodedArray[T], error) {
 	child, err := readEncodedArrayWithHeader[U](br, childHeader, opts)
 	if err != nil {
 		return nil, err
@@ -209,30 +193,22 @@ func buildZigZagArray[T SignedInteger](arr array.ArrayCore[T], ctx planContext) 
 	max := zigzagMaxEncoded(arr.Length(), arr.ValueAt)
 	switch {
 	case max <= uint64(^uint8(0)):
-		child, err := compressArray(zigzagEncodedArray[T, uint8]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
-		if err != nil {
-			return nil, err
-		}
-		return &zigzagArray[T, uint8]{child: child}, nil
+		return buildZigZagWithWidth[T, uint8](arr, ctx)
 	case max <= uint64(^uint16(0)):
-		child, err := compressArray(zigzagEncodedArray[T, uint16]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
-		if err != nil {
-			return nil, err
-		}
-		return &zigzagArray[T, uint16]{child: child}, nil
+		return buildZigZagWithWidth[T, uint16](arr, ctx)
 	case max <= uint64(^uint32(0)):
-		child, err := compressArray(zigzagEncodedArray[T, uint32]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
-		if err != nil {
-			return nil, err
-		}
-		return &zigzagArray[T, uint32]{child: child}, nil
+		return buildZigZagWithWidth[T, uint32](arr, ctx)
 	default:
-		child, err := compressArray(zigzagEncodedArray[T, uint64]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
-		if err != nil {
-			return nil, err
-		}
-		return &zigzagArray[T, uint64]{child: child}, nil
+		return buildZigZagWithWidth[T, uint64](arr, ctx)
 	}
+}
+
+func buildZigZagWithWidth[T SignedInteger, U UnsignedInteger](arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
+	child, err := compressArray(zigzagEncodedArray[T, U]{length: arr.Length(), valueAt: arr.ValueAt}, ctx.descend().withIntegerExcludes(CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd))
+	if err != nil {
+		return nil, err
+	}
+	return &zigzagArray[T, U]{child: child}, nil
 }
 
 func estimateZigZag[T SignedInteger, S statsSource[T]](stats S, ctx planContext, hasNegative bool) (float64, bool) {

@@ -160,6 +160,8 @@ All numbers from `go test -bench` on Apple M3 Max, 1M-element arrays.
 
 **Per-element ALPRD (intentional).** Batch-unpacking left+right parts was only 6% faster but tripled memory. Kept per-element because the word-at-a-time fast path already handles each unpack in one 64-bit load.
 
+**Independent FSST offset/length widths.** Offsets into the compressed code buffer and original string lengths are sized independently. Short-string workloads (max length < 256) get `uint8` lengths even when total compressed bytes requires `uint16`/`uint32` offsets. **Saves ~3 MB at 1M strings** compared to using the wider type for both.
+
 ## Ownership and zero-copy
 
 `Load` returns an `EncodedArray` that may alias the input `[]byte`. The caller must keep the input alive for the lifetime of the returned value. This is the same contract as `array.Primitives` constructed via `NewPrimitivesUnsafe`.
@@ -171,4 +173,4 @@ All numbers from `go test -bench` on Apple M3 Max, 1M-element arrays.
 ## Requirements
 
 - Go 1.25+
-- Little-endian platform (x86_64, ARM64)
+- Little-endian platform (x86_64, ARM64). Codec headers and inline scalar fields use explicit `binary.LittleEndian` encoding. Bulk array bodies use `unsafe` casts that assume native LE byte order.

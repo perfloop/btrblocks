@@ -23,14 +23,6 @@ func bitWidthForUnsigned(value uint64) uint {
 	return uint(bits.Len64(value))
 }
 
-func bitpackEncodedSize(length uint64, bitWidth uint) (uint64, bool) {
-	bodySize, err := checkedPackedByteSize(length, bitWidth)
-	if err != nil {
-		return 0, false
-	}
-	return uint64(headerSize) + 1 + uint64(bodySize), true
-}
-
 func unsignedBitWidthHistogram[T UnsignedInteger](arr interface {
 	Length() uint64
 	ValueAt(uint64) T
@@ -221,7 +213,7 @@ func (c *bitPackedArray[T, I]) WriteTo(w io.Writer) (int64, error) {
 	if c.patches != nil {
 		flags |= flagBitpackHasPatches
 	}
-	n, err := header{
+	n, err := codecHeader{
 		Version:  versionNumber,
 		Kind:     CodecTypeBitpack,
 		ElemType: array.PTypeForType[T](),
@@ -262,39 +254,23 @@ func (c *bitPackedArray[T, I]) WriteTo(w io.Writer) (int64, error) {
 	return n, nil
 }
 
-func readAnyBitPackedArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readAnyBitPackedArray[T Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case uint8:
-		c, err := readBitPackedArray[uint8](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readBitPackedArray[uint8](br, h, opts))
 	case uint16:
-		c, err := readBitPackedArray[uint16](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readBitPackedArray[uint16](br, h, opts))
 	case uint32:
-		c, err := readBitPackedArray[uint32](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readBitPackedArray[uint32](br, h, opts))
 	case uint64:
-		c, err := readBitPackedArray[uint64](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readBitPackedArray[uint64](br, h, opts))
 	default:
 		return nil, fmt.Errorf("codec: bitpack not supported for %v", h.ElemType)
 	}
 }
 
-func readBitPackedArray[T UnsignedInteger](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readBitPackedArray[T UnsignedInteger](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
 	if h.Flags&^flagBitpackHasPatches != 0 {
 		return nil, fmt.Errorf("codec: unsupported bitpack flags = 0x%x", h.Flags)
 	}
@@ -356,7 +332,7 @@ func readBitPackedArray[T UnsignedInteger](br *array.BufReader, h header, opts R
 	}
 }
 
-func readBitPackedWithPatchIdx[T UnsignedInteger, I UnsignedInteger](br *array.BufReader, h header, opts ReadOptions, bitWidth uint, buf []byte, offset uint64, idxHeader header) (EncodedArray[T], error) {
+func readBitPackedWithPatchIdx[T UnsignedInteger, I UnsignedInteger](br *array.BufReader, h codecHeader, opts ReadOptions, bitWidth uint, buf []byte, offset uint64, idxHeader codecHeader) (EncodedArray[T], error) {
 	idxCodec, err := readEncodedArrayWithHeader[I](br, idxHeader, opts)
 	if err != nil {
 		return nil, err

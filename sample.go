@@ -167,31 +167,36 @@ func sampleArray[T Integer | Float | String](arr array.Array[T]) array.ArrayCore
 	return newSampledArray(chunks)
 }
 
+// arrayCast converts a concrete array.Array to the generic array.Array[T].
+func arrayCast[T Integer | Float | String](result any) array.Array[T] {
+	return result.(array.Array[T])
+}
+
 func buildArray[T Integer | Float | String](data []T) array.Array[T] {
 	var zero T
 	switch any(zero).(type) {
 	case int8:
-		return any(array.NewPrimitivesUnsafe(any(data).([]int8))).(array.Array[T])
+		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]int8)))
 	case int16:
-		return any(array.NewPrimitivesUnsafe(any(data).([]int16))).(array.Array[T])
+		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]int16)))
 	case int32:
-		return any(array.NewPrimitivesUnsafe(any(data).([]int32))).(array.Array[T])
+		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]int32)))
 	case int64:
-		return any(array.NewPrimitivesUnsafe(any(data).([]int64))).(array.Array[T])
+		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]int64)))
 	case uint8:
-		return any(array.NewPrimitivesUnsafe(any(data).([]uint8))).(array.Array[T])
+		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]uint8)))
 	case uint16:
-		return any(array.NewPrimitivesUnsafe(any(data).([]uint16))).(array.Array[T])
+		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]uint16)))
 	case uint32:
-		return any(array.NewPrimitivesUnsafe(any(data).([]uint32))).(array.Array[T])
+		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]uint32)))
 	case uint64:
-		return any(array.NewPrimitivesUnsafe(any(data).([]uint64))).(array.Array[T])
+		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]uint64)))
 	case float32:
-		return any(array.NewPrimitivesUnsafe(any(data).([]float32))).(array.Array[T])
+		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]float32)))
 	case float64:
-		return any(array.NewPrimitivesUnsafe(any(data).([]float64))).(array.Array[T])
+		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]float64)))
 	case string:
-		return any(array.NewStrings(any(data).([]string))).(array.Array[T])
+		return arrayCast[T](array.NewStrings(any(data).([]string)))
 	default:
 		return nil
 	}

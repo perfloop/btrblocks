@@ -103,7 +103,7 @@ func (r *runEndArray[V, I]) Slice(start, end uint64) (EncodedArray[V], error) {
 }
 
 func (r *runEndArray[V, I]) WriteTo(w io.Writer) (int64, error) {
-	n, err := header{
+	n, err := codecHeader{
 		Version:  versionNumber,
 		Kind:     CodecTypeRunEnd,
 		ElemType: array.PTypeForType[V](),
@@ -122,7 +122,7 @@ func (r *runEndArray[V, I]) WriteTo(w io.Writer) (int64, error) {
 	return n + nn, err
 }
 
-func readRunEndArray[V Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[V], error) {
+func readRunEndArray[V Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[V], error) {
 	if h.NumBytes != 0 {
 		return nil, fmt.Errorf("codec: runend body size = %d, want 0", h.NumBytes)
 	}
@@ -151,7 +151,7 @@ func readRunEndArray[V Integer | Float | String](br *array.BufReader, h header, 
 	}
 }
 
-func readRunEndOrdinals[V Integer | Float | String, I UnsignedInteger](br *array.BufReader, h header, childHeader header, opts ReadOptions, runs EncodedArray[V]) (EncodedArray[V], error) {
+func readRunEndOrdinals[V Integer | Float | String, I UnsignedInteger](br *array.BufReader, h codecHeader, childHeader codecHeader, opts ReadOptions, runs EncodedArray[V]) (EncodedArray[V], error) {
 	ends, err := readEncodedArrayWithHeader[I](br, childHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: runend end %w", err)

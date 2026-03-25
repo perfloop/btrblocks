@@ -41,7 +41,7 @@ func (r *rawArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 }
 
 func (r *rawArray[T]) WriteTo(w io.Writer) (int64, error) {
-	n, err := header{
+	n, err := codecHeader{
 		Version:  versionNumber,
 		Kind:     CodecTypeRaw,
 		ElemType: array.PTypeForType[T](),
@@ -55,7 +55,7 @@ func (r *rawArray[T]) WriteTo(w io.Writer) (int64, error) {
 	return n + int64(nn), err
 }
 
-func readRawArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readRawArray[T Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
 	arr, err := array.ReadArrayFromBuf[T](br, opts)
 	if err != nil {
 		return nil, err

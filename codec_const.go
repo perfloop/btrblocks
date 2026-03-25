@@ -1,6 +1,7 @@
 package btrblocks
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -46,7 +47,7 @@ func (c *constArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 
 func (c *constArray[T]) WriteTo(w io.Writer) (int64, error) {
 	bodySize := constBodyBinarySize(c.value)
-	n, err := header{
+	n, err := codecHeader{
 		Version:  versionNumber,
 		Kind:     CodecTypeConst,
 		ElemType: array.PTypeForType[T](),
@@ -85,7 +86,7 @@ func newConstStringArray[T String](arr array.ArrayCore[T]) (*constArray[T], erro
 	return newConstArray(arr, cmpStrings[T])
 }
 
-func readConstArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readConstArray[T Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
 	arr, err := array.ReadArrayFromBuf[T](br, opts)
 	if err != nil {
 		return nil, err
@@ -147,7 +148,20 @@ func writeConstElementArray[T Integer | Float | String](w io.Writer, value T) (i
 			return n, err
 		}
 		var buf [8]byte
-		copy(buf[:width], unsafe.Slice((*byte)(unsafe.Pointer(&value)), width))
+		// Read the raw bits of value via unsafe, then write as explicit
+		// little-endian. This is safe because the string case is handled
+		// above — only numeric types reach here.
+		bits := *(*uint64)(unsafe.Pointer(&value))
+		switch width {
+		case 1:
+			buf[0] = byte(bits)
+		case 2:
+			binary.LittleEndian.PutUint16(buf[:2], uint16(bits))
+		case 4:
+			binary.LittleEndian.PutUint32(buf[:4], uint32(bits))
+		case 8:
+			binary.LittleEndian.PutUint64(buf[:8], bits)
+		}
 		nn, err := w.Write(buf[:width])
 		if err == nil && nn != width {
 			err = io.ErrShortWrite

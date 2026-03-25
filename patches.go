@@ -125,6 +125,28 @@ func (p *patches[V, I]) ValueAt(offset uint64) (V, bool) {
 	return p.values.ValueAt(idx), true
 }
 
+// Iterate bulk-decompresses both children and calls fn for each patch with the
+// offset-adjusted position and value. Callers that need custom combine logic
+// (e.g. ALPRD, which patches the left part rather than the final value) use this
+// instead of Apply.
+func (p *patches[V, I]) Iterate(fn func(position uint64, value V)) error {
+	if p == nil {
+		return nil
+	}
+	indices, err := Decompress(p.indices)
+	if err != nil {
+		return err
+	}
+	values, err := Decompress(p.values)
+	if err != nil {
+		return err
+	}
+	for i, idx := range indices {
+		fn(uint64(idx)-p.offset, values[i])
+	}
+	return nil
+}
+
 func (p *patches[V, I]) Apply(dst []V) error {
 	if p == nil {
 		return nil
@@ -153,13 +175,34 @@ func (p *patches[V, I]) Slice(start, end uint64) (*patches[V, I], error) {
 	absStart := p.offset + start
 	absEnd := p.offset + end
 
+	// Binary search for the first index >= absStart.
+	n := p.indices.Length()
 	first := uint64(0)
-	for first < p.indices.Length() && uint64(p.indices.ValueAt(first)) < absStart {
-		first++
+	{
+		lo, hi := uint64(0), n
+		for lo < hi {
+			mid := lo + (hi-lo)/2
+			if uint64(p.indices.ValueAt(mid)) < absStart {
+				lo = mid + 1
+			} else {
+				hi = mid
+			}
+		}
+		first = lo
 	}
+	// Binary search for the first index >= absEnd.
 	last := first
-	for last < p.indices.Length() && uint64(p.indices.ValueAt(last)) < absEnd {
-		last++
+	{
+		lo, hi := first, n
+		for lo < hi {
+			mid := lo + (hi-lo)/2
+			if uint64(p.indices.ValueAt(mid)) < absEnd {
+				lo = mid + 1
+			} else {
+				hi = mid
+			}
+		}
+		last = lo
 	}
 	if first == last {
 		return nil, nil

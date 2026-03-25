@@ -36,7 +36,7 @@ func (s floatStats[T]) Sample(ctx planContext) array.ArrayCore[T] { return s.bas
 func computeFloatStats[T Float](arr array.Array[T]) floatStats[T] {
 	n := arr.Length()
 	if n == 0 {
-		return floatStats[T]{base: baseStats[T]{src: arr}}
+		return floatStats[T]{base: baseStats[T]{src: arr, cached: arr}}
 	}
 
 	distinct := make(map[uint64]uint64, 256)
@@ -76,7 +76,8 @@ func computeFloatStats[T Float](arr array.Array[T]) floatStats[T] {
 	return floatStats[T]{
 		base: baseStats[T]{
 			src:           arr,
-			isConst:       len(distinct) == 1,
+			cached:        sampleArray(arr),
+			isConst:       runs == 1,
 			distinctCount: dc,
 			avgRunLength:  float64(n) / float64(runs),
 		},

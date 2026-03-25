@@ -1,7 +1,6 @@
 package btrblocks
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
 	"unsafe"
@@ -81,7 +80,7 @@ func (f *forArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 
 func (f *forArray[T]) WriteTo(w io.Writer) (int64, error) {
 	minSize := uint64(unsafe.Sizeof(f.min))
-	n, err := header{
+	n, err := codecHeader{
 		Version:  versionNumber,
 		Kind:     CodecTypeFor,
 		ElemType: array.PTypeForType[T](),
@@ -92,75 +91,33 @@ func (f *forArray[T]) WriteTo(w io.Writer) (int64, error) {
 		return n, err
 	}
 
-	var buf [8]byte
-	switch unsafe.Sizeof(f.min) {
-	case 1:
-		buf[0] = byte(f.min)
-		nn, err := w.Write(buf[:1])
-		n += int64(nn)
-		if err != nil {
-			return n, err
-		}
-	case 2:
-		binary.LittleEndian.PutUint16(buf[:2], uint16(f.min))
-		nn, err := w.Write(buf[:2])
-		n += int64(nn)
-		if err != nil {
-			return n, err
-		}
-	case 4:
-		binary.LittleEndian.PutUint32(buf[:4], uint32(f.min))
-		nn, err := w.Write(buf[:4])
-		n += int64(nn)
-		if err != nil {
-			return n, err
-		}
-	case 8:
-		binary.LittleEndian.PutUint64(buf[:8], uint64(f.min))
-		nn, err := w.Write(buf[:8])
-		n += int64(nn)
-		if err != nil {
-			return n, err
-		}
+	nn, err := writeIntegerLE(w, f.min)
+	n += nn
+	if err != nil {
+		return n, err
 	}
 
-	nn, err := f.child.WriteTo(w)
+	nn, err = f.child.WriteTo(w)
 	return n + nn, err
 }
 
-func readAnyFoRArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readAnyFoRArray[T Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case uint8:
-		c, err := readFoRArray[uint8](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readFoRArray[uint8](br, h, opts))
 	case uint16:
-		c, err := readFoRArray[uint16](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readFoRArray[uint16](br, h, opts))
 	case uint32:
-		c, err := readFoRArray[uint32](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readFoRArray[uint32](br, h, opts))
 	case uint64:
-		c, err := readFoRArray[uint64](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readFoRArray[uint64](br, h, opts))
 	default:
 		return nil, fmt.Errorf("codec: for not supported for %v", h.ElemType)
 	}
 }
 
-func readFoRArray[T UnsignedInteger](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readFoRArray[T UnsignedInteger](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
 	minSize := uint64(unsafe.Sizeof(T(0)))
 	if h.NumBytes != minSize {
 		return nil, fmt.Errorf("codec: for body size = %d, want %d", h.NumBytes, minSize)
@@ -170,17 +127,7 @@ func readFoRArray[T UnsignedInteger](br *array.BufReader, h header, opts ReadOpt
 	if err != nil {
 		return nil, err
 	}
-	var minValue T
-	switch unsafe.Sizeof(T(0)) {
-	case 1:
-		minValue = T(data[0])
-	case 2:
-		minValue = T(binary.LittleEndian.Uint16(data[:2]))
-	case 4:
-		minValue = T(binary.LittleEndian.Uint32(data[:4]))
-	case 8:
-		minValue = T(binary.LittleEndian.Uint64(data[:8]))
-	}
+	minValue := readIntegerLE[T](data)
 
 	child, err := readEncodedArray[T](br, opts)
 	if err != nil {

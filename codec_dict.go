@@ -59,7 +59,7 @@ func (d *dictArray[V, I]) Slice(start, end uint64) (EncodedArray[V], error) {
 }
 
 func (d *dictArray[V, I]) WriteTo(w io.Writer) (int64, error) {
-	n, err := header{
+	n, err := codecHeader{
 		Version:  versionNumber,
 		Kind:     CodecTypeDict,
 		ElemType: array.PTypeForType[V](),
@@ -78,7 +78,7 @@ func (d *dictArray[V, I]) WriteTo(w io.Writer) (int64, error) {
 	return n + nn, err
 }
 
-func readDictArray[V Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[V], error) {
+func readDictArray[V Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[V], error) {
 	if h.NumBytes != 0 {
 		return nil, fmt.Errorf("codec: dict body size = %d, want 0", h.NumBytes)
 	}
@@ -104,7 +104,7 @@ func readDictArray[V Integer | Float | String](br *array.BufReader, h header, op
 	}
 }
 
-func readDictOrdinals[V Integer | Float | String, I UnsignedInteger](br *array.BufReader, h header, childHeader header, opts ReadOptions, values EncodedArray[V]) (EncodedArray[V], error) {
+func readDictOrdinals[V Integer | Float | String, I UnsignedInteger](br *array.BufReader, h codecHeader, childHeader codecHeader, opts ReadOptions, values EncodedArray[V]) (EncodedArray[V], error) {
 	indices, err := readEncodedArrayWithHeader[I](br, childHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: dict index %w", err)

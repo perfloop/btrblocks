@@ -1,7 +1,6 @@
 package btrblocks
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -77,7 +76,7 @@ func (s *sequenceArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 
 func (s *sequenceArray[T]) WriteTo(w io.Writer) (int64, error) {
 	bodySize := 2 * uint64(unsafe.Sizeof(s.base))
-	n, err := header{
+	n, err := codecHeader{
 		Version:  versionNumber,
 		Kind:     CodecTypeSequence,
 		ElemType: array.PTypeForType[T](),
@@ -88,101 +87,41 @@ func (s *sequenceArray[T]) WriteTo(w io.Writer) (int64, error) {
 		return n, err
 	}
 
-	var buf [8]byte
-	width := unsafe.Sizeof(s.base)
 	for _, value := range [2]T{s.base, s.step} {
-		switch width {
-		case 1:
-			buf[0] = byte(value)
-			nn, err := w.Write(buf[:1])
-			n += int64(nn)
-			if err != nil {
-				return n, err
-			}
-		case 2:
-			binary.LittleEndian.PutUint16(buf[:2], uint16(value))
-			nn, err := w.Write(buf[:2])
-			n += int64(nn)
-			if err != nil {
-				return n, err
-			}
-		case 4:
-			binary.LittleEndian.PutUint32(buf[:4], uint32(value))
-			nn, err := w.Write(buf[:4])
-			n += int64(nn)
-			if err != nil {
-				return n, err
-			}
-		case 8:
-			binary.LittleEndian.PutUint64(buf[:8], uint64(value))
-			nn, err := w.Write(buf[:8])
-			n += int64(nn)
-			if err != nil {
-				return n, err
-			}
+		nn, err := writeIntegerLE(w, value)
+		n += nn
+		if err != nil {
+			return n, err
 		}
 	}
-
 	return n, nil
 }
 
-func readAnySequenceArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readAnySequenceArray[T Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case int8:
-		c, err := readSequenceArray[int8](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readSequenceArray[int8](br, h, opts))
 	case int16:
-		c, err := readSequenceArray[int16](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readSequenceArray[int16](br, h, opts))
 	case int32:
-		c, err := readSequenceArray[int32](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readSequenceArray[int32](br, h, opts))
 	case int64:
-		c, err := readSequenceArray[int64](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readSequenceArray[int64](br, h, opts))
 	case uint8:
-		c, err := readSequenceArray[uint8](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readSequenceArray[uint8](br, h, opts))
 	case uint16:
-		c, err := readSequenceArray[uint16](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readSequenceArray[uint16](br, h, opts))
 	case uint32:
-		c, err := readSequenceArray[uint32](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readSequenceArray[uint32](br, h, opts))
 	case uint64:
-		c, err := readSequenceArray[uint64](br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readSequenceArray[uint64](br, h, opts))
 	default:
 		return nil, fmt.Errorf("codec: sequence not supported for %v", h.ElemType)
 	}
 }
 
-func readSequenceArray[T Integer](br *array.BufReader, h header, _ ReadOptions) (EncodedArray[T], error) {
+func readSequenceArray[T Integer](br *array.BufReader, h codecHeader, _ ReadOptions) (EncodedArray[T], error) {
 	elemSize := uint64(unsafe.Sizeof(T(0)))
 	if h.NumBytes != 2*elemSize {
 		return nil, fmt.Errorf("codec: sequence body size = %d, want %d", h.NumBytes, 2*elemSize)
@@ -194,16 +133,7 @@ func readSequenceArray[T Integer](br *array.BufReader, h header, _ ReadOptions) 
 		if err != nil {
 			return nil, err
 		}
-		switch unsafe.Sizeof(T(0)) {
-		case 1:
-			vals[i] = T(data[0])
-		case 2:
-			vals[i] = T(binary.LittleEndian.Uint16(data[:2]))
-		case 4:
-			vals[i] = T(binary.LittleEndian.Uint32(data[:4]))
-		case 8:
-			vals[i] = T(binary.LittleEndian.Uint64(data[:8]))
-		}
+		vals[i] = readIntegerLE[T](data)
 	}
 	return &sequenceArray[T]{length: h.Length, base: vals[0], step: vals[1]}, nil
 }

@@ -87,7 +87,7 @@ func (f *fsstArray[I, J]) Slice(start, end uint64) (EncodedArray[string], error)
 
 func (f *fsstArray[I, J]) WriteTo(w io.Writer) (int64, error) {
 	bodySize := uint64(4) + uint64(len(f.tableRaw)) + uint64(4) + uint64(len(f.codes))
-	n, err := header{
+	n, err := codecHeader{
 		Version:  versionNumber,
 		Kind:     CodecTypeFSST,
 		ElemType: array.PTypeForType[string](),
@@ -139,31 +139,8 @@ func (f *fsstArray[I, J]) WriteTo(w io.Writer) (int64, error) {
 	return n, err
 }
 
-// readFSSTWithLengths reads the lengths child and constructs fsstArray[I, J].
-func readFSSTWithLengths[I, J UnsignedInteger](h header, tableRaw, codes []byte, table *fsst.Table, offsets EncodedArray[I], br *array.BufReader, opts ReadOptions) (EncodedArray[string], error) {
-	lengthsHeader, err := readHeader(br)
-	if err != nil {
-		return nil, err
-	}
-	lengths, err := readEncodedArrayWithHeader[J](br, lengthsHeader, opts)
-	if err != nil {
-		return nil, fmt.Errorf("codec: fsst lengths %w", err)
-	}
-	if lengths.Length() != h.Length {
-		return nil, fmt.Errorf("codec: fsst lengths length = %d, want %d", lengths.Length(), h.Length)
-	}
-	return &fsstArray[I, J]{
-		length:   h.Length,
-		tableRaw: tableRaw,
-		codes:    codes,
-		offsets:  offsets,
-		lengths:  lengths,
-		table:    table,
-	}, nil
-}
-
 // readFSSTWithOffsets reads offsets, then dispatches on lengths ElemType.
-func readFSSTWithOffsets[I UnsignedInteger](h header, tableRaw, codes []byte, table *fsst.Table, offsetsHeader header, br *array.BufReader, opts ReadOptions) (EncodedArray[string], error) {
+func readFSSTWithOffsets[I UnsignedInteger](h codecHeader, tableRaw, codes []byte, table *fsst.Table, offsetsHeader codecHeader, br *array.BufReader, opts ReadOptions) (EncodedArray[string], error) {
 	offsets, err := readEncodedArrayWithHeader[I](br, offsetsHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: fsst offsets %w", err)
@@ -189,7 +166,7 @@ func readFSSTWithOffsets[I UnsignedInteger](h header, tableRaw, codes []byte, ta
 	}
 }
 
-func readFSSTWithLengthsTyped[I, J UnsignedInteger](h header, tableRaw, codes []byte, table *fsst.Table, offsets EncodedArray[I], br *array.BufReader, lengthsHeader header, opts ReadOptions) (EncodedArray[string], error) {
+func readFSSTWithLengthsTyped[I, J UnsignedInteger](h codecHeader, tableRaw, codes []byte, table *fsst.Table, offsets EncodedArray[I], br *array.BufReader, lengthsHeader codecHeader, opts ReadOptions) (EncodedArray[string], error) {
 	lengths, err := readEncodedArrayWithHeader[J](br, lengthsHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: fsst lengths %w", err)
@@ -207,7 +184,7 @@ func readFSSTWithLengthsTyped[I, J UnsignedInteger](h header, tableRaw, codes []
 	}, nil
 }
 
-func readFSSTArray(br *array.BufReader, h header, opts ReadOptions) (EncodedArray[string], error) {
+func readFSSTArray(br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[string], error) {
 	// read table
 	data, err := br.Read(4)
 	if err != nil {
@@ -259,15 +236,11 @@ func readFSSTArray(br *array.BufReader, h header, opts ReadOptions) (EncodedArra
 	}
 }
 
-func readAnyFSSTArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readAnyFSSTArray[T Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case string:
-		c, err := readFSSTArray(br, h, opts)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readFSSTArray(br, h, opts))
 	default:
 		return nil, fmt.Errorf("codec: FSST not supported for %v", h.ElemType)
 	}
@@ -282,66 +255,59 @@ func buildFSSTArray(arr array.ArrayCore[string], ctx planContext) (EncodedArray[
 		return nil, errDataEmpty
 	}
 
-	// Collect all strings as [][]byte for training
+	// Collect string views for training (zero-copy via unsafe.Slice).
 	inputs := make([][]byte, n)
 	for i := uint64(0); i < n; i++ {
 		s := arr.ValueAt(i)
-		inputs[i] = unsafe.Slice(unsafe.StringData(s), len(s))
+		if len(s) > 0 {
+			inputs[i] = unsafe.Slice(unsafe.StringData(s), len(s))
+		}
 	}
 
-	// Train FSST table
 	table := fsst.Train(inputs)
 
-	// Encode each string and build offsets + lengths
+	// Single pass: encode strings, track max offset and max length to
+	// determine the narrowest integer width for both arrays.
 	var allCodes []byte
+	var maxOff, maxLen uint64
 	offsets := make([]uint64, n+1)
-	lengths := make([]uint64, n)
-
 	for i := uint64(0); i < n; i++ {
 		encoded := table.Encode(inputs[i])
 		offsets[i] = uint64(len(allCodes))
 		allCodes = append(allCodes, encoded...)
-		lengths[i] = uint64(len(inputs[i]))
+		l := uint64(len(inputs[i]))
+		if l > maxLen {
+			maxLen = l
+		}
 	}
 	offsets[n] = uint64(len(allCodes))
+	maxOff = offsets[n]
 
-	// Serialize table
 	tableRaw, err := table.MarshalBinary()
 	if err != nil {
 		return nil, fmt.Errorf("codec: fsst marshal table: %w", err)
 	}
 
-	// Use max(maxOffset, maxLength) to pick a single width for both.
+	// Build narrow offsets and lengths independently — offsets are sized by
+	// maxOff (total compressed bytes), lengths by maxLen (max original string
+	// length). For short-string workloads maxLen << maxOff, saving 2-3x on
+	// lengths metadata.
 	childCtx := ctx.descend()
-	var maxOff, maxLen uint64
-	for _, v := range offsets {
-		if v > maxOff {
-			maxOff = v
-		}
-	}
-	for _, v := range lengths {
-		if v > maxLen {
-			maxLen = v
-		}
-	}
-	maxVal := maxOff
-	if maxLen > maxVal {
-		maxVal = maxLen
-	}
-
 	switch {
-	case maxVal <= uint64(^uint8(0)):
-		return buildFSSTTyped[uint8](n, tableRaw, allCodes, table, offsets, lengths, childCtx)
-	case maxVal <= uint64(^uint16(0)):
-		return buildFSSTTyped[uint16](n, tableRaw, allCodes, table, offsets, lengths, childCtx)
-	case maxVal <= uint64(^uint32(0)):
-		return buildFSSTTyped[uint32](n, tableRaw, allCodes, table, offsets, lengths, childCtx)
+	case maxOff <= uint64(^uint8(0)):
+		return buildFSSTWithOffsets[uint8](n, tableRaw, allCodes, table, offsets, inputs, maxLen, childCtx)
+	case maxOff <= uint64(^uint16(0)):
+		return buildFSSTWithOffsets[uint16](n, tableRaw, allCodes, table, offsets, inputs, maxLen, childCtx)
+	case maxOff <= uint64(^uint32(0)):
+		return buildFSSTWithOffsets[uint32](n, tableRaw, allCodes, table, offsets, inputs, maxLen, childCtx)
 	default:
-		return buildFSSTTyped[uint64](n, tableRaw, allCodes, table, offsets, lengths, childCtx)
+		return buildFSSTWithOffsets[uint64](n, tableRaw, allCodes, table, offsets, inputs, maxLen, childCtx)
 	}
 }
 
-func buildFSSTTyped[I UnsignedInteger](n uint64, tableRaw, allCodes []byte, table *fsst.Table, offsets, lengths []uint64, ctx planContext) (EncodedArray[string], error) {
+// buildFSSTWithOffsets narrows offsets to type I, then dispatches on maxLen to
+// pick the narrowest length type J independently.
+func buildFSSTWithOffsets[I UnsignedInteger](n uint64, tableRaw, allCodes []byte, table *fsst.Table, offsets []uint64, inputs [][]byte, maxLen uint64, ctx planContext) (EncodedArray[string], error) {
 	narrowOff := make([]I, len(offsets))
 	for i, v := range offsets {
 		narrowOff[i] = I(v)
@@ -350,15 +316,29 @@ func buildFSSTTyped[I UnsignedInteger](n uint64, tableRaw, allCodes []byte, tabl
 	if err != nil {
 		return nil, err
 	}
-	narrowLen := make([]I, len(lengths))
-	for i, v := range lengths {
-		narrowLen[i] = I(v)
+	switch {
+	case maxLen <= uint64(^uint8(0)):
+		return buildFSSTWithLengths[I, uint8](n, tableRaw, allCodes, table, offsetsCodec, inputs, ctx)
+	case maxLen <= uint64(^uint16(0)):
+		return buildFSSTWithLengths[I, uint16](n, tableRaw, allCodes, table, offsetsCodec, inputs, ctx)
+	case maxLen <= uint64(^uint32(0)):
+		return buildFSSTWithLengths[I, uint32](n, tableRaw, allCodes, table, offsetsCodec, inputs, ctx)
+	default:
+		return buildFSSTWithLengths[I, uint64](n, tableRaw, allCodes, table, offsetsCodec, inputs, ctx)
+	}
+}
+
+// buildFSSTWithLengths narrows lengths to type J and assembles the final fsstArray.
+func buildFSSTWithLengths[I, J UnsignedInteger](n uint64, tableRaw, allCodes []byte, table *fsst.Table, offsetsCodec EncodedArray[I], inputs [][]byte, ctx planContext) (EncodedArray[string], error) {
+	narrowLen := make([]J, n)
+	for i := uint64(0); i < n; i++ {
+		narrowLen[i] = J(len(inputs[i]))
 	}
 	lengthsCodec, err := compressArray(array.NewPrimitivesUnsafe(narrowLen), ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &fsstArray[I, I]{
+	return &fsstArray[I, J]{
 		length:   n,
 		tableRaw: tableRaw,
 		codes:    allCodes,

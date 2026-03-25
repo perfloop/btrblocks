@@ -26,7 +26,7 @@ func computeSignedStats[T SignedInteger](arr array.Array[T]) signedStats[T] {
 	n := arr.Length()
 	if n == 0 {
 		return signedStats[T]{
-			base: baseStats[T]{src: arr},
+			base: baseStats[T]{src: arr, cached: arr},
 		}
 	}
 
@@ -78,7 +78,8 @@ func computeSignedStats[T SignedInteger](arr array.Array[T]) signedStats[T] {
 	return signedStats[T]{
 		base: baseStats[T]{
 			src:           arr,
-			isConst:       len(distinct) == 1,
+			cached:        sampleArray(arr),
+			isConst:       runs == 1,
 			distinctCount: dc,
 			avgRunLength:  float64(n) / float64(runs),
 		},

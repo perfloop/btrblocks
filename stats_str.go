@@ -21,7 +21,7 @@ func (s stringStats) Sample(ctx planContext) array.ArrayCore[string] {
 func computeStringStats(arr array.Array[string]) stringStats {
 	n := arr.Length()
 	if n == 0 {
-		return stringStats{base: baseStats[string]{src: arr}}
+		return stringStats{base: baseStats[string]{src: arr, cached: arr}}
 	}
 
 	type key struct {
@@ -63,6 +63,7 @@ func computeStringStats(arr array.Array[string]) stringStats {
 	return stringStats{
 		base: baseStats[string]{
 			src:           arr,
+			cached:        sampleArray(arr),
 			isConst:       isConst,
 			distinctCount: uint64(len(distinct)),
 			avgRunLength:  float64(n) / float64(runs),

@@ -33,7 +33,7 @@ func TestCodeTypeValues(t *testing.T) {
 
 func TestReadRejectsRemovedCodecKind(t *testing.T) {
 	var buf bytes.Buffer
-	_, err := header{
+	_, err := codecHeader{
 		Version:  versionNumber,
 		Kind:     CodeType(8),
 		ElemType: PTypeUint32,

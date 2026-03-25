@@ -229,7 +229,7 @@ func (a *alpArray[T, I, J]) WriteTo(w io.Writer) (int64, error) {
 	if a.patches != nil {
 		flags |= flagALPHasPatches
 	}
-	n, err := header{
+	n, err := codecHeader{
 		Version:  versionNumber,
 		Kind:     CodecTypeALP,
 		ElemType: array.PTypeForType[T](),
@@ -268,27 +268,19 @@ func (a *alpArray[T, I, J]) WriteTo(w io.Writer) (int64, error) {
 	return n, nil
 }
 
-func readAnyALPArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readAnyALPArray[T Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case float64:
-		c, err := readALPArrayTyped[float64, int64](br, h, opts, alpDecode64)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readALPArrayTyped[float64, int64](br, h, opts, alpDecode64))
 	case float32:
-		c, err := readALPArrayTyped[float32, int32](br, h, opts, alpDecode32)
-		if err != nil {
-			return nil, err
-		}
-		return any(c).(EncodedArray[T]), nil
+		return readCast[T](readALPArrayTyped[float32, int32](br, h, opts, alpDecode32))
 	default:
 		return nil, fmt.Errorf("codec: ALP not supported for %v", h.ElemType)
 	}
 }
 
-func readALPArrayTyped[T Float, I SignedInteger](br *array.BufReader, h header, opts ReadOptions, decode func(I, uint8, uint8) T) (EncodedArray[T], error) {
+func readALPArrayTyped[T Float, I SignedInteger](br *array.BufReader, h codecHeader, opts ReadOptions, decode func(I, uint8, uint8) T) (EncodedArray[T], error) {
 	if h.Flags&^flagALPHasPatches != 0 {
 		return nil, fmt.Errorf("codec: unsupported ALP flags = 0x%x", h.Flags)
 	}
@@ -343,7 +335,7 @@ func readALPArrayTyped[T Float, I SignedInteger](br *array.BufReader, h header, 
 	}
 }
 
-func readALPWithPatchIdx[T Float, I SignedInteger, J UnsignedInteger](br *array.BufReader, h header, opts ReadOptions, buf [2]byte, encoded EncodedArray[I], decode func(I, uint8, uint8) T, offset uint64, idxHeader header) (EncodedArray[T], error) {
+func readALPWithPatchIdx[T Float, I SignedInteger, J UnsignedInteger](br *array.BufReader, h codecHeader, opts ReadOptions, buf [2]byte, encoded EncodedArray[I], decode func(I, uint8, uint8) T, offset uint64, idxHeader codecHeader) (EncodedArray[T], error) {
 	idxCodec, err := readEncodedArrayWithHeader[J](br, idxHeader, opts)
 	if err != nil {
 		return nil, err

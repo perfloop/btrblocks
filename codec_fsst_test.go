@@ -112,6 +112,26 @@ func TestFSSTValueAt(t *testing.T) {
 	}
 }
 
+func TestFSSTIndependentWidthNarrowing(t *testing.T) {
+	// 1000 short strings (max len < 256 → uint8 lengths) whose total
+	// compressed size exceeds 256 bytes (→ uint16 or wider offsets).
+	// Before the split, both would use the wider offset type.
+	values := make([]string, 1000)
+	for i := range values {
+		values[i] = fmt.Sprintf("k%d", i%50)
+	}
+
+	codec, err := buildFSSTArray(buildArray(values), newPlanContext(Options{MaxDepth: 3}))
+	require.NoError(t, err)
+
+	f := codec.(*fsstArray[uint16, uint8])
+	require.NotNil(t, f, "expected fsstArray[uint16, uint8]")
+
+	decoded, err := Decompress(codec)
+	require.NoError(t, err)
+	require.Equal(t, values, decoded)
+}
+
 func makeFSSTBenchData(n int) []string {
 	values := make([]string, n)
 	paths := []string{"/api/v1/users", "/api/v1/orders", "/api/v1/products", "/api/v2/users", "/api/v2/orders"}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync"
 	"unsafe"
 
 	"github.com/axiomhq/btrblocks/array"
@@ -120,6 +119,11 @@ func (c planContext) excludesString(kind CodeType) bool {
 }
 
 // EncodedArray is a typed encoded leaf node in the primitive/string compression tree.
+//
+// String aliasing: For string-typed arrays, values returned by ValueAt and
+// written into dst by DecompressInto may alias internal codec memory (e.g.
+// FSST decode buffers or raw array backing storage). Callers that retain
+// string values beyond the EncodedArray's lifetime must copy them.
 type EncodedArray[T Integer | Float | String] interface {
 	io.WriterTo
 	Encoding() CodeType
@@ -136,16 +140,6 @@ type EncodedArray[T Integer | Float | String] interface {
 func Decompress[T Integer | Float | String](e EncodedArray[T]) ([]T, error) {
 	dst := make([]T, e.Length())
 	return dst, e.DecompressInto(dst)
-}
-
-// chunkBufPool holds reusable byte buffers for writeVirtualArray. Each buffer
-// is 8192 bytes (1024 elements * 8 bytes max width), avoiding a fresh heap
-// allocation on every FoR, ZigZag, and ALP serialization call.
-var chunkBufPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, 1024*8)
-		return &b
-	},
 }
 
 // writeVirtualArray writes a header + chunked transformed values to w.
@@ -172,10 +166,7 @@ func writeVirtualArray[T Integer | Float](w io.Writer, length uint64, transform 
 		chunkElems = length
 	}
 	width := int(unsafe.Sizeof(T(0)))
-
-	bp := chunkBufPool.Get().(*[]byte)
-	defer chunkBufPool.Put(bp)
-	buf := unsafe.Slice((*T)(unsafe.Pointer(unsafe.SliceData(*bp))), int(chunkElems))
+	buf := make([]byte, int(chunkElems)*width)
 
 	var written int64
 	for offset := uint64(0); offset < length; {
@@ -183,16 +174,15 @@ func writeVirtualArray[T Integer | Float](w io.Writer, length uint64, transform 
 		if remaining := length - offset; remaining < uint64(chunk) {
 			chunk = int(remaining)
 		}
-		for i := range chunk {
-			buf[i] = transform(offset + uint64(i))
-		}
-		bytes := unsafe.Slice((*byte)(unsafe.Pointer(&buf[0])), chunk*width)
-		wn, err := w.Write(bytes)
+		putLittleEndian(buf, width, chunk, func(i int) uint64 {
+			return uint64(transform(offset + uint64(i)))
+		})
+		wn, err := w.Write(buf[:chunk*width])
 		written += int64(wn)
 		if err != nil {
 			return n + written, err
 		}
-		if wn != len(bytes) {
+		if wn != chunk*width {
 			return n + written, io.ErrShortWrite
 		}
 		offset += uint64(chunk)
@@ -200,8 +190,47 @@ func writeVirtualArray[T Integer | Float](w io.Writer, length uint64, transform 
 	return n + written, nil
 }
 
-// header is the fixed 24-byte encoded-array stream prefix written before each
-// node body.
+// writeIntegerLE writes a single integer value as little-endian bytes to w.
+// Used by sequence and FoR codecs to serialize inline scalar fields.
+func writeIntegerLE[T Integer](w io.Writer, value T) (int64, error) {
+	var buf [8]byte
+	switch unsafe.Sizeof(value) {
+	case 1:
+		buf[0] = byte(value)
+		n, err := w.Write(buf[:1])
+		return int64(n), err
+	case 2:
+		binary.LittleEndian.PutUint16(buf[:2], uint16(value))
+		n, err := w.Write(buf[:2])
+		return int64(n), err
+	case 4:
+		binary.LittleEndian.PutUint32(buf[:4], uint32(value))
+		n, err := w.Write(buf[:4])
+		return int64(n), err
+	default:
+		binary.LittleEndian.PutUint64(buf[:8], uint64(value))
+		n, err := w.Write(buf[:8])
+		return int64(n), err
+	}
+}
+
+// readIntegerLE reads a single integer value from little-endian bytes.
+func readIntegerLE[T Integer](data []byte) T {
+	switch unsafe.Sizeof(T(0)) {
+	case 1:
+		return T(data[0])
+	case 2:
+		return T(binary.LittleEndian.Uint16(data[:2]))
+	case 4:
+		return T(binary.LittleEndian.Uint32(data[:4]))
+	default:
+		return T(binary.LittleEndian.Uint64(data[:8]))
+	}
+}
+
+// codecHeader is the fixed 24-byte encoded-array stream prefix written before
+// each codec node body. Distinct from array.Header (20 bytes) which prefixes
+// raw array bodies within the codec tree.
 //
 // Version is checked on read and must equal versionNumber (currently 1).
 // Changing a codec's serialization format requires bumping versionNumber and
@@ -215,7 +244,7 @@ func writeVirtualArray[T Integer | Float](w io.Writer, length uint64, transform 
 // recursive children (dict, runend, zigzag) BodySize is 0. For codecs with
 // fixed inline fields followed by children (for, bitpack, alp, alprd, fsst,
 // sequence) BodySize covers only the inline portion.
-type header struct {
+type codecHeader struct {
 	Version  uint8
 	Kind     CodeType
 	ElemType PType
@@ -225,12 +254,12 @@ type header struct {
 	NumBytes uint64
 }
 
-func readHeader(br *array.BufReader) (header, error) {
+func readHeader(br *array.BufReader) (codecHeader, error) {
 	buf, err := br.Read(headerSize)
 	if err != nil {
-		return header{}, err
+		return codecHeader{}, err
 	}
-	return header{
+	return codecHeader{
 		Version:  buf[0],
 		Kind:     CodeType(buf[1]),
 		ElemType: PType(buf[2]),
@@ -241,7 +270,7 @@ func readHeader(br *array.BufReader) (header, error) {
 	}, nil
 }
 
-func (h header) WriteTo(w io.Writer) (int64, error) {
+func (h codecHeader) WriteTo(w io.Writer) (int64, error) {
 	var buf [headerSize]byte
 	buf[0] = h.Version
 	buf[1] = byte(h.Kind)
@@ -255,6 +284,30 @@ func (h header) WriteTo(w io.Writer) (int64, error) {
 		err = io.ErrShortWrite
 	}
 	return int64(n), err
+}
+
+// putLittleEndian encodes count values of the given byte width into buf using
+// explicit little-endian byte order. This avoids platform-endianness assumptions
+// from unsafe pointer casts.
+func putLittleEndian(buf []byte, width, count int, value func(int) uint64) {
+	switch width {
+	case 1:
+		for i := range count {
+			buf[i] = byte(value(i))
+		}
+	case 2:
+		for i := range count {
+			binary.LittleEndian.PutUint16(buf[i*2:], uint16(value(i)))
+		}
+	case 4:
+		for i := range count {
+			binary.LittleEndian.PutUint32(buf[i*4:], uint32(value(i)))
+		}
+	case 8:
+		for i := range count {
+			binary.LittleEndian.PutUint64(buf[i*8:], value(i))
+		}
+	}
 }
 
 func materializeSlice[T Integer | Float | String](src interface {
@@ -282,7 +335,7 @@ func sliceToRawArray[T Integer | Float | String](src interface {
 	return newRawArray(values), nil
 }
 
-func validateHeaderForType[T Integer | Float | String](h header, opts ReadOptions) error {
+func validateHeaderForType[T Integer | Float | String](h codecHeader, opts ReadOptions) error {
 	if h.Version != versionNumber {
 		return fmt.Errorf("codec: unsupported version = %d", h.Version)
 	}
@@ -325,6 +378,16 @@ func validateHeaderForType[T Integer | Float | String](h header, opts ReadOption
 	return nil
 }
 
+// readCast converts a typed EncodedArray result to the generic EncodedArray[T].
+// Used by readAny* dispatch functions to avoid repeating the error-check + cast
+// pattern in every type-switch arm.
+func readCast[T Integer | Float | String](result any, err error) (EncodedArray[T], error) {
+	if err != nil {
+		return nil, err
+	}
+	return result.(EncodedArray[T]), nil
+}
+
 func readEncodedArray[T Integer | Float | String](br *array.BufReader, opts ReadOptions) (EncodedArray[T], error) {
 	h, err := readHeader(br)
 	if err != nil {
@@ -333,7 +396,7 @@ func readEncodedArray[T Integer | Float | String](br *array.BufReader, opts Read
 	return readEncodedArrayWithHeader[T](br, h, opts)
 }
 
-func readEncodedArrayWithHeader[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readEncodedArrayWithHeader[T Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
 	if err := validateHeaderForType[T](h, opts); err != nil {
 		return nil, err
 	}
