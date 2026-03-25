@@ -1,10 +1,23 @@
 package btrblocks
 
 import (
+	"errors"
 	"math"
 
 	"github.com/axiomhq/btrblocks/array"
 )
+
+// isExpectedBuildError reports whether err is a known "scheme doesn't apply"
+// sentinel. These are safe to swallow with a raw fallback. Any other error
+// indicates a bug in the codec and must propagate.
+func isExpectedBuildError(err error) bool {
+	return errors.Is(err, errDepthExhausted) ||
+		errors.Is(err, errDataEmpty) ||
+		errors.Is(err, errValueNotConstant) ||
+		errors.Is(err, errNotArithmeticSequence) ||
+		errors.Is(err, errALPHighPatchRatio) ||
+		errors.Is(err, errALPRDHighPatchRatio)
+}
 
 // statsSource exposes the source array and its sampling policy to the planner.
 type statsSource[T Integer | Float | String] interface {
@@ -56,6 +69,9 @@ func compressWith[T Integer | Float | String, S statsSource[T]](arr array.Array[
 	scheme := chooseScheme(stats, ctx, c)
 	codec, err := scheme.Build(arr, ctx)
 	if err != nil {
+		if !isExpectedBuildError(err) {
+			return nil, err
+		}
 		return newRawArray(arr), nil
 	}
 	if codec.BinarySize() >= rawSize {

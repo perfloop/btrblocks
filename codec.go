@@ -27,6 +27,13 @@ func checkDstLen[T Integer | Float | String](dst []T, need uint64) error {
 const (
 	versionNumber = 1
 	headerSize    = 24
+
+	// defaultMaxReadLength and defaultMaxReadBytes are safety limits applied
+	// when ReadOptions does not specify explicit bounds. They prevent OOM from
+	// adversarial headers while being generous enough for any real workload.
+	// Callers can override via ReadOptions.MaxLength / ReadOptions.MaxBytes.
+	defaultMaxReadLength = 1 << 36 // ~68 billion elements
+	defaultMaxReadBytes  = 1 << 40 // ~1 TB
 )
 
 type kindSet uint16
@@ -301,11 +308,19 @@ func validateHeaderForType[T Integer | Float | String](h header, opts ReadOption
 	if h.ElemType != expected {
 		return fmt.Errorf("codec: element type = %v, want %v", h.ElemType, expected)
 	}
-	if opts.MaxLength > 0 && h.Length > opts.MaxLength {
-		return fmt.Errorf("codec: length %d exceeds limit %d", h.Length, opts.MaxLength)
+	maxLen := opts.MaxLength
+	if maxLen == 0 {
+		maxLen = defaultMaxReadLength
 	}
-	if opts.MaxBytes > 0 && h.NumBytes > opts.MaxBytes {
-		return fmt.Errorf("codec: body size %d exceeds limit %d", h.NumBytes, opts.MaxBytes)
+	if h.Length > maxLen {
+		return fmt.Errorf("codec: length %d exceeds limit %d", h.Length, maxLen)
+	}
+	maxBytes := opts.MaxBytes
+	if maxBytes == 0 {
+		maxBytes = defaultMaxReadBytes
+	}
+	if h.NumBytes > maxBytes {
+		return fmt.Errorf("codec: body size %d exceeds limit %d", h.NumBytes, maxBytes)
 	}
 	return nil
 }

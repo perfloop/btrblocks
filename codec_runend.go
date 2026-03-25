@@ -139,44 +139,27 @@ func readRunEndArray[V Integer | Float | String](br *array.BufReader, h header, 
 	}
 	switch childHeader.ElemType {
 	case PTypeUint8:
-		ends, err := readEncodedArrayWithHeader[uint8](br, childHeader, opts)
-		if err != nil {
-			return nil, fmt.Errorf("codec: runend end %w", err)
-		}
-		if err := validateRunEndChildren(h.Length, runs, ends); err != nil {
-			return nil, err
-		}
-		return &runEndArray[V, uint8]{length: h.Length, runs: runs, ends: ends}, nil
+		return readRunEndOrdinals[V, uint8](br, h, childHeader, opts, runs)
 	case PTypeUint16:
-		ends, err := readEncodedArrayWithHeader[uint16](br, childHeader, opts)
-		if err != nil {
-			return nil, fmt.Errorf("codec: runend end %w", err)
-		}
-		if err := validateRunEndChildren(h.Length, runs, ends); err != nil {
-			return nil, err
-		}
-		return &runEndArray[V, uint16]{length: h.Length, runs: runs, ends: ends}, nil
+		return readRunEndOrdinals[V, uint16](br, h, childHeader, opts, runs)
 	case PTypeUint32:
-		ends, err := readEncodedArrayWithHeader[uint32](br, childHeader, opts)
-		if err != nil {
-			return nil, fmt.Errorf("codec: runend end %w", err)
-		}
-		if err := validateRunEndChildren(h.Length, runs, ends); err != nil {
-			return nil, err
-		}
-		return &runEndArray[V, uint32]{length: h.Length, runs: runs, ends: ends}, nil
+		return readRunEndOrdinals[V, uint32](br, h, childHeader, opts, runs)
 	case PTypeUint64:
-		ends, err := readEncodedArrayWithHeader[uint64](br, childHeader, opts)
-		if err != nil {
-			return nil, fmt.Errorf("codec: runend end %w", err)
-		}
-		if err := validateRunEndChildren(h.Length, runs, ends); err != nil {
-			return nil, err
-		}
-		return &runEndArray[V, uint64]{length: h.Length, runs: runs, ends: ends}, nil
+		return readRunEndOrdinals[V, uint64](br, h, childHeader, opts, runs)
 	default:
 		return nil, fmt.Errorf("codec: runend ordinal child type = %v, want unsigned integer", childHeader.ElemType)
 	}
+}
+
+func readRunEndOrdinals[V Integer | Float | String, I UnsignedInteger](br *array.BufReader, h header, childHeader header, opts ReadOptions, runs EncodedArray[V]) (EncodedArray[V], error) {
+	ends, err := readEncodedArrayWithHeader[I](br, childHeader, opts)
+	if err != nil {
+		return nil, fmt.Errorf("codec: runend end %w", err)
+	}
+	if err := validateRunEndChildren(h.Length, runs, ends); err != nil {
+		return nil, err
+	}
+	return &runEndArray[V, I]{length: h.Length, runs: runs, ends: ends}, nil
 }
 
 func buildRunEndArray[V Integer | Float | String](arr array.ArrayCore[V], ctx planContext, cmp cmpFn[V]) (EncodedArray[V], error) {

@@ -444,6 +444,14 @@ func readALPRDArrayTyped[T Float](br *array.BufReader, h header, opts ReadOption
 	if h.Flags&^flagALPRDHasPatches != 0 {
 		return nil, fmt.Errorf("codec: unsupported ALPRD flags = 0x%x", h.Flags)
 	}
+	// Plausibility bound: body holds 3 fixed bytes + up to 8 dict entries (16 bytes)
+	// + two length-prefixed bit-packed buffers. Each buffer is at most
+	// length * totalBits / 8 bytes. With totalBits <= 64 for float64 and two
+	// buffers (left + right), the packed data is bounded by 2 * length * 8.
+	maxBody := uint64(3+alprdMaxDictSize*2+8) + 2*h.Length*8
+	if h.NumBytes > maxBody {
+		return nil, fmt.Errorf("codec: ALPRD body size %d implausible for length %d", h.NumBytes, h.Length)
+	}
 	body, err := br.Read(int(h.NumBytes))
 	if err != nil {
 		return nil, err

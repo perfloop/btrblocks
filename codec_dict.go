@@ -92,44 +92,27 @@ func readDictArray[V Integer | Float | String](br *array.BufReader, h header, op
 	}
 	switch childHeader.ElemType {
 	case PTypeUint8:
-		indices, err := readEncodedArrayWithHeader[uint8](br, childHeader, opts)
-		if err != nil {
-			return nil, fmt.Errorf("codec: dict index %w", err)
-		}
-		if indices.Length() != h.Length {
-			return nil, fmt.Errorf("codec: dict length = %d, want %d", indices.Length(), h.Length)
-		}
-		return &dictArray[V, uint8]{values: values, indices: indices}, nil
+		return readDictOrdinals[V, uint8](br, h, childHeader, opts, values)
 	case PTypeUint16:
-		indices, err := readEncodedArrayWithHeader[uint16](br, childHeader, opts)
-		if err != nil {
-			return nil, fmt.Errorf("codec: dict index %w", err)
-		}
-		if indices.Length() != h.Length {
-			return nil, fmt.Errorf("codec: dict length = %d, want %d", indices.Length(), h.Length)
-		}
-		return &dictArray[V, uint16]{values: values, indices: indices}, nil
+		return readDictOrdinals[V, uint16](br, h, childHeader, opts, values)
 	case PTypeUint32:
-		indices, err := readEncodedArrayWithHeader[uint32](br, childHeader, opts)
-		if err != nil {
-			return nil, fmt.Errorf("codec: dict index %w", err)
-		}
-		if indices.Length() != h.Length {
-			return nil, fmt.Errorf("codec: dict length = %d, want %d", indices.Length(), h.Length)
-		}
-		return &dictArray[V, uint32]{values: values, indices: indices}, nil
+		return readDictOrdinals[V, uint32](br, h, childHeader, opts, values)
 	case PTypeUint64:
-		indices, err := readEncodedArrayWithHeader[uint64](br, childHeader, opts)
-		if err != nil {
-			return nil, fmt.Errorf("codec: dict index %w", err)
-		}
-		if indices.Length() != h.Length {
-			return nil, fmt.Errorf("codec: dict length = %d, want %d", indices.Length(), h.Length)
-		}
-		return &dictArray[V, uint64]{values: values, indices: indices}, nil
+		return readDictOrdinals[V, uint64](br, h, childHeader, opts, values)
 	default:
 		return nil, fmt.Errorf("codec: dict ordinal child type = %v, want unsigned integer", childHeader.ElemType)
 	}
+}
+
+func readDictOrdinals[V Integer | Float | String, I UnsignedInteger](br *array.BufReader, h header, childHeader header, opts ReadOptions, values EncodedArray[V]) (EncodedArray[V], error) {
+	indices, err := readEncodedArrayWithHeader[I](br, childHeader, opts)
+	if err != nil {
+		return nil, fmt.Errorf("codec: dict index %w", err)
+	}
+	if indices.Length() != h.Length {
+		return nil, fmt.Errorf("codec: dict length = %d, want %d", indices.Length(), h.Length)
+	}
+	return &dictArray[V, I]{values: values, indices: indices}, nil
 }
 
 // buildIntegerDictFromDistinct builds a dictionary-encoded array using

@@ -179,44 +179,27 @@ func readZigZagArray[T SignedInteger](br *array.BufReader, h header, opts ReadOp
 	}
 	switch childHeader.ElemType {
 	case PTypeUint8:
-		child, err := readEncodedArrayWithHeader[uint8](br, childHeader, opts)
-		if err != nil {
-			return nil, err
-		}
-		if child.Length() != h.Length {
-			return nil, fmt.Errorf("codec: zigzag length = %d, want %d", child.Length(), h.Length)
-		}
-		return &zigzagArray[T, uint8]{child: child}, nil
+		return readZigZagChild[T, uint8](br, h, childHeader, opts)
 	case PTypeUint16:
-		child, err := readEncodedArrayWithHeader[uint16](br, childHeader, opts)
-		if err != nil {
-			return nil, err
-		}
-		if child.Length() != h.Length {
-			return nil, fmt.Errorf("codec: zigzag length = %d, want %d", child.Length(), h.Length)
-		}
-		return &zigzagArray[T, uint16]{child: child}, nil
+		return readZigZagChild[T, uint16](br, h, childHeader, opts)
 	case PTypeUint32:
-		child, err := readEncodedArrayWithHeader[uint32](br, childHeader, opts)
-		if err != nil {
-			return nil, err
-		}
-		if child.Length() != h.Length {
-			return nil, fmt.Errorf("codec: zigzag length = %d, want %d", child.Length(), h.Length)
-		}
-		return &zigzagArray[T, uint32]{child: child}, nil
+		return readZigZagChild[T, uint32](br, h, childHeader, opts)
 	case PTypeUint64:
-		child, err := readEncodedArrayWithHeader[uint64](br, childHeader, opts)
-		if err != nil {
-			return nil, err
-		}
-		if child.Length() != h.Length {
-			return nil, fmt.Errorf("codec: zigzag length = %d, want %d", child.Length(), h.Length)
-		}
-		return &zigzagArray[T, uint64]{child: child}, nil
+		return readZigZagChild[T, uint64](br, h, childHeader, opts)
 	default:
 		return nil, fmt.Errorf("codec: zigzag child type = %v, want unsigned integer", childHeader.ElemType)
 	}
+}
+
+func readZigZagChild[T SignedInteger, U UnsignedInteger](br *array.BufReader, h header, childHeader header, opts ReadOptions) (EncodedArray[T], error) {
+	child, err := readEncodedArrayWithHeader[U](br, childHeader, opts)
+	if err != nil {
+		return nil, err
+	}
+	if child.Length() != h.Length {
+		return nil, fmt.Errorf("codec: zigzag length = %d, want %d", child.Length(), h.Length)
+	}
+	return &zigzagArray[T, U]{child: child}, nil
 }
 
 func buildZigZagArray[T SignedInteger](arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {

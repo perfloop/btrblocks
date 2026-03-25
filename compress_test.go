@@ -497,30 +497,52 @@ func TestCompressWithKeepsBorrowedRawWhenKeepingRaw(t *testing.T) {
 }
 
 func TestCompressWithKeepsBorrowedRawWhenBuildFails(t *testing.T) {
-	values := []uint32{10, 20, 30, 40}
-	compressor := testCompressorUint32{
-		schemes: []scheme[uint32, testStatsUint32]{
-			registeredScheme[uint32, testStatsUint32]{
-				kind: CodecTypeBitpack,
-				estimate: func(testStatsUint32, planContext) (float64, bool) {
-					return 2, true
-				},
-				build: func(array.ArrayCore[uint32], planContext) (EncodedArray[uint32], error) {
-					return nil, io.ErrUnexpectedEOF
+	t.Run("expected error falls back to raw", func(t *testing.T) {
+		values := []uint32{10, 20, 30, 40}
+		compressor := testCompressorUint32{
+			schemes: []scheme[uint32, testStatsUint32]{
+				registeredScheme[uint32, testStatsUint32]{
+					kind: CodecTypeBitpack,
+					estimate: func(testStatsUint32, planContext) (float64, bool) {
+						return 2, true
+					},
+					build: func(array.ArrayCore[uint32], planContext) (EncodedArray[uint32], error) {
+						return nil, errDepthExhausted
+					},
 				},
 			},
-		},
-	}
+		}
 
-	codec, err := compressWith(array.NewPrimitivesUnsafe(values), newPlanContext(Options{}), compressor)
-	require.NoError(t, err)
-	require.Equal(t, CodecTypeRaw, codec.Encoding())
+		codec, err := compressWith(array.NewPrimitivesUnsafe(values), newPlanContext(Options{}), compressor)
+		require.NoError(t, err)
+		require.Equal(t, CodecTypeRaw, codec.Encoding())
 
-	values[2] = 777
+		values[2] = 777
 
-	decoded, err := Decompress(codec)
-	require.NoError(t, err)
-	require.Equal(t, []uint32{10, 20, 777, 40}, decoded)
+		decoded, err := Decompress(codec)
+		require.NoError(t, err)
+		require.Equal(t, []uint32{10, 20, 777, 40}, decoded)
+	})
+
+	t.Run("unexpected error propagates", func(t *testing.T) {
+		values := []uint32{10, 20, 30, 40}
+		compressor := testCompressorUint32{
+			schemes: []scheme[uint32, testStatsUint32]{
+				registeredScheme[uint32, testStatsUint32]{
+					kind: CodecTypeBitpack,
+					estimate: func(testStatsUint32, planContext) (float64, bool) {
+						return 2, true
+					},
+					build: func(array.ArrayCore[uint32], planContext) (EncodedArray[uint32], error) {
+						return nil, io.ErrUnexpectedEOF
+					},
+				},
+			},
+		}
+
+		_, err := compressWith(array.NewPrimitivesUnsafe(values), newPlanContext(Options{}), compressor)
+		require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	})
 }
 
 func TestUnsignedOffsetRangeChoosesFoRWhenBitpackIsExcludedByCost(t *testing.T) {
