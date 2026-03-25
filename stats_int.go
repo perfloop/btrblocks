@@ -40,8 +40,18 @@ func computeSignedStats[T SignedInteger](arr array.Array[T]) signedStats[T] {
 
 	for i := uint64(1); i < n; i++ {
 		v := arr.ValueAt(i)
-		if _, exists := distinct[v]; !exists {
-			distinct[v] = uint64(len(distinct))
+		if distinct != nil {
+			if _, exists := distinct[v]; !exists {
+				if uint64(len(distinct)) >= n/2 {
+					// Dict encoding is not viable — more than n/2 distinct values.
+					// Nil the map to bound stats memory for high-cardinality columns.
+					// Safe because the dict estimator rejects at this threshold, so
+					// the dict build function is never called with a nil map.
+					distinct = nil
+				} else {
+					distinct[v] = uint64(len(distinct))
+				}
+			}
 		}
 		if !hasNegative && v < 0 {
 			hasNegative = true
@@ -58,12 +68,18 @@ func computeSignedStats[T SignedInteger](arr array.Array[T]) signedStats[T] {
 		}
 	}
 
+	// When distinct is nil, the true count exceeded n/2. Report n so downstream
+	// estimators (dict, const) see a value that triggers their rejection guards.
+	dc := uint64(len(distinct))
+	if distinct == nil {
+		dc = n
+	}
+
 	return signedStats[T]{
 		base: baseStats[T]{
 			src:           arr,
 			isConst:       len(distinct) == 1,
-			distinctCount: uint64(len(distinct)),
-			distinctRatio: float64(len(distinct)) / float64(n),
+			distinctCount: dc,
 			avgRunLength:  float64(n) / float64(runs),
 		},
 		distinct:    distinct,

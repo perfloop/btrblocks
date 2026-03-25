@@ -38,7 +38,6 @@ func (c *constArray[T]) DecompressInto(dst []T) error {
 	return nil
 }
 
-
 func (c *constArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	if err := array.ValidateSliceBounds(c.length, start, end); err != nil {
 		return nil, err
@@ -53,7 +52,7 @@ func (c *constArray[T]) WriteTo(w io.Writer) (int64, error) {
 		Kind:     CodecTypeConst,
 		ElemType: array.PTypeForType[T](),
 		Length:   c.length,
-		BodySize: body.BinarySize(),
+		NumBytes: body.BinarySize(),
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
@@ -80,15 +79,15 @@ func newConstIntegerArray[T Integer](arr array.ArrayCore[T]) (*constArray[T], er
 }
 
 func newConstFloatArray[T Float](arr array.ArrayCore[T]) (*constArray[T], error) {
-	return newConstArray(arr, cmpFloats[T])
+	return newConstArray(arr, cmpFloatBits[T])
 }
 
 func newConstStringArray[T String](arr array.ArrayCore[T]) (*constArray[T], error) {
 	return newConstArray(arr, cmpStrings[T])
 }
 
-func readConstArray[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
-	arr, err := array.ReadArray[T](r, opts)
+func readConstArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
+	arr, err := array.ReadArrayFromBuf[T](br, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -98,8 +97,8 @@ func readConstArray[T Integer | Float | String](r io.Reader, h header, opts Read
 	if arr.Length() != 1 {
 		return nil, fmt.Errorf("codec: const body length = %d, want 1", arr.Length())
 	}
-	if h.BodySize != arr.BinarySize() {
-		return nil, fmt.Errorf("codec: const body size = %d, want %d", h.BodySize, arr.BinarySize())
+	if h.NumBytes != arr.BinarySize() {
+		return nil, fmt.Errorf("codec: const body size = %d, want %d", h.NumBytes, arr.BinarySize())
 	}
 	return &constArray[T]{length: h.Length, value: arr.ValueAt(0)}, nil
 }

@@ -51,7 +51,7 @@ type compressor[T Integer | Float | String, S statsSource[T]] interface {
 
 func compressWith[T Integer | Float | String, S statsSource[T]](arr array.Array[T], ctx planContext, c compressor[T, S]) (EncodedArray[T], error) {
 	stats := c.ComputeStats(arr)
-	rawSize := newRawArray(arr).BinarySize()
+	rawSize := uint64(headerSize) + rawBinarySize[T](arr)
 
 	scheme := chooseScheme(stats, ctx, c)
 	codec, err := scheme.Build(arr, ctx)

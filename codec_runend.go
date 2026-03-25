@@ -33,8 +33,8 @@ func validateRunEndChildren[V Integer | Float | String, I UnsignedInteger](lengt
 }
 
 func (r *runEndArray[V, I]) Encoding() CodeType { return CodecTypeRunEnd }
-func (r *runEndArray[V, I]) Length() uint64      { return r.length }
-func (r *runEndArray[V, I]) PType() PType        { return array.PTypeForType[V]() }
+func (r *runEndArray[V, I]) Length() uint64     { return r.length }
+func (r *runEndArray[V, I]) PType() PType       { return array.PTypeForType[V]() }
 
 func (r *runEndArray[V, I]) BinarySize() uint64 {
 	return uint64(headerSize) + r.runs.BinarySize() + r.ends.BinarySize()
@@ -72,6 +72,11 @@ func fillRun[T Integer | Float | String](dst []T, start, end int, value T) {
 	}
 }
 
+// DecompressInto decodes the run-end array into dst. It bulk-decodes both
+// children into intermediate slices (sized by run count, not N), then fills dst
+// with memcpy-doubling. Per-element ValueAt was benchmarked and is ~10% slower
+// at 10K elements despite the intermediates being small — the overhead comes
+// from per-call interface dispatch and bitpack unpacking through the codec tree.
 func (r *runEndArray[V, I]) DecompressInto(dst []V) error {
 	if err := checkDstLen(dst, r.length); err != nil {
 		return err
@@ -93,7 +98,6 @@ func (r *runEndArray[V, I]) DecompressInto(dst []V) error {
 	return nil
 }
 
-
 func (r *runEndArray[V, I]) Slice(start, end uint64) (EncodedArray[V], error) {
 	return sliceToRawArray(r, start, end)
 }
@@ -104,7 +108,7 @@ func (r *runEndArray[V, I]) WriteTo(w io.Writer) (int64, error) {
 		Kind:     CodecTypeRunEnd,
 		ElemType: array.PTypeForType[V](),
 		Length:   r.length,
-		BodySize: 0,
+		NumBytes: 0,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
@@ -118,24 +122,24 @@ func (r *runEndArray[V, I]) WriteTo(w io.Writer) (int64, error) {
 	return n + nn, err
 }
 
-func readRunEndArray[V Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[V], error) {
-	if h.BodySize != 0 {
-		return nil, fmt.Errorf("codec: runend body size = %d, want 0", h.BodySize)
+func readRunEndArray[V Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[V], error) {
+	if h.NumBytes != 0 {
+		return nil, fmt.Errorf("codec: runend body size = %d, want 0", h.NumBytes)
 	}
 	if h.Length == 0 {
 		return nil, fmt.Errorf("codec: runend length = 0")
 	}
-	runs, err := readEncodedArray[V](r, opts)
+	runs, err := readEncodedArray[V](br, opts)
 	if err != nil {
 		return nil, err
 	}
-	childHeader, err := readHeader(r)
+	childHeader, err := readHeader(br)
 	if err != nil {
 		return nil, err
 	}
 	switch childHeader.ElemType {
 	case PTypeUint8:
-		ends, err := readEncodedArrayWithHeader[uint8](r, childHeader, opts)
+		ends, err := readEncodedArrayWithHeader[uint8](br, childHeader, opts)
 		if err != nil {
 			return nil, fmt.Errorf("codec: runend end %w", err)
 		}
@@ -144,7 +148,7 @@ func readRunEndArray[V Integer | Float | String](r io.Reader, h header, opts Rea
 		}
 		return &runEndArray[V, uint8]{length: h.Length, runs: runs, ends: ends}, nil
 	case PTypeUint16:
-		ends, err := readEncodedArrayWithHeader[uint16](r, childHeader, opts)
+		ends, err := readEncodedArrayWithHeader[uint16](br, childHeader, opts)
 		if err != nil {
 			return nil, fmt.Errorf("codec: runend end %w", err)
 		}
@@ -153,7 +157,7 @@ func readRunEndArray[V Integer | Float | String](r io.Reader, h header, opts Rea
 		}
 		return &runEndArray[V, uint16]{length: h.Length, runs: runs, ends: ends}, nil
 	case PTypeUint32:
-		ends, err := readEncodedArrayWithHeader[uint32](r, childHeader, opts)
+		ends, err := readEncodedArrayWithHeader[uint32](br, childHeader, opts)
 		if err != nil {
 			return nil, fmt.Errorf("codec: runend end %w", err)
 		}
@@ -162,7 +166,7 @@ func readRunEndArray[V Integer | Float | String](r io.Reader, h header, opts Rea
 		}
 		return &runEndArray[V, uint32]{length: h.Length, runs: runs, ends: ends}, nil
 	case PTypeUint64:
-		ends, err := readEncodedArrayWithHeader[uint64](r, childHeader, opts)
+		ends, err := readEncodedArrayWithHeader[uint64](br, childHeader, opts)
 		if err != nil {
 			return nil, fmt.Errorf("codec: runend end %w", err)
 		}

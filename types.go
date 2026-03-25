@@ -163,18 +163,28 @@ func normalizeOptions(opts Options) Options {
 	return opts
 }
 
-func cmpFloats[T Float](a, b T) bool {
-	switch av := any(a).(type) {
+// floatBits returns the IEEE 754 bit pattern of a float as uint64.
+// Used as a map key for bit-exact float equality (NaN-safe, signed-zero-aware).
+func floatBits[T Float](value T) uint64 {
+	switch v := any(value).(type) {
 	case float32:
-		return math.Float32bits(av) == math.Float32bits(any(b).(float32))
+		return uint64(math.Float32bits(v))
 	case float64:
-		return math.Float64bits(av) == math.Float64bits(any(b).(float64))
+		return math.Float64bits(v)
 	default:
-		return false
+		return 0
 	}
 }
 
-func cmpFloatRuns[T Float](a, b T) bool { return a == b }
+// cmpFloatBits compares floats by bit pattern. Two NaNs with the same bits
+// are equal; +0 and -0 are distinct. Used by const and dict detection.
+func cmpFloatBits[T Float](a, b T) bool {
+	return floatBits(a) == floatBits(b)
+}
+
+// cmpFloatEq compares floats by value. NaN != NaN, so consecutive NaNs break
+// runs. +0 == -0. Used by run-length detection.
+func cmpFloatEq[T Float](a, b T) bool { return a == b }
 
 type cmpFn[T Integer | Float | String] func(T, T) bool
 

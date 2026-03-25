@@ -44,44 +44,9 @@ func (a forEncodedArray[T]) Slice(start, end uint64) (array.Array[T], error) {
 }
 
 func (a forEncodedArray[T]) WriteTo(w io.Writer) (int64, error) {
-	bodySize := a.length * uint64(array.PTypeForType[T]().ByteWidth())
-	n, err := array.Header{
-		Version: versionNumber,
-		PType:   array.PTypeForType[T](),
-		Length:  a.length,
-		NBytes:  bodySize,
-	}.WriteTo(w)
-	if err != nil {
-		return n, err
-	}
-	if a.length == 0 {
-		return n, nil
-	}
-
-	const chunkElems = 1024
-	buf := make([]T, chunkElems)
-	width := int(unsafe.Sizeof(T(0)))
-	var written int64
-	for offset := uint64(0); offset < a.length; {
-		chunk := len(buf)
-		if remaining := a.length - offset; remaining < uint64(chunk) {
-			chunk = int(remaining)
-		}
-		for i := range chunk {
-			buf[i] = a.valueAt(offset+uint64(i)) - a.min
-		}
-		bytes := unsafe.Slice((*byte)(unsafe.Pointer(&buf[0])), chunk*width)
-		wn, err := w.Write(bytes)
-		written += int64(wn)
-		if err != nil {
-			return n + written, err
-		}
-		if wn != len(bytes) {
-			return n + written, io.ErrShortWrite
-		}
-		offset += uint64(chunk)
-	}
-	return n + written, nil
+	return writeVirtualArray(w, a.length, func(i uint64) T {
+		return a.valueAt(i) - a.min
+	})
 }
 
 func (f *forArray[T]) Encoding() CodeType { return CodecTypeFor }
@@ -106,7 +71,6 @@ func (f *forArray[T]) DecompressInto(dst []T) error {
 	return nil
 }
 
-
 func (f *forArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	child, err := f.child.Slice(start, end)
 	if err != nil {
@@ -122,7 +86,7 @@ func (f *forArray[T]) WriteTo(w io.Writer) (int64, error) {
 		Kind:     CodecTypeFor,
 		ElemType: array.PTypeForType[T](),
 		Length:   f.child.Length(),
-		BodySize: minSize,
+		NumBytes: minSize,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
@@ -164,29 +128,29 @@ func (f *forArray[T]) WriteTo(w io.Writer) (int64, error) {
 	return n + nn, err
 }
 
-func readAnyFoRArray[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readAnyFoRArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case uint8:
-		c, err := readFoRArray[uint8](r, h, opts)
+		c, err := readFoRArray[uint8](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint16:
-		c, err := readFoRArray[uint16](r, h, opts)
+		c, err := readFoRArray[uint16](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint32:
-		c, err := readFoRArray[uint32](r, h, opts)
+		c, err := readFoRArray[uint32](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint64:
-		c, err := readFoRArray[uint64](r, h, opts)
+		c, err := readFoRArray[uint64](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -196,29 +160,29 @@ func readAnyFoRArray[T Integer | Float | String](r io.Reader, h header, opts Rea
 	}
 }
 
-func readFoRArray[T UnsignedInteger](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readFoRArray[T UnsignedInteger](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
 	minSize := uint64(unsafe.Sizeof(T(0)))
-	if h.BodySize != minSize {
-		return nil, fmt.Errorf("codec: for body size = %d, want %d", h.BodySize, minSize)
+	if h.NumBytes != minSize {
+		return nil, fmt.Errorf("codec: for body size = %d, want %d", h.NumBytes, minSize)
 	}
 
-	var buf [8]byte
-	if _, err := io.ReadFull(r, buf[:minSize]); err != nil {
+	data, err := br.Read(int(minSize))
+	if err != nil {
 		return nil, err
 	}
 	var minValue T
 	switch unsafe.Sizeof(T(0)) {
 	case 1:
-		minValue = T(buf[0])
+		minValue = T(data[0])
 	case 2:
-		minValue = T(binary.LittleEndian.Uint16(buf[:2]))
+		minValue = T(binary.LittleEndian.Uint16(data[:2]))
 	case 4:
-		minValue = T(binary.LittleEndian.Uint32(buf[:4]))
+		minValue = T(binary.LittleEndian.Uint32(data[:4]))
 	case 8:
-		minValue = T(binary.LittleEndian.Uint64(buf[:8]))
+		minValue = T(binary.LittleEndian.Uint64(data[:8]))
 	}
 
-	child, err := readEncodedArray[T](r, opts)
+	child, err := readEncodedArray[T](br, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -279,16 +243,11 @@ func estimateFoR[T UnsignedInteger, S statsSource[T]](minValue, maxValue T) func
 			return 0, false
 		}
 
-		childSize, ok := bitpackEncodedSize(stats.Source().Length(), rangeWidth)
-		if !ok {
-			return 0, false
-		}
-
-		after := uint64(headerSize) + uint64(unsafe.Sizeof(minValue)) + childSize
-		before := newRawArray(stats.Source()).BinarySize()
-		if after >= before {
-			return 0, false
-		}
-		return float64(before) / float64(after), true
+		// Bit-width ratio (matches Vortex FORScheme). Cheaper than materializing
+		// byte sizes and sufficient for scheme ranking. May over-estimate for very
+		// small arrays where per-node header overhead dominates, but headers are
+		// noise at scale.
+		fullWidth := uint(array.PTypeForType[T]().ByteWidth()) * 8
+		return float64(fullWidth) / float64(rangeWidth), true
 	}
 }

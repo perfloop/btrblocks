@@ -133,7 +133,7 @@ func TestFindBestExponents64(t *testing.T) {
 		values[i] = float64(i) * 0.01
 	}
 	arr := array.NewPrimitivesUnsafe(values)
-	e, f := findBestExponents64(arr)
+	e, f := findBestExponents(arr, 23, alpIsException64)
 	require.True(t, e > f, "expected e > f, got e=%d f=%d", e, f)
 	require.Less(t, e, uint8(23))
 }

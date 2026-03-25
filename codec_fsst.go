@@ -13,16 +13,16 @@ import (
 // fsstArray stores FSST-compressed string data.
 type fsstArray[I, J UnsignedInteger] struct {
 	length   uint64
-	tableRaw []byte       // serialized fsst.Table
-	codes    []byte       // concatenated compressed string bytes
+	tableRaw []byte          // serialized fsst.Table
+	codes    []byte          // concatenated compressed string bytes
 	offsets  EncodedArray[I] // length+1 offsets into codes
 	lengths  EncodedArray[J] // length original uncompressed string lengths
 	table    *fsst.Table
 }
 
 func (f *fsstArray[I, J]) Encoding() CodeType { return CodecTypeFSST }
-func (f *fsstArray[I, J]) Length() uint64      { return f.length }
-func (f *fsstArray[I, J]) PType() PType        { return array.PTypeForType[string]() }
+func (f *fsstArray[I, J]) Length() uint64     { return f.length }
+func (f *fsstArray[I, J]) PType() PType       { return array.PTypeForType[string]() }
 
 func (f *fsstArray[I, J]) BinarySize() uint64 {
 	return uint64(headerSize) + 4 + uint64(len(f.tableRaw)) + 4 + uint64(len(f.codes)) + f.offsets.BinarySize() + f.lengths.BinarySize()
@@ -66,7 +66,6 @@ func (f *fsstArray[I, J]) DecompressInto(dst []string) error {
 	return nil
 }
 
-
 func (f *fsstArray[I, J]) Slice(start, end uint64) (EncodedArray[string], error) {
 	return sliceToRawArray(f, start, end)
 }
@@ -78,7 +77,7 @@ func (f *fsstArray[I, J]) WriteTo(w io.Writer) (int64, error) {
 		Kind:     CodecTypeFSST,
 		ElemType: array.PTypeForType[string](),
 		Length:   f.length,
-		BodySize: bodySize,
+		NumBytes: bodySize,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
@@ -126,12 +125,12 @@ func (f *fsstArray[I, J]) WriteTo(w io.Writer) (int64, error) {
 }
 
 // readFSSTWithLengths reads the lengths child and constructs fsstArray[I, J].
-func readFSSTWithLengths[I, J UnsignedInteger](h header, tableRaw, codes []byte, table *fsst.Table, offsets EncodedArray[I], r io.Reader, opts ReadOptions) (EncodedArray[string], error) {
-	lengthsHeader, err := readHeader(r)
+func readFSSTWithLengths[I, J UnsignedInteger](h header, tableRaw, codes []byte, table *fsst.Table, offsets EncodedArray[I], br *array.BufReader, opts ReadOptions) (EncodedArray[string], error) {
+	lengthsHeader, err := readHeader(br)
 	if err != nil {
 		return nil, err
 	}
-	lengths, err := readEncodedArrayWithHeader[J](r, lengthsHeader, opts)
+	lengths, err := readEncodedArrayWithHeader[J](br, lengthsHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: fsst lengths %w", err)
 	}
@@ -149,34 +148,34 @@ func readFSSTWithLengths[I, J UnsignedInteger](h header, tableRaw, codes []byte,
 }
 
 // readFSSTWithOffsets reads offsets, then dispatches on lengths ElemType.
-func readFSSTWithOffsets[I UnsignedInteger](h header, tableRaw, codes []byte, table *fsst.Table, offsetsHeader header, r io.Reader, opts ReadOptions) (EncodedArray[string], error) {
-	offsets, err := readEncodedArrayWithHeader[I](r, offsetsHeader, opts)
+func readFSSTWithOffsets[I UnsignedInteger](h header, tableRaw, codes []byte, table *fsst.Table, offsetsHeader header, br *array.BufReader, opts ReadOptions) (EncodedArray[string], error) {
+	offsets, err := readEncodedArrayWithHeader[I](br, offsetsHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: fsst offsets %w", err)
 	}
 	if offsets.Length() != h.Length+1 {
 		return nil, fmt.Errorf("codec: fsst offsets length = %d, want %d", offsets.Length(), h.Length+1)
 	}
-	lengthsHeader, err := readHeader(r)
+	lengthsHeader, err := readHeader(br)
 	if err != nil {
 		return nil, err
 	}
 	switch lengthsHeader.ElemType {
 	case PTypeUint8:
-		return readFSSTWithLengthsTyped[I, uint8](h, tableRaw, codes, table, offsets, r, lengthsHeader, opts)
+		return readFSSTWithLengthsTyped[I, uint8](h, tableRaw, codes, table, offsets, br, lengthsHeader, opts)
 	case PTypeUint16:
-		return readFSSTWithLengthsTyped[I, uint16](h, tableRaw, codes, table, offsets, r, lengthsHeader, opts)
+		return readFSSTWithLengthsTyped[I, uint16](h, tableRaw, codes, table, offsets, br, lengthsHeader, opts)
 	case PTypeUint32:
-		return readFSSTWithLengthsTyped[I, uint32](h, tableRaw, codes, table, offsets, r, lengthsHeader, opts)
+		return readFSSTWithLengthsTyped[I, uint32](h, tableRaw, codes, table, offsets, br, lengthsHeader, opts)
 	case PTypeUint64:
-		return readFSSTWithLengthsTyped[I, uint64](h, tableRaw, codes, table, offsets, r, lengthsHeader, opts)
+		return readFSSTWithLengthsTyped[I, uint64](h, tableRaw, codes, table, offsets, br, lengthsHeader, opts)
 	default:
 		return nil, fmt.Errorf("codec: fsst lengths child type = %v, want unsigned integer", lengthsHeader.ElemType)
 	}
 }
 
-func readFSSTWithLengthsTyped[I, J UnsignedInteger](h header, tableRaw, codes []byte, table *fsst.Table, offsets EncodedArray[I], r io.Reader, lengthsHeader header, opts ReadOptions) (EncodedArray[string], error) {
-	lengths, err := readEncodedArrayWithHeader[J](r, lengthsHeader, opts)
+func readFSSTWithLengthsTyped[I, J UnsignedInteger](h header, tableRaw, codes []byte, table *fsst.Table, offsets EncodedArray[I], br *array.BufReader, lengthsHeader header, opts ReadOptions) (EncodedArray[string], error) {
+	lengths, err := readEncodedArrayWithHeader[J](br, lengthsHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: fsst lengths %w", err)
 	}
@@ -193,30 +192,31 @@ func readFSSTWithLengthsTyped[I, J UnsignedInteger](h header, tableRaw, codes []
 	}, nil
 }
 
-func readFSSTArray(r io.Reader, h header, opts ReadOptions) (EncodedArray[string], error) {
+func readFSSTArray(br *array.BufReader, h header, opts ReadOptions) (EncodedArray[string], error) {
 	// read table
-	var buf4 [4]byte
-	if _, err := io.ReadFull(r, buf4[:]); err != nil {
+	data, err := br.Read(4)
+	if err != nil {
 		return nil, err
 	}
-	tableSize := binary.LittleEndian.Uint32(buf4[:])
-	tableRaw := make([]byte, tableSize)
-	if _, err := io.ReadFull(r, tableRaw); err != nil {
+	tableSize := binary.LittleEndian.Uint32(data)
+	tableRaw, err := br.Read(int(tableSize))
+	if err != nil {
 		return nil, err
 	}
 
 	// read codes
-	if _, err := io.ReadFull(r, buf4[:]); err != nil {
+	data, err = br.Read(4)
+	if err != nil {
 		return nil, err
 	}
-	codesSize := binary.LittleEndian.Uint32(buf4[:])
-	codes := make([]byte, codesSize)
-	if _, err := io.ReadFull(r, codes); err != nil {
+	codesSize := binary.LittleEndian.Uint32(data)
+	codes, err := br.Read(int(codesSize))
+	if err != nil {
 		return nil, err
 	}
 
-	if expectedBody := uint64(4) + uint64(tableSize) + uint64(4) + uint64(codesSize); h.BodySize != expectedBody {
-		return nil, fmt.Errorf("codec: fsst body size = %d, want %d", h.BodySize, expectedBody)
+	if expectedBody := uint64(4) + uint64(tableSize) + uint64(4) + uint64(codesSize); h.NumBytes != expectedBody {
+		return nil, fmt.Errorf("codec: fsst body size = %d, want %d", h.NumBytes, expectedBody)
 	}
 
 	table := &fsst.Table{}
@@ -225,30 +225,30 @@ func readFSSTArray(r io.Reader, h header, opts ReadOptions) (EncodedArray[string
 	}
 
 	// read offsets header
-	offsetsHeader, err := readHeader(r)
+	offsetsHeader, err := readHeader(br)
 	if err != nil {
 		return nil, err
 	}
 
 	switch offsetsHeader.ElemType {
 	case PTypeUint8:
-		return readFSSTWithOffsets[uint8](h, tableRaw, codes, table, offsetsHeader, r, opts)
+		return readFSSTWithOffsets[uint8](h, tableRaw, codes, table, offsetsHeader, br, opts)
 	case PTypeUint16:
-		return readFSSTWithOffsets[uint16](h, tableRaw, codes, table, offsetsHeader, r, opts)
+		return readFSSTWithOffsets[uint16](h, tableRaw, codes, table, offsetsHeader, br, opts)
 	case PTypeUint32:
-		return readFSSTWithOffsets[uint32](h, tableRaw, codes, table, offsetsHeader, r, opts)
+		return readFSSTWithOffsets[uint32](h, tableRaw, codes, table, offsetsHeader, br, opts)
 	case PTypeUint64:
-		return readFSSTWithOffsets[uint64](h, tableRaw, codes, table, offsetsHeader, r, opts)
+		return readFSSTWithOffsets[uint64](h, tableRaw, codes, table, offsetsHeader, br, opts)
 	default:
 		return nil, fmt.Errorf("codec: fsst offsets child type = %v, want unsigned integer", offsetsHeader.ElemType)
 	}
 }
 
-func readAnyFSSTArray[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readAnyFSSTArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case string:
-		c, err := readFSSTArray(r, h, opts)
+		c, err := readFSSTArray(br, h, opts)
 		if err != nil {
 			return nil, err
 		}

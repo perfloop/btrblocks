@@ -5,27 +5,24 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"unsafe"
 
 	"github.com/axiomhq/btrblocks/array"
 )
 
-var (
-	pow10F64  [24]float64
-	ipow10F64 [24]float64
-	pow10F32  [11]float32
-	ipow10F32 [11]float32
-)
-
-func init() {
-	for i := range pow10F64 {
-		pow10F64[i] = math.Pow(10, float64(i))
-		ipow10F64[i] = math.Pow(10, -float64(i))
-	}
-	for i := range pow10F32 {
-		pow10F32[i] = float32(math.Pow(10, float64(i)))
-		ipow10F32[i] = float32(math.Pow(10, -float64(i)))
-	}
+// Power-of-10 lookup tables for ALP encode/decode. Literal values avoid init().
+var pow10F64 = [24]float64{
+	1, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
+	1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22, 1e23,
+}
+var ipow10F64 = [24]float64{
+	1, 1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11,
+	1e-12, 1e-13, 1e-14, 1e-15, 1e-16, 1e-17, 1e-18, 1e-19, 1e-20, 1e-21, 1e-22, 1e-23,
+}
+var pow10F32 = [11]float32{
+	1, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10,
+}
+var ipow10F32 = [11]float32{
+	1, 1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10,
 }
 
 const flagALPHasPatches uint32 = 1 << 0
@@ -56,7 +53,7 @@ func alpIsException32(value float32, e, f uint8) bool {
 	return math.Float32bits(alpDecode32(alpEncode32(value, e, f), e, f)) != math.Float32bits(value)
 }
 
-func findBestExponents64(arr array.ArrayCore[float64]) (uint8, uint8) {
+func findBestExponents[T Float](arr array.ArrayCore[T], maxE uint8, isException func(T, uint8, uint8) bool) (uint8, uint8) {
 	n := arr.Length()
 	step := uint64(1)
 	if n > 64 {
@@ -65,38 +62,11 @@ func findBestExponents64(arr array.ArrayCore[float64]) (uint8, uint8) {
 
 	var bestE, bestF uint8
 	bestExceptions := uint64(math.MaxUint64)
-	for e := uint8(0); e < 23; e++ {
+	for e := uint8(0); e < maxE; e++ {
 		for f := uint8(0); f < e; f++ {
 			exceptions := uint64(0)
 			for i := uint64(0); i < n; i += step {
-				if alpIsException64(arr.ValueAt(i), e, f) {
-					exceptions++
-				}
-			}
-			if exceptions < bestExceptions || (exceptions == bestExceptions && (e-f) < (bestE-bestF)) {
-				bestExceptions = exceptions
-				bestE = e
-				bestF = f
-			}
-		}
-	}
-	return bestE, bestF
-}
-
-func findBestExponents32(arr array.ArrayCore[float32]) (uint8, uint8) {
-	n := arr.Length()
-	step := uint64(1)
-	if n > 64 {
-		step = n / 64
-	}
-
-	var bestE, bestF uint8
-	bestExceptions := uint64(math.MaxUint64)
-	for e := uint8(0); e < 10; e++ {
-		for f := uint8(0); f < e; f++ {
-			exceptions := uint64(0)
-			for i := uint64(0); i < n; i += step {
-				if alpIsException32(arr.ValueAt(i), e, f) {
+				if isException(arr.ValueAt(i), e, f) {
 					exceptions++
 				}
 			}
@@ -115,7 +85,7 @@ type alpFuncs[T Float, I SignedInteger] struct {
 	encode      func(T, uint8, uint8) I
 	decode      func(I, uint8, uint8) T
 	isException func(T, uint8, uint8) bool
-	findBest    func(array.ArrayCore[T]) (uint8, uint8)
+	maxE        uint8
 	toBits      func(T) uint64
 }
 
@@ -123,7 +93,7 @@ var alpFuncs64 = alpFuncs[float64, int64]{
 	encode:      alpEncode64,
 	decode:      alpDecode64,
 	isException: alpIsException64,
-	findBest:    findBestExponents64,
+	maxE:        23,
 	toBits:      math.Float64bits,
 }
 
@@ -131,7 +101,7 @@ var alpFuncs32 = alpFuncs[float32, int32]{
 	encode:      alpEncode32,
 	decode:      alpDecode32,
 	isException: alpIsException32,
-	findBest:    findBestExponents32,
+	maxE:        10,
 	toBits:      func(v float32) uint64 { return uint64(math.Float32bits(v)) },
 }
 
@@ -167,44 +137,9 @@ func (a alpEncodedArray[T, I]) Slice(start, end uint64) (array.Array[I], error) 
 }
 
 func (a alpEncodedArray[T, I]) WriteTo(w io.Writer) (int64, error) {
-	bodySize := a.length * uint64(array.PTypeForType[I]().ByteWidth())
-	n, err := array.Header{
-		Version: versionNumber,
-		PType:   array.PTypeForType[I](),
-		Length:  a.length,
-		NBytes:  bodySize,
-	}.WriteTo(w)
-	if err != nil {
-		return n, err
-	}
-	if a.length == 0 {
-		return n, nil
-	}
-
-	const chunkElems = 1024
-	buf := make([]I, chunkElems)
-	width := int(unsafe.Sizeof(I(0)))
-	var written int64
-	for offset := uint64(0); offset < a.length; {
-		chunk := len(buf)
-		if remaining := a.length - offset; remaining < uint64(chunk) {
-			chunk = int(remaining)
-		}
-		for i := range chunk {
-			buf[i] = a.encode(a.valueAt(offset+uint64(i)), a.expE, a.expF)
-		}
-		bytes := unsafe.Slice((*byte)(unsafe.Pointer(&buf[0])), chunk*width)
-		wn, err := w.Write(bytes)
-		written += int64(wn)
-		if err != nil {
-			return n + written, err
-		}
-		if wn != len(bytes) {
-			return n + written, io.ErrShortWrite
-		}
-		offset += uint64(chunk)
-	}
-	return n + written, nil
+	return writeVirtualArray(w, a.length, func(i uint64) I {
+		return a.encode(a.valueAt(i), a.expE, a.expF)
+	})
 }
 
 func isAllSameFloat[T Float](values []T, toBits func(T) uint64) bool {
@@ -233,8 +168,8 @@ type alpArray[T Float, I SignedInteger, J UnsignedInteger] struct {
 const alpBodySize = 2
 
 func (a *alpArray[T, I, J]) Encoding() CodeType { return CodecTypeALP }
-func (a *alpArray[T, I, J]) Length() uint64      { return a.length }
-func (a *alpArray[T, I, J]) PType() PType        { return array.PTypeForType[T]() }
+func (a *alpArray[T, I, J]) Length() uint64     { return a.length }
+func (a *alpArray[T, I, J]) PType() PType       { return array.PTypeForType[T]() }
 func (a *alpArray[T, I, J]) BinarySize() uint64 {
 	size := uint64(headerSize) + alpBodySize + a.encoded.BinarySize()
 	if a.patches != nil {
@@ -253,6 +188,13 @@ func (a *alpArray[T, I, J]) ValueAt(offset uint64) T {
 	return a.decode(a.encoded.ValueAt(offset), a.expE, a.expF)
 }
 
+// DecompressInto decodes the ALP array into dst. It bulk-decodes the integer
+// child into an intermediate slice, then applies the ALP decode transform.
+// Per-element ValueAt was benchmarked and is 1.6x slower at 1K elements because
+// it loses the batch-optimized unpackBatchTyped fast path in the bitpacked
+// integer child — each call traverses the codec tree individually. The
+// intermediate allocation (~N * int_width bytes) is the cost of keeping the
+// fast path.
 func (a *alpArray[T, I, J]) DecompressInto(dst []T) error {
 	if err := checkDstLen(dst, a.length); err != nil {
 		return err
@@ -266,7 +208,6 @@ func (a *alpArray[T, I, J]) DecompressInto(dst []T) error {
 	}
 	return a.patches.Apply(dst[:a.length])
 }
-
 
 func (a *alpArray[T, I, J]) Slice(start, end uint64) (EncodedArray[T], error) {
 	if err := array.ValidateSliceBounds(a.length, start, end); err != nil {
@@ -294,7 +235,7 @@ func (a *alpArray[T, I, J]) WriteTo(w io.Writer) (int64, error) {
 		ElemType: array.PTypeForType[T](),
 		Flags:    flags,
 		Length:   a.length,
-		BodySize: alpBodySize,
+		NumBytes: alpBodySize,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
@@ -327,17 +268,17 @@ func (a *alpArray[T, I, J]) WriteTo(w io.Writer) (int64, error) {
 	return n, nil
 }
 
-func readAnyALPArray[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readAnyALPArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case float64:
-		c, err := readALPArrayTyped[float64, int64](r, h, opts, alpDecode64)
+		c, err := readALPArrayTyped[float64, int64](br, h, opts, alpDecode64)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case float32:
-		c, err := readALPArrayTyped[float32, int32](r, h, opts, alpDecode32)
+		c, err := readALPArrayTyped[float32, int32](br, h, opts, alpDecode32)
 		if err != nil {
 			return nil, err
 		}
@@ -347,18 +288,21 @@ func readAnyALPArray[T Integer | Float | String](r io.Reader, h header, opts Rea
 	}
 }
 
-func readALPArrayTyped[T Float, I SignedInteger](r io.Reader, h header, opts ReadOptions, decode func(I, uint8, uint8) T) (EncodedArray[T], error) {
+func readALPArrayTyped[T Float, I SignedInteger](br *array.BufReader, h header, opts ReadOptions, decode func(I, uint8, uint8) T) (EncodedArray[T], error) {
 	if h.Flags&^flagALPHasPatches != 0 {
 		return nil, fmt.Errorf("codec: unsupported ALP flags = 0x%x", h.Flags)
 	}
-	if h.BodySize != alpBodySize {
-		return nil, fmt.Errorf("codec: ALP body size = %d, want %d", h.BodySize, alpBodySize)
+	if h.NumBytes != alpBodySize {
+		return nil, fmt.Errorf("codec: ALP body size = %d, want %d", h.NumBytes, alpBodySize)
 	}
-	var buf [2]byte
-	if _, err := io.ReadFull(r, buf[:2]); err != nil {
+	data, err := br.Read(2)
+	if err != nil {
 		return nil, err
 	}
-	encoded, err := readEncodedArray[I](r, opts)
+	var buf [2]byte
+	buf[0] = data[0]
+	buf[1] = data[1]
+	encoded, err := readEncodedArray[I](br, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -376,35 +320,35 @@ func readALPArrayTyped[T Float, I SignedInteger](r io.Reader, h header, opts Rea
 		}, nil
 	}
 
-	var offsetBuf [8]byte
-	if _, err := io.ReadFull(r, offsetBuf[:]); err != nil {
+	data, err = br.Read(8)
+	if err != nil {
 		return nil, err
 	}
-	offset := binary.LittleEndian.Uint64(offsetBuf[:])
-	idxHeader, err := readHeader(r)
+	offset := binary.LittleEndian.Uint64(data)
+	idxHeader, err := readHeader(br)
 	if err != nil {
 		return nil, err
 	}
 	switch idxHeader.ElemType {
 	case PTypeUint8:
-		return readALPWithPatchIdx[T, I, uint8](r, h, opts, buf, encoded, decode, offset, idxHeader)
+		return readALPWithPatchIdx[T, I, uint8](br, h, opts, buf, encoded, decode, offset, idxHeader)
 	case PTypeUint16:
-		return readALPWithPatchIdx[T, I, uint16](r, h, opts, buf, encoded, decode, offset, idxHeader)
+		return readALPWithPatchIdx[T, I, uint16](br, h, opts, buf, encoded, decode, offset, idxHeader)
 	case PTypeUint32:
-		return readALPWithPatchIdx[T, I, uint32](r, h, opts, buf, encoded, decode, offset, idxHeader)
+		return readALPWithPatchIdx[T, I, uint32](br, h, opts, buf, encoded, decode, offset, idxHeader)
 	case PTypeUint64:
-		return readALPWithPatchIdx[T, I, uint64](r, h, opts, buf, encoded, decode, offset, idxHeader)
+		return readALPWithPatchIdx[T, I, uint64](br, h, opts, buf, encoded, decode, offset, idxHeader)
 	default:
 		return nil, fmt.Errorf("codec: ALP patch index type = %v, want unsigned integer", idxHeader.ElemType)
 	}
 }
 
-func readALPWithPatchIdx[T Float, I SignedInteger, J UnsignedInteger](r io.Reader, h header, opts ReadOptions, buf [2]byte, encoded EncodedArray[I], decode func(I, uint8, uint8) T, offset uint64, idxHeader header) (EncodedArray[T], error) {
-	idxCodec, err := readEncodedArrayWithHeader[J](r, idxHeader, opts)
+func readALPWithPatchIdx[T Float, I SignedInteger, J UnsignedInteger](br *array.BufReader, h header, opts ReadOptions, buf [2]byte, encoded EncodedArray[I], decode func(I, uint8, uint8) T, offset uint64, idxHeader header) (EncodedArray[T], error) {
+	idxCodec, err := readEncodedArrayWithHeader[J](br, idxHeader, opts)
 	if err != nil {
 		return nil, err
 	}
-	valCodec, err := readEncodedArray[T](r, opts)
+	valCodec, err := readEncodedArray[T](br, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -462,7 +406,7 @@ func buildALPArray[T Float](arr array.ArrayCore[T], ctx planContext) (EncodedArr
 
 func buildALPArrayTyped[T Float, I SignedInteger](arr array.ArrayCore[T], ctx planContext, funcs alpFuncs[T, I]) (EncodedArray[T], error) {
 	childCtx := alpChildContext(ctx)
-	e, f := funcs.findBest(arr)
+	e, f := findBestExponents(arr, funcs.maxE, funcs.isException)
 	n := arr.Length()
 
 	patchIdx := make([]uint64, 0)

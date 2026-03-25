@@ -34,7 +34,7 @@ func (c *floatCompressor[T]) Schemes(stats floatStats[T]) []scheme[T, floatStats
 		registeredScheme[T, floatStats[T]]{
 			kind: CodecTypeDict,
 			estimate: func(stats floatStats[T], ctx planContext) (float64, bool) {
-				return estimateFloatDict[T, floatStats[T]](stats.base.distinctRatio)(stats, ctx)
+				return estimateFloatDict[T, floatStats[T]](stats.base.distinctCount, stats.Source().Length())(stats, ctx)
 			},
 			build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
 				return buildFloatDictFromDistinct(arr, stats.distinct, ctx)
@@ -50,10 +50,10 @@ func (c *floatCompressor[T]) Schemes(stats floatStats[T]) []scheme[T, floatStats
 		registeredScheme[T, floatStats[T]]{
 			kind: CodecTypeRunEnd,
 			estimate: func(stats floatStats[T], ctx planContext) (float64, bool) {
-				return estimateRunEnd[T, floatStats[T]](stats.base.avgRunLength, cmpFloatRuns[T])(stats, ctx)
+				return estimateRunEnd[T, floatStats[T]](stats.base.avgRunLength, cmpFloatEq[T])(stats, ctx)
 			},
 			build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
-				return buildRunEndArray(arr, ctx, cmpFloats[T])
+				return buildRunEndArray(arr, ctx, cmpFloatBits[T])
 			},
 		},
 	}

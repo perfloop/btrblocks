@@ -2,16 +2,11 @@ package btrblocks
 
 import "github.com/axiomhq/btrblocks/array"
 
-const (
-	distinctRatioThreshold = 0.5
-)
-
 // baseStats holds type-agnostic planner statistics for one array.
 type baseStats[T Integer | Float | String] struct {
-	src            array.Array[T]
+	src           array.Array[T]
 	isConst       bool
 	distinctCount uint64
-	distinctRatio float64
 	avgRunLength  float64
 }
 

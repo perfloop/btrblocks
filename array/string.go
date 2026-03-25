@@ -246,6 +246,65 @@ func readStringsOffsets[T UnsignedInteger](r io.Reader, numOffsets int, bufLen u
 	return &Strings[T]{offsets: offsets, buf: buf}, nil
 }
 
+func readStringsFromBuf(br *BufReader, h Header) (Array[string], error) {
+	if h.PType != PTypeString {
+		return nil, errors.New("array: not a string array")
+	}
+	if h.NBytes < 5 || h.Length == ^uint64(0) {
+		return nil, errors.New("array: invalid string body")
+	}
+	numOffsets := h.Length + 1
+	bufLenBytes, err := br.Read(4)
+	if err != nil {
+		return nil, err
+	}
+	bufLen := binary.LittleEndian.Uint32(bufLenBytes)
+	if uint64(bufLen)+4 > h.NBytes {
+		return nil, errors.New("array: invalid string body")
+	}
+	offsetsSize := h.NBytes - 4 - uint64(bufLen)
+	if offsetsSize == 0 {
+		return nil, errors.New("array: invalid string body")
+	}
+	if offsetsSize%numOffsets != 0 {
+		return nil, errors.New("array: invalid string offsets layout")
+	}
+	width := offsetsSize / numOffsets
+	if numOffsets > platformSliceLimit() || offsetsSize > platformSliceLimit() || uint64(bufLen) > platformSliceLimit() {
+		return nil, errors.New("array: string payload exceeds platform limit")
+	}
+	switch width {
+	case 1:
+		return readStringsOffsetsFromBuf[uint8](br, int(numOffsets), bufLen)
+	case 2:
+		return readStringsOffsetsFromBuf[uint16](br, int(numOffsets), bufLen)
+	case 4:
+		return readStringsOffsetsFromBuf[uint32](br, int(numOffsets), bufLen)
+	case 8:
+		return readStringsOffsetsFromBuf[uint64](br, int(numOffsets), bufLen)
+	default:
+		return nil, errors.New("array: unsupported string offset width")
+	}
+}
+
+func readStringsOffsetsFromBuf[T UnsignedInteger](br *BufReader, numOffsets int, bufLen uint32) (*Strings[T], error) {
+	width := int(unsafe.Sizeof(T(0)))
+	byteLen := numOffsets * width
+	raw, err := br.Read(byteLen)
+	if err != nil {
+		return nil, err
+	}
+	offsets := unsafe.Slice((*T)(unsafe.Pointer(unsafe.SliceData(raw))), numOffsets)
+	if err := validateStringOffsets(offsets, bufLen); err != nil {
+		return nil, err
+	}
+	buf, err := br.Read(int(bufLen))
+	if err != nil {
+		return nil, err
+	}
+	return &Strings[T]{offsets: offsets, buf: buf}, nil
+}
+
 func validateStringOffsets[T UnsignedInteger](offsets []T, bufLen uint32) error {
 	if len(offsets) == 0 {
 		return errors.New("array: invalid string offsets")

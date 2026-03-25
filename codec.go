@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"unsafe"
 
 	"github.com/axiomhq/btrblocks/array"
 )
@@ -129,7 +130,58 @@ func Decompress[T Integer | Float | String](e EncodedArray[T]) ([]T, error) {
 	return dst, e.DecompressInto(dst)
 }
 
-// header is the fixed encoded-array stream prefix written before each node body.
+// writeVirtualArray writes a header + chunked transformed values to w.
+// Used by forEncodedArray, zigzagEncodedArray, and alpEncodedArray which all
+// need to write a virtual array (source values passed through a transform)
+// without materializing the entire result.
+func writeVirtualArray[T Integer | Float](w io.Writer, length uint64, transform func(uint64) T) (int64, error) {
+	bodySize := length * uint64(array.PTypeForType[T]().ByteWidth())
+	n, err := array.Header{
+		Version: versionNumber,
+		PType:   array.PTypeForType[T](),
+		Length:  length,
+		NBytes:  bodySize,
+	}.WriteTo(w)
+	if err != nil {
+		return n, err
+	}
+	if length == 0 {
+		return n, nil
+	}
+
+	const chunkElems = 1024
+	buf := make([]T, chunkElems)
+	width := int(unsafe.Sizeof(T(0)))
+	var written int64
+	for offset := uint64(0); offset < length; {
+		chunk := len(buf)
+		if remaining := length - offset; remaining < uint64(chunk) {
+			chunk = int(remaining)
+		}
+		for i := range chunk {
+			buf[i] = transform(offset + uint64(i))
+		}
+		bytes := unsafe.Slice((*byte)(unsafe.Pointer(&buf[0])), chunk*width)
+		wn, err := w.Write(bytes)
+		written += int64(wn)
+		if err != nil {
+			return n + written, err
+		}
+		if wn != len(bytes) {
+			return n + written, io.ErrShortWrite
+		}
+		offset += uint64(chunk)
+	}
+	return n + written, nil
+}
+
+// header is the fixed 24-byte encoded-array stream prefix written before each
+// node body.
+//
+// Version is checked on read and must equal versionNumber (currently 1).
+// Changing a codec's serialization format requires bumping versionNumber and
+// adding migration logic in readEncodedArrayWithHeader. There is no backward
+// compatibility mechanism — a version mismatch is a hard error.
 //
 // BodySize is the number of bytes of inline data written directly after this
 // header and before any recursive EncodedArray children or patch streams.
@@ -145,12 +197,12 @@ type header struct {
 	Reserved uint8
 	Flags    uint32
 	Length   uint64
-	BodySize uint64
+	NumBytes uint64
 }
 
-func readHeader(r io.Reader) (header, error) {
-	var buf [headerSize]byte
-	if _, err := io.ReadFull(r, buf[:]); err != nil {
+func readHeader(br *array.BufReader) (header, error) {
+	buf, err := br.Read(headerSize)
+	if err != nil {
 		return header{}, err
 	}
 	return header{
@@ -160,7 +212,7 @@ func readHeader(r io.Reader) (header, error) {
 		Reserved: buf[3],
 		Flags:    binary.LittleEndian.Uint32(buf[4:8]),
 		Length:   binary.LittleEndian.Uint64(buf[8:16]),
-		BodySize: binary.LittleEndian.Uint64(buf[16:24]),
+		NumBytes: binary.LittleEndian.Uint64(buf[16:24]),
 	}, nil
 }
 
@@ -172,7 +224,7 @@ func (h header) WriteTo(w io.Writer) (int64, error) {
 	buf[3] = h.Reserved
 	binary.LittleEndian.PutUint32(buf[4:8], h.Flags)
 	binary.LittleEndian.PutUint64(buf[8:16], h.Length)
-	binary.LittleEndian.PutUint64(buf[16:24], h.BodySize)
+	binary.LittleEndian.PutUint64(buf[16:24], h.NumBytes)
 	n, err := w.Write(buf[:])
 	if err == nil && n != len(buf) {
 		err = io.ErrShortWrite
@@ -234,47 +286,47 @@ func validateHeaderForType[T Integer | Float | String](h header, opts ReadOption
 	if opts.MaxLength > 0 && h.Length > opts.MaxLength {
 		return fmt.Errorf("codec: length %d exceeds limit %d", h.Length, opts.MaxLength)
 	}
-	if opts.MaxBytes > 0 && h.BodySize > opts.MaxBytes {
-		return fmt.Errorf("codec: body size %d exceeds limit %d", h.BodySize, opts.MaxBytes)
+	if opts.MaxBytes > 0 && h.NumBytes > opts.MaxBytes {
+		return fmt.Errorf("codec: body size %d exceeds limit %d", h.NumBytes, opts.MaxBytes)
 	}
 	return nil
 }
 
-func readEncodedArray[T Integer | Float | String](r io.Reader, opts ReadOptions) (EncodedArray[T], error) {
-	h, err := readHeader(r)
+func readEncodedArray[T Integer | Float | String](br *array.BufReader, opts ReadOptions) (EncodedArray[T], error) {
+	h, err := readHeader(br)
 	if err != nil {
 		return nil, err
 	}
-	return readEncodedArrayWithHeader[T](r, h, opts)
+	return readEncodedArrayWithHeader[T](br, h, opts)
 }
 
-func readEncodedArrayWithHeader[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readEncodedArrayWithHeader[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
 	if err := validateHeaderForType[T](h, opts); err != nil {
 		return nil, err
 	}
 	switch h.Kind {
 	case CodecTypeConst:
-		return readConstArray[T](r, h, opts)
+		return readConstArray[T](br, h, opts)
 	case CodecTypeRaw:
-		return readRawArray[T](r, h, opts)
+		return readRawArray[T](br, h, opts)
 	case CodecTypeDict:
-		return readDictArray[T](r, h, opts)
+		return readDictArray[T](br, h, opts)
 	case CodecTypeRunEnd:
-		return readRunEndArray[T](r, h, opts)
+		return readRunEndArray[T](br, h, opts)
 	case CodecTypeZigZag:
-		return readAnyZigZagArray[T](r, h, opts)
+		return readAnyZigZagArray[T](br, h, opts)
 	case CodecTypeBitpack:
-		return readAnyBitPackedArray[T](r, h, opts)
+		return readAnyBitPackedArray[T](br, h, opts)
 	case CodecTypeFor:
-		return readAnyFoRArray[T](r, h, opts)
+		return readAnyFoRArray[T](br, h, opts)
 	case CodecTypeSequence:
-		return readAnySequenceArray[T](r, h, opts)
+		return readAnySequenceArray[T](br, h, opts)
 	case CodecTypeALP:
-		return readAnyALPArray[T](r, h, opts)
+		return readAnyALPArray[T](br, h, opts)
 	case CodecTypeALPRD:
-		return readAnyALPRDArray[T](r, h, opts)
+		return readAnyALPRDArray[T](br, h, opts)
 	case CodecTypeFSST:
-		return readAnyFSSTArray[T](r, h, opts)
+		return readAnyFSSTArray[T](br, h, opts)
 	default:
 		return nil, fmt.Errorf("codec: unknown kind = %d", h.Kind)
 	}

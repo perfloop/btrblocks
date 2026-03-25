@@ -3,7 +3,6 @@ package btrblocks
 import (
 	"fmt"
 	"io"
-	"unsafe"
 
 	"github.com/axiomhq/btrblocks/array"
 )
@@ -41,44 +40,9 @@ func (a zigzagEncodedArray[T, U]) Slice(start, end uint64) (array.Array[U], erro
 }
 
 func (a zigzagEncodedArray[T, U]) WriteTo(w io.Writer) (int64, error) {
-	bodySize := a.length * uint64(array.PTypeForType[U]().ByteWidth())
-	n, err := array.Header{
-		Version: versionNumber,
-		PType:   array.PTypeForType[U](),
-		Length:  a.length,
-		NBytes:  bodySize,
-	}.WriteTo(w)
-	if err != nil {
-		return n, err
-	}
-	if a.length == 0 {
-		return n, nil
-	}
-
-	const chunkElems = 1024
-	buf := make([]U, chunkElems)
-	width := int(unsafe.Sizeof(U(0)))
-	var written int64
-	for offset := uint64(0); offset < a.length; {
-		chunk := len(buf)
-		if remaining := a.length - offset; remaining < uint64(chunk) {
-			chunk = int(remaining)
-		}
-		for i := range chunk {
-			buf[i] = U(zigzagEncodeValue(a.valueAt(offset + uint64(i))))
-		}
-		bytes := unsafe.Slice((*byte)(unsafe.Pointer(&buf[0])), chunk*width)
-		wn, err := w.Write(bytes)
-		written += int64(wn)
-		if err != nil {
-			return n + written, err
-		}
-		if wn != len(bytes) {
-			return n + written, io.ErrShortWrite
-		}
-		offset += uint64(chunk)
-	}
-	return n + written, nil
+	return writeVirtualArray(w, a.length, func(i uint64) U {
+		return U(zigzagEncodeValue(a.valueAt(i)))
+	})
 }
 
 func zigzagEncode64(n int64) uint64 {
@@ -150,7 +114,6 @@ func (z *zigzagArray[T, U]) DecompressInto(dst []T) error {
 	return nil
 }
 
-
 func (z *zigzagArray[T, U]) Slice(start, end uint64) (EncodedArray[T], error) {
 	child, err := z.child.Slice(start, end)
 	if err != nil {
@@ -165,7 +128,7 @@ func (z *zigzagArray[T, U]) WriteTo(w io.Writer) (int64, error) {
 		Kind:     CodecTypeZigZag,
 		ElemType: array.PTypeForType[T](),
 		Length:   z.child.Length(),
-		BodySize: 0,
+		NumBytes: 0,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
@@ -174,29 +137,29 @@ func (z *zigzagArray[T, U]) WriteTo(w io.Writer) (int64, error) {
 	return n + nn, err
 }
 
-func readAnyZigZagArray[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readAnyZigZagArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case int8:
-		c, err := readZigZagArray[int8](r, h, opts)
+		c, err := readZigZagArray[int8](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case int16:
-		c, err := readZigZagArray[int16](r, h, opts)
+		c, err := readZigZagArray[int16](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case int32:
-		c, err := readZigZagArray[int32](r, h, opts)
+		c, err := readZigZagArray[int32](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case int64:
-		c, err := readZigZagArray[int64](r, h, opts)
+		c, err := readZigZagArray[int64](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -206,17 +169,17 @@ func readAnyZigZagArray[T Integer | Float | String](r io.Reader, h header, opts 
 	}
 }
 
-func readZigZagArray[T SignedInteger](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
-	if h.BodySize != 0 {
-		return nil, fmt.Errorf("codec: zigzag body size = %d, want 0", h.BodySize)
+func readZigZagArray[T SignedInteger](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
+	if h.NumBytes != 0 {
+		return nil, fmt.Errorf("codec: zigzag body size = %d, want 0", h.NumBytes)
 	}
-	childHeader, err := readHeader(r)
+	childHeader, err := readHeader(br)
 	if err != nil {
 		return nil, err
 	}
 	switch childHeader.ElemType {
 	case PTypeUint8:
-		child, err := readEncodedArrayWithHeader[uint8](r, childHeader, opts)
+		child, err := readEncodedArrayWithHeader[uint8](br, childHeader, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -225,7 +188,7 @@ func readZigZagArray[T SignedInteger](r io.Reader, h header, opts ReadOptions) (
 		}
 		return &zigzagArray[T, uint8]{child: child}, nil
 	case PTypeUint16:
-		child, err := readEncodedArrayWithHeader[uint16](r, childHeader, opts)
+		child, err := readEncodedArrayWithHeader[uint16](br, childHeader, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -234,7 +197,7 @@ func readZigZagArray[T SignedInteger](r io.Reader, h header, opts ReadOptions) (
 		}
 		return &zigzagArray[T, uint16]{child: child}, nil
 	case PTypeUint32:
-		child, err := readEncodedArrayWithHeader[uint32](r, childHeader, opts)
+		child, err := readEncodedArrayWithHeader[uint32](br, childHeader, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -243,7 +206,7 @@ func readZigZagArray[T SignedInteger](r io.Reader, h header, opts ReadOptions) (
 		}
 		return &zigzagArray[T, uint32]{child: child}, nil
 	case PTypeUint64:
-		child, err := readEncodedArrayWithHeader[uint64](r, childHeader, opts)
+		child, err := readEncodedArrayWithHeader[uint64](br, childHeader, opts)
 		if err != nil {
 			return nil, err
 		}

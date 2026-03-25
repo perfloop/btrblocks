@@ -41,6 +41,21 @@ func readHeader(r io.Reader) (Header, error) {
 	}, nil
 }
 
+// readHeaderFromBuf reads a 20-byte header from br (zero-copy).
+func readHeaderFromBuf(br *BufReader) (Header, error) {
+	buf, err := br.Read(headerSize)
+	if err != nil {
+		return Header{}, err
+	}
+	return Header{
+		Version: buf[0],
+		PType:   PType(buf[1]),
+		Flags:   binary.LittleEndian.Uint16(buf[2:4]),
+		Length:  binary.LittleEndian.Uint64(buf[4:12]),
+		NBytes:  binary.LittleEndian.Uint64(buf[12:20]),
+	}, nil
+}
+
 // ReadOptions constrains resource usage when decoding from untrusted streams.
 // The zero value applies no limits (suitable for trusted internal streams).
 type ReadOptions struct {

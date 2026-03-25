@@ -118,6 +118,40 @@ func readPrimitivesWithHeader[T PrimitiveType](r io.Reader, h Header) (*Primitiv
 	return &Primitives[T]{pType: h.PType, data: data}, nil
 }
 
+// readPrimitivesFromBuf parses a primitive array body from br. The returned
+// Primitives shares backing memory with br.Buf — zero-copy. Callers must keep
+// the original buffer alive. Assumes little-endian, x86_64/ARM64 (unaligned
+// multi-byte access is supported).
+func readPrimitivesFromBuf[T PrimitiveType](br *BufReader, h Header) (*Primitives[T], error) {
+	expected := PTypeForType[T]()
+	if h.PType != expected {
+		return nil, fmt.Errorf("array: PType %v does not match %T", h.PType, *new(T))
+	}
+	width := h.PType.ByteWidth()
+	if width == 0 {
+		return nil, fmt.Errorf("array: unknown PType %v", h.PType)
+	}
+	if h.Length == 0 {
+		if h.NBytes != 0 {
+			return nil, errors.New("array: invalid primitive body size")
+		}
+		return &Primitives[T]{pType: h.PType, data: nil}, nil
+	}
+	width64 := uint64(width)
+	if h.Length > platformSliceLimit()/width64 {
+		return nil, errors.New("array: primitive payload exceeds platform limit")
+	}
+	if h.NBytes != h.Length*width64 {
+		return nil, errors.New("array: invalid primitive body size")
+	}
+	raw, err := br.Read(int(h.NBytes))
+	if err != nil {
+		return nil, err
+	}
+	data := unsafe.Slice((*T)(unsafe.Pointer(unsafe.SliceData(raw))), int(h.Length))
+	return &Primitives[T]{pType: h.PType, data: data}, nil
+}
+
 // ReadPrimitives reads a primitive array from r. The type parameter T must match the array's PType; otherwise an error is returned.
 func ReadPrimitives[T PrimitiveType](r io.Reader, opts ...ReadOptions) (*Primitives[T], error) {
 	h, err := readHeader(r)

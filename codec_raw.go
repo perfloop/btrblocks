@@ -36,7 +36,6 @@ func (r *rawArray[T]) DecompressInto(dst []T) error {
 	return nil
 }
 
-
 func (r *rawArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	return sliceToRawArray(r, start, end)
 }
@@ -47,7 +46,7 @@ func (r *rawArray[T]) WriteTo(w io.Writer) (int64, error) {
 		Kind:     CodecTypeRaw,
 		ElemType: array.PTypeForType[T](),
 		Length:   r.arr.Length(),
-		BodySize: r.arr.BinarySize(),
+		NumBytes: r.arr.BinarySize(),
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
@@ -56,16 +55,16 @@ func (r *rawArray[T]) WriteTo(w io.Writer) (int64, error) {
 	return n + int64(nn), err
 }
 
-func readRawArray[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
-	arr, err := array.ReadArray[T](r, opts)
+func readRawArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
+	arr, err := array.ReadArrayFromBuf[T](br, opts)
 	if err != nil {
 		return nil, err
 	}
 	if h.Length != arr.Length() {
 		return nil, fmt.Errorf("codec: raw length = %d, want %d", h.Length, arr.Length())
 	}
-	if h.BodySize != arr.BinarySize() {
-		return nil, fmt.Errorf("codec: raw body size = %d, want %d", h.BodySize, arr.BinarySize())
+	if h.NumBytes != arr.BinarySize() {
+		return nil, fmt.Errorf("codec: raw body size = %d, want %d", h.NumBytes, arr.BinarySize())
 	}
 	return &rawArray[T]{arr: arr}, nil
 }

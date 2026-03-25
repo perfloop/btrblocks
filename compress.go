@@ -18,7 +18,21 @@ func Read[T Integer | Float | String](r io.Reader, opts ...ReadOptions) (Encoded
 	if len(opts) > 0 {
 		o = opts[0]
 	}
-	return readEncodedArray[T](r, o)
+	buf, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	br := &array.BufReader{Buf: buf}
+	return readEncodedArray[T](br, o)
+}
+
+func ReadBytes[T Integer | Float | String](data []byte, opts ...ReadOptions) (EncodedArray[T], error) {
+	var o ReadOptions
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	br := &array.BufReader{Buf: data}
+	return readEncodedArray[T](br, o)
 }
 
 func compressArray[T Integer | Float | String](arr array.Array[T], ctx planContext) (EncodedArray[T], error) {

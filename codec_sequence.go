@@ -64,7 +64,6 @@ func (s *sequenceArray[T]) DecompressInto(dst []T) error {
 	return nil
 }
 
-
 func (s *sequenceArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	if err := array.ValidateSliceBounds(s.length, start, end); err != nil {
 		return nil, err
@@ -83,7 +82,7 @@ func (s *sequenceArray[T]) WriteTo(w io.Writer) (int64, error) {
 		Kind:     CodecTypeSequence,
 		ElemType: array.PTypeForType[T](),
 		Length:   s.length,
-		BodySize: bodySize,
+		NumBytes: bodySize,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
@@ -127,53 +126,53 @@ func (s *sequenceArray[T]) WriteTo(w io.Writer) (int64, error) {
 	return n, nil
 }
 
-func readAnySequenceArray[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readAnySequenceArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case int8:
-		c, err := readSequenceArray[int8](r, h, opts)
+		c, err := readSequenceArray[int8](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case int16:
-		c, err := readSequenceArray[int16](r, h, opts)
+		c, err := readSequenceArray[int16](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case int32:
-		c, err := readSequenceArray[int32](r, h, opts)
+		c, err := readSequenceArray[int32](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case int64:
-		c, err := readSequenceArray[int64](r, h, opts)
+		c, err := readSequenceArray[int64](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint8:
-		c, err := readSequenceArray[uint8](r, h, opts)
+		c, err := readSequenceArray[uint8](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint16:
-		c, err := readSequenceArray[uint16](r, h, opts)
+		c, err := readSequenceArray[uint16](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint32:
-		c, err := readSequenceArray[uint32](r, h, opts)
+		c, err := readSequenceArray[uint32](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint64:
-		c, err := readSequenceArray[uint64](r, h, opts)
+		c, err := readSequenceArray[uint64](br, h, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -183,27 +182,27 @@ func readAnySequenceArray[T Integer | Float | String](r io.Reader, h header, opt
 	}
 }
 
-func readSequenceArray[T Integer](r io.Reader, h header, _ ReadOptions) (EncodedArray[T], error) {
+func readSequenceArray[T Integer](br *array.BufReader, h header, _ ReadOptions) (EncodedArray[T], error) {
 	elemSize := uint64(unsafe.Sizeof(T(0)))
-	if h.BodySize != 2*elemSize {
-		return nil, fmt.Errorf("codec: sequence body size = %d, want %d", h.BodySize, 2*elemSize)
+	if h.NumBytes != 2*elemSize {
+		return nil, fmt.Errorf("codec: sequence body size = %d, want %d", h.NumBytes, 2*elemSize)
 	}
 
-	var buf [8]byte
 	var vals [2]T
 	for i := range vals {
-		if _, err := io.ReadFull(r, buf[:elemSize]); err != nil {
+		data, err := br.Read(int(elemSize))
+		if err != nil {
 			return nil, err
 		}
 		switch unsafe.Sizeof(T(0)) {
 		case 1:
-			vals[i] = T(buf[0])
+			vals[i] = T(data[0])
 		case 2:
-			vals[i] = T(binary.LittleEndian.Uint16(buf[:2]))
+			vals[i] = T(binary.LittleEndian.Uint16(data[:2]))
 		case 4:
-			vals[i] = T(binary.LittleEndian.Uint32(buf[:4]))
+			vals[i] = T(binary.LittleEndian.Uint32(data[:4]))
 		case 8:
-			vals[i] = T(binary.LittleEndian.Uint64(buf[:8]))
+			vals[i] = T(binary.LittleEndian.Uint64(data[:8]))
 		}
 	}
 	return &sequenceArray[T]{length: h.Length, base: vals[0], step: vals[1]}, nil

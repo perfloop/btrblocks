@@ -61,6 +61,96 @@ func readOpts(opts []ReadOptions) ReadOptions {
 	return ReadOptions{}
 }
 
+func ReadArrayFromBuf[T Integer | Float | String](br *BufReader, opts ...ReadOptions) (Array[T], error) {
+	header, err := readHeaderFromBuf(br)
+	if err != nil {
+		return nil, err
+	}
+	return readArrayFromBufWithHeader[T](br, header, readOpts(opts))
+}
+
+func readArrayFromBufWithHeader[T Integer | Float | String](br *BufReader, header Header, opts ReadOptions) (Array[T], error) {
+	if err := validateHeader(header, opts); err != nil {
+		return nil, err
+	}
+	expected := PTypeForType[T]()
+	if header.PType != expected {
+		return nil, fmt.Errorf("array: PType %v does not match %T", header.PType, *new(T))
+	}
+
+	var zero T
+	switch any(zero).(type) {
+	case int8:
+		arr, err := readPrimitivesFromBuf[int8](br, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(arr).(Array[T]), nil
+	case int16:
+		arr, err := readPrimitivesFromBuf[int16](br, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(arr).(Array[T]), nil
+	case int32:
+		arr, err := readPrimitivesFromBuf[int32](br, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(arr).(Array[T]), nil
+	case int64:
+		arr, err := readPrimitivesFromBuf[int64](br, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(arr).(Array[T]), nil
+	case uint8:
+		arr, err := readPrimitivesFromBuf[uint8](br, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(arr).(Array[T]), nil
+	case uint16:
+		arr, err := readPrimitivesFromBuf[uint16](br, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(arr).(Array[T]), nil
+	case uint32:
+		arr, err := readPrimitivesFromBuf[uint32](br, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(arr).(Array[T]), nil
+	case uint64:
+		arr, err := readPrimitivesFromBuf[uint64](br, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(arr).(Array[T]), nil
+	case float32:
+		arr, err := readPrimitivesFromBuf[float32](br, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(arr).(Array[T]), nil
+	case float64:
+		arr, err := readPrimitivesFromBuf[float64](br, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(arr).(Array[T]), nil
+	case string:
+		arr, err := readStringsFromBuf(br, header)
+		if err != nil {
+			return nil, err
+		}
+		return any(arr).(Array[T]), nil
+	default:
+		return nil, fmt.Errorf("array: unsupported element type %T", zero)
+	}
+}
+
 func readArrayWithHeader[T Integer | Float | String](r io.Reader, header Header, opts ReadOptions) (Array[T], error) {
 	if err := validateHeader(header, opts); err != nil {
 		return nil, err

@@ -3,7 +3,6 @@ package btrblocks
 import (
 	"fmt"
 	"io"
-	"math"
 
 	"github.com/axiomhq/btrblocks/array"
 )
@@ -15,8 +14,8 @@ type dictArray[V Integer | Float | String, I UnsignedInteger] struct {
 }
 
 func (d *dictArray[V, I]) Encoding() CodeType { return CodecTypeDict }
-func (d *dictArray[V, I]) Length() uint64      { return d.indices.Length() }
-func (d *dictArray[V, I]) PType() PType        { return array.PTypeForType[V]() }
+func (d *dictArray[V, I]) Length() uint64     { return d.indices.Length() }
+func (d *dictArray[V, I]) PType() PType       { return array.PTypeForType[V]() }
 
 func (d *dictArray[V, I]) BinarySize() uint64 {
 	return uint64(headerSize) + d.values.BinarySize() + d.indices.BinarySize()
@@ -26,6 +25,13 @@ func (d *dictArray[V, I]) ValueAt(offset uint64) V {
 	return d.values.ValueAt(uint64(d.indices.ValueAt(offset)))
 }
 
+// DecompressInto decodes the dictionary into dst. It bulk-decodes both the
+// values and indices children into intermediate slices, then performs a single
+// gather pass. Per-element ValueAt was benchmarked and is 3.3x slower at 10K
+// elements because it loses the batch-optimized unpackBatchTyped fast path in
+// the bitpacked indices child — each call traverses the codec tree individually
+// instead of one bulk decode. The intermediate allocation (~N * index_width
+// bytes) is the cost of keeping the fast path.
 func (d *dictArray[V, I]) DecompressInto(dst []V) error {
 	if err := checkDstLen(dst, d.indices.Length()); err != nil {
 		return err
@@ -44,7 +50,6 @@ func (d *dictArray[V, I]) DecompressInto(dst []V) error {
 	return nil
 }
 
-
 func (d *dictArray[V, I]) Slice(start, end uint64) (EncodedArray[V], error) {
 	indices, err := d.indices.Slice(start, end)
 	if err != nil {
@@ -59,7 +64,7 @@ func (d *dictArray[V, I]) WriteTo(w io.Writer) (int64, error) {
 		Kind:     CodecTypeDict,
 		ElemType: array.PTypeForType[V](),
 		Length:   d.indices.Length(),
-		BodySize: 0,
+		NumBytes: 0,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
@@ -73,32 +78,21 @@ func (d *dictArray[V, I]) WriteTo(w io.Writer) (int64, error) {
 	return n + nn, err
 }
 
-func floatDictKey[T Float](value T) uint64 {
-	switch v := any(value).(type) {
-	case float32:
-		return uint64(math.Float32bits(v))
-	case float64:
-		return math.Float64bits(v)
-	default:
-		return 0
+func readDictArray[V Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[V], error) {
+	if h.NumBytes != 0 {
+		return nil, fmt.Errorf("codec: dict body size = %d, want 0", h.NumBytes)
 	}
-}
-
-func readDictArray[V Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[V], error) {
-	if h.BodySize != 0 {
-		return nil, fmt.Errorf("codec: dict body size = %d, want 0", h.BodySize)
-	}
-	values, err := readEncodedArray[V](r, opts)
+	values, err := readEncodedArray[V](br, opts)
 	if err != nil {
 		return nil, err
 	}
-	childHeader, err := readHeader(r)
+	childHeader, err := readHeader(br)
 	if err != nil {
 		return nil, err
 	}
 	switch childHeader.ElemType {
 	case PTypeUint8:
-		indices, err := readEncodedArrayWithHeader[uint8](r, childHeader, opts)
+		indices, err := readEncodedArrayWithHeader[uint8](br, childHeader, opts)
 		if err != nil {
 			return nil, fmt.Errorf("codec: dict index %w", err)
 		}
@@ -107,7 +101,7 @@ func readDictArray[V Integer | Float | String](r io.Reader, h header, opts ReadO
 		}
 		return &dictArray[V, uint8]{values: values, indices: indices}, nil
 	case PTypeUint16:
-		indices, err := readEncodedArrayWithHeader[uint16](r, childHeader, opts)
+		indices, err := readEncodedArrayWithHeader[uint16](br, childHeader, opts)
 		if err != nil {
 			return nil, fmt.Errorf("codec: dict index %w", err)
 		}
@@ -116,7 +110,7 @@ func readDictArray[V Integer | Float | String](r io.Reader, h header, opts ReadO
 		}
 		return &dictArray[V, uint16]{values: values, indices: indices}, nil
 	case PTypeUint32:
-		indices, err := readEncodedArrayWithHeader[uint32](r, childHeader, opts)
+		indices, err := readEncodedArrayWithHeader[uint32](br, childHeader, opts)
 		if err != nil {
 			return nil, fmt.Errorf("codec: dict index %w", err)
 		}
@@ -125,7 +119,7 @@ func readDictArray[V Integer | Float | String](r io.Reader, h header, opts ReadO
 		}
 		return &dictArray[V, uint32]{values: values, indices: indices}, nil
 	case PTypeUint64:
-		indices, err := readEncodedArrayWithHeader[uint64](r, childHeader, opts)
+		indices, err := readEncodedArrayWithHeader[uint64](br, childHeader, opts)
 		if err != nil {
 			return nil, fmt.Errorf("codec: dict index %w", err)
 		}
@@ -205,7 +199,7 @@ func buildFloatDictFromDistinct[T Float](arr array.ArrayCore[T], distinct map[ui
 	if len(distinct) == 0 {
 		distinct = make(map[uint64]uint64)
 		for i := uint64(0); i < arr.Length(); i++ {
-			key := floatDictKey(arr.ValueAt(i))
+			key := floatBits(arr.ValueAt(i))
 			if _, ok := distinct[key]; !ok {
 				distinct[key] = uint64(len(distinct))
 			}
@@ -236,7 +230,7 @@ func buildFloatDictFromDistinct[T Float](arr array.ArrayCore[T], distinct map[ui
 func buildFloatDictWithCodes[T Float, I UnsignedInteger](arr array.ArrayCore[T], distinct map[uint64]uint64, valuesCodec EncodedArray[T], ctx planContext) (EncodedArray[T], error) {
 	codes := make([]I, arr.Length())
 	for i := uint64(0); i < arr.Length(); i++ {
-		codes[i] = I(distinct[floatDictKey(arr.ValueAt(i))])
+		codes[i] = I(distinct[floatBits(arr.ValueAt(i))])
 	}
 	childCtx := ctx.descend().withIntegerExcludes(CodecTypeDict, CodecTypeSequence)
 	codesCodec, err := compressArray(array.NewPrimitivesUnsafe(codes), childCtx)
@@ -300,35 +294,29 @@ func estimateIntegerDict[T Integer, S statsSource[T]](distinctCount uint64, avgR
 			return 0, false
 		}
 
-		elemWidth := uint64(array.PTypeForType[T]().ByteWidth())
-		valuesSize := uint64(headerSize) + uint64(array.HeaderSize) + distinctCount*elemWidth
-
-		codesWidth := bitWidthForUnsigned(distinctCount - 1)
-		codesSize, ok := bitpackEncodedSize(n, codesWidth)
-		if !ok {
-			return 0, false
-		}
+		// Bit-cost ratio (matches Vortex DictScheme). All costs are in bits,
+		// avoiding header-size accounting and wrapper allocations. May over-
+		// estimate for very small arrays where per-node header overhead
+		// dominates, but headers are noise at scale.
+		elemBitWidth := uint64(array.PTypeForType[T]().ByteWidth()) * 8
+		valuesCost := elemBitWidth * distinctCount
+		codesBW := uint64(bitWidthForUnsigned(distinctCount - 1))
+		codesCost := codesBW * n
 
 		if avgRunLength >= 4 {
 			runCount := uint64(float64(n)/avgRunLength + 0.5)
 			if runCount == 0 {
 				runCount = 1
 			}
-			runsSize, ok := bitpackEncodedSize(runCount, codesWidth)
-			if ok {
-				endsWidth := bitWidthForUnsigned(n - 1)
-				endsSize, ok := bitpackEncodedSize(runCount-1, endsWidth)
-				if ok {
-					runEndSize := uint64(headerSize) + runsSize + endsSize
-					if runEndSize < codesSize {
-						codesSize = runEndSize
-					}
-				}
+			// Assume codes may be RLE-compressed: codes bitpacked + 32-bit run ends.
+			rleCost := (codesBW + 32) * runCount
+			if rleCost < codesCost {
+				codesCost = rleCost
 			}
 		}
 
-		after := uint64(headerSize) + valuesSize + codesSize
-		before := newRawArray(stats.Source()).BinarySize()
+		before := n * elemBitWidth
+		after := valuesCost + codesCost
 		if after >= before {
 			return 0, false
 		}
@@ -346,9 +334,9 @@ func estimateStringDict[S statsSource[string]](estimatedDistinctCount uint64) fu
 	}
 }
 
-func estimateFloatDict[T Float, S statsSource[T]](distinctRatio float64) func(S, planContext) (float64, bool) {
+func estimateFloatDict[T Float, S statsSource[T]](distinctCount uint64, valueCount uint64) func(S, planContext) (float64, bool) {
 	return func(stats S, ctx planContext) (float64, bool) {
-		if ctx.depth <= 0 || distinctRatio > distinctRatioThreshold {
+		if ctx.depth <= 0 || valueCount == 0 || distinctCount > valueCount/2 {
 			return 0, false
 		}
 		return estimateBySample(stats, ctx, func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {

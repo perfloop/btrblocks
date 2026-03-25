@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	alprdMaxDictSize            = 8
-	alprdMaxCutBits             = 16
-	flagALPRDHasPatches  uint32 = 1 << 0
+	alprdMaxDictSize           = 8
+	alprdMaxCutBits            = 16
+	flagALPRDHasPatches uint32 = 1 << 0
 )
 
 var errALPRDHighPatchRatio = fmt.Errorf("codec: ALPRD patch ratio exceeds 50%%")
@@ -148,8 +148,8 @@ func alprdBodySize(dictSize uint8, leftBuf, rightBuf []byte) uint64 {
 }
 
 func (a *alprdArray[T, J]) Encoding() CodeType { return CodecTypeALPRD }
-func (a *alprdArray[T, J]) Length() uint64      { return a.length }
-func (a *alprdArray[T, J]) PType() PType        { return array.PTypeForType[T]() }
+func (a *alprdArray[T, J]) Length() uint64     { return a.length }
+func (a *alprdArray[T, J]) PType() PType       { return array.PTypeForType[T]() }
 func (a *alprdArray[T, J]) BinarySize() uint64 {
 	size := uint64(headerSize) + alprdBodySize(a.dictSize, a.leftParts, a.rightParts)
 	if a.patches != nil {
@@ -196,7 +196,6 @@ func (a *alprdArray[T, J]) DecompressInto(dst []T) error {
 	return nil
 }
 
-
 func (a *alprdArray[T, J]) Slice(start, end uint64) (EncodedArray[T], error) {
 	if err := array.ValidateSliceBounds(a.length, start, end); err != nil {
 		return nil, err
@@ -242,7 +241,7 @@ func (a *alprdArray[T, J]) WriteTo(w io.Writer) (int64, error) {
 		ElemType: array.PTypeForType[T](),
 		Flags:    flags,
 		Length:   a.length,
-		BodySize: bodySize,
+		NumBytes: bodySize,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
@@ -423,17 +422,17 @@ func estimateALPRD[T Float, S statsSource[T]](isConst bool) func(S, planContext)
 }
 
 // readAnyALPRDArray dispatches deserialization by float type.
-func readAnyALPRDArray[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
+func readAnyALPRDArray[T Integer | Float | String](br *array.BufReader, h header, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case float64:
-		c, err := readALPRDArrayTyped[float64](r, h, opts, alprdFuncs64.floatFromBits)
+		c, err := readALPRDArrayTyped[float64](br, h, opts, alprdFuncs64.floatFromBits)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case float32:
-		c, err := readALPRDArrayTyped[float32](r, h, opts, alprdFuncs32.floatFromBits)
+		c, err := readALPRDArrayTyped[float32](br, h, opts, alprdFuncs32.floatFromBits)
 		if err != nil {
 			return nil, err
 		}
@@ -443,12 +442,12 @@ func readAnyALPRDArray[T Integer | Float | String](r io.Reader, h header, opts R
 	}
 }
 
-func readALPRDArrayTyped[T Float](r io.Reader, h header, opts ReadOptions, floatFromBits func(uint64) T) (EncodedArray[T], error) {
+func readALPRDArrayTyped[T Float](br *array.BufReader, h header, opts ReadOptions, floatFromBits func(uint64) T) (EncodedArray[T], error) {
 	if h.Flags&^flagALPRDHasPatches != 0 {
 		return nil, fmt.Errorf("codec: unsupported ALPRD flags = 0x%x", h.Flags)
 	}
-	body := make([]byte, h.BodySize)
-	if _, err := io.ReadFull(r, body); err != nil {
+	body, err := br.Read(int(h.NumBytes))
+	if err != nil {
 		return nil, err
 	}
 
@@ -475,14 +474,12 @@ func readALPRDArrayTyped[T Float](r io.Reader, h header, opts ReadOptions, float
 
 	leftLen := binary.LittleEndian.Uint32(body[off:])
 	off += 4
-	leftParts := make([]byte, leftLen)
-	copy(leftParts, body[off:off+int(leftLen)])
+	leftParts := body[off : off+int(leftLen)]
 	off += int(leftLen)
 
 	rightLen := binary.LittleEndian.Uint32(body[off:])
 	off += 4
-	rightParts := make([]byte, rightLen)
-	copy(rightParts, body[off:off+int(rightLen)])
+	rightParts := body[off : off+int(rightLen)]
 
 	if h.Flags&flagALPRDHasPatches == 0 {
 		return &alprdArray[T, uint64]{
@@ -497,36 +494,36 @@ func readALPRDArrayTyped[T Float](r io.Reader, h header, opts ReadOptions, float
 		}, nil
 	}
 
-	var offsetBuf [8]byte
-	if _, err := io.ReadFull(r, offsetBuf[:]); err != nil {
+	data, err := br.Read(8)
+	if err != nil {
 		return nil, err
 	}
-	offset := binary.LittleEndian.Uint64(offsetBuf[:])
-	idxHeader, err := readHeader(r)
+	offset := binary.LittleEndian.Uint64(data)
+	idxHeader, err := readHeader(br)
 	if err != nil {
 		return nil, err
 	}
 
 	switch idxHeader.ElemType {
 	case PTypeUint8:
-		return readALPRDWithPatchIdx[T, uint8](r, h, opts, rightBitWidth, leftBitWidth, dictSize, dict, leftParts, rightParts, floatFromBits, offset, idxHeader)
+		return readALPRDWithPatchIdx[T, uint8](br, h, opts, rightBitWidth, leftBitWidth, dictSize, dict, leftParts, rightParts, floatFromBits, offset, idxHeader)
 	case PTypeUint16:
-		return readALPRDWithPatchIdx[T, uint16](r, h, opts, rightBitWidth, leftBitWidth, dictSize, dict, leftParts, rightParts, floatFromBits, offset, idxHeader)
+		return readALPRDWithPatchIdx[T, uint16](br, h, opts, rightBitWidth, leftBitWidth, dictSize, dict, leftParts, rightParts, floatFromBits, offset, idxHeader)
 	case PTypeUint32:
-		return readALPRDWithPatchIdx[T, uint32](r, h, opts, rightBitWidth, leftBitWidth, dictSize, dict, leftParts, rightParts, floatFromBits, offset, idxHeader)
+		return readALPRDWithPatchIdx[T, uint32](br, h, opts, rightBitWidth, leftBitWidth, dictSize, dict, leftParts, rightParts, floatFromBits, offset, idxHeader)
 	case PTypeUint64:
-		return readALPRDWithPatchIdx[T, uint64](r, h, opts, rightBitWidth, leftBitWidth, dictSize, dict, leftParts, rightParts, floatFromBits, offset, idxHeader)
+		return readALPRDWithPatchIdx[T, uint64](br, h, opts, rightBitWidth, leftBitWidth, dictSize, dict, leftParts, rightParts, floatFromBits, offset, idxHeader)
 	default:
 		return nil, fmt.Errorf("codec: ALPRD patch index type = %v, want unsigned integer", idxHeader.ElemType)
 	}
 }
 
-func readALPRDWithPatchIdx[T Float, J UnsignedInteger](r io.Reader, h header, opts ReadOptions, rightBitWidth, leftBitWidth, dictSize uint8, dict [alprdMaxDictSize]uint16, leftParts, rightParts []byte, floatFromBits func(uint64) T, offset uint64, idxHeader header) (EncodedArray[T], error) {
-	idxCodec, err := readEncodedArrayWithHeader[J](r, idxHeader, opts)
+func readALPRDWithPatchIdx[T Float, J UnsignedInteger](br *array.BufReader, h header, opts ReadOptions, rightBitWidth, leftBitWidth, dictSize uint8, dict [alprdMaxDictSize]uint16, leftParts, rightParts []byte, floatFromBits func(uint64) T, offset uint64, idxHeader header) (EncodedArray[T], error) {
+	idxCodec, err := readEncodedArrayWithHeader[J](br, idxHeader, opts)
 	if err != nil {
 		return nil, err
 	}
-	valCodec, err := readEncodedArray[uint16](r, opts)
+	valCodec, err := readEncodedArray[uint16](br, opts)
 	if err != nil {
 		return nil, err
 	}

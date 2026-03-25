@@ -38,7 +38,7 @@ func TestRunEndRoundtripFloat64(t *testing.T) {
 		values[i] = 3.5
 	}
 
-	codec, err := buildRunEndArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}), cmpFloats[float64])
+	codec, err := buildRunEndArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}), cmpFloatBits[float64])
 	require.NoError(t, err)
 
 	var buf bytes.Buffer
