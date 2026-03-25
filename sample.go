@@ -157,9 +157,12 @@ func sampleArray[T Integer | Float | String](arr array.Array[T]) array.ArrayCore
 		start := part.start + offset
 		chunk, err := arr.Slice(start, start+take)
 		if err != nil {
-			panic(err)
+			continue
 		}
 		chunks = append(chunks, chunk)
+	}
+	if len(chunks) == 0 {
+		return arr
 	}
 	return newSampledArray(chunks)
 }

@@ -18,7 +18,7 @@ func (c *signedIntCompressor[T]) Schemes(stats signedStats[T]) []scheme[T, signe
 		registeredScheme[T, signedStats[T]]{
 			kind: CodecTypeConst,
 			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
-				return estimateConst[T](stats.base.isConst)(stats.Source(), ctx)
+				return estimateConst(stats.Source(), ctx, stats.base.isConst)
 			},
 			build: func(arr array.ArrayCore[T], _ planContext) (EncodedArray[T], error) {
 				return newConstIntegerArray(arr)
@@ -36,14 +36,14 @@ func (c *signedIntCompressor[T]) Schemes(stats signedStats[T]) []scheme[T, signe
 		registeredScheme[T, signedStats[T]]{
 			kind: CodecTypeZigZag,
 			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
-				return estimateZigZag[T, signedStats[T]](stats.hasNegative)(stats, ctx)
+				return estimateZigZag[T, signedStats[T]](stats, ctx, stats.hasNegative)
 			},
 			build: buildZigZagArray[T],
 		},
 		registeredScheme[T, signedStats[T]]{
 			kind: CodecTypeDict,
 			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
-				return estimateIntegerDict[T, signedStats[T]](stats.base.distinctCount, stats.base.avgRunLength)(stats, ctx)
+				return estimateIntegerDict[T, signedStats[T]](stats, ctx, stats.base.distinctCount, stats.base.avgRunLength)
 			},
 			build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
 				return buildIntegerDictFromDistinct(arr, stats.distinct, ctx)
@@ -52,7 +52,7 @@ func (c *signedIntCompressor[T]) Schemes(stats signedStats[T]) []scheme[T, signe
 		registeredScheme[T, signedStats[T]]{
 			kind: CodecTypeRunEnd,
 			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
-				return estimateRunEnd[T, signedStats[T]](stats.base.avgRunLength, cmpIntegers[T])(stats, ctx)
+				return estimateRunEnd[T, signedStats[T]](stats, ctx, stats.base.avgRunLength, cmpIntegers[T])
 			},
 			build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
 				return buildRunEndArray(arr, ctx, cmpIntegers[T])

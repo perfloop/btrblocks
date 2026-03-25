@@ -412,13 +412,11 @@ func buildALPRDPatchesTyped[J UnsignedInteger](length uint64, patchIdx []uint64,
 	return newPatches[uint16, J](length, 0, patchIdxCodec, newRawArray(array.NewPrimitivesUnsafe(patchVals)))
 }
 
-func estimateALPRD[T Float, S statsSource[T]](isConst bool) func(S, planContext) (float64, bool) {
-	return func(stats S, ctx planContext) (float64, bool) {
-		if ctx.depth <= 0 || isConst {
-			return 0, false
-		}
-		return estimateBySample(stats, ctx, buildALPRDArray[T])
+func estimateALPRD[T Float, S statsSource[T]](stats S, ctx planContext, isConst bool) (float64, bool) {
+	if ctx.depth <= 0 || isConst {
+		return 0, false
 	}
+	return estimateBySample(stats, ctx, buildALPRDArray[T])
 }
 
 // readAnyALPRDArray dispatches deserialization by float type.

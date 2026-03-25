@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"unsafe"
 
 	"github.com/axiomhq/btrblocks/array"
 )
@@ -44,19 +45,19 @@ func (c *constArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 }
 
 func (c *constArray[T]) WriteTo(w io.Writer) (int64, error) {
-	body := constBodyArray(c.value)
+	bodySize := constBodyBinarySize(c.value)
 	n, err := header{
 		Version:  versionNumber,
 		Kind:     CodecTypeConst,
 		ElemType: array.PTypeForType[T](),
 		Length:   c.length,
-		NumBytes: body.BinarySize(),
+		NumBytes: bodySize,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
 	}
-	nn, err := body.WriteTo(w)
-	return n + int64(nn), err
+	nn, err := writeConstElementArray(w, c.value)
+	return n + nn, err
 }
 
 func newConstArray[T Integer | Float | String](arr array.ArrayCore[T], cmp cmpFn[T]) (*constArray[T], error) {
@@ -101,13 +102,11 @@ func readConstArray[T Integer | Float | String](br *array.BufReader, h header, o
 	return &constArray[T]{length: h.Length, value: arr.ValueAt(0)}, nil
 }
 
-func estimateConst[T Integer | Float | String](isConst bool) func(array.ArrayCore[T], planContext) (float64, bool) {
-	return func(arr array.ArrayCore[T], ctx planContext) (float64, bool) {
-		if ctx.isSample || !isConst {
-			return 0, false
-		}
-		return float64(arr.Length()) + 1, true
+func estimateConst[T Integer | Float | String](arr array.ArrayCore[T], ctx planContext, isConst bool) (float64, bool) {
+	if ctx.isSample || !isConst {
+		return 0, false
 	}
+	return float64(arr.Length()) + 1, true
 }
 
 func constBodyBinarySize[T Integer | Float | String](value T) uint64 {
@@ -130,32 +129,29 @@ func constBodyBinarySize[T Integer | Float | String](value T) uint64 {
 	}
 }
 
-func constBodyArray[T Integer | Float | String](value T) array.Array[T] {
+// writeConstElementArray writes a single-element array body (header + value)
+// directly to w without allocating an intermediate array.Array. For primitives,
+// the in-memory bytes are the wire format (little-endian platform required).
+// Strings fall back to array.NewStrings for offset/buffer construction.
+func writeConstElementArray[T Integer | Float | String](w io.Writer, value T) (int64, error) {
 	var zero T
 	switch any(zero).(type) {
-	case int8:
-		return any(array.NewPrimitivesUnsafe([]int8{any(value).(int8)})).(array.Array[T])
-	case int16:
-		return any(array.NewPrimitivesUnsafe([]int16{any(value).(int16)})).(array.Array[T])
-	case int32:
-		return any(array.NewPrimitivesUnsafe([]int32{any(value).(int32)})).(array.Array[T])
-	case int64:
-		return any(array.NewPrimitivesUnsafe([]int64{any(value).(int64)})).(array.Array[T])
-	case uint8:
-		return any(array.NewPrimitivesUnsafe([]uint8{any(value).(uint8)})).(array.Array[T])
-	case uint16:
-		return any(array.NewPrimitivesUnsafe([]uint16{any(value).(uint16)})).(array.Array[T])
-	case uint32:
-		return any(array.NewPrimitivesUnsafe([]uint32{any(value).(uint32)})).(array.Array[T])
-	case uint64:
-		return any(array.NewPrimitivesUnsafe([]uint64{any(value).(uint64)})).(array.Array[T])
-	case float32:
-		return any(array.NewPrimitivesUnsafe([]float32{any(value).(float32)})).(array.Array[T])
-	case float64:
-		return any(array.NewPrimitivesUnsafe([]float64{any(value).(float64)})).(array.Array[T])
 	case string:
-		return any(array.NewStrings([]string{any(value).(string)})).(array.Array[T])
+		body := array.NewStrings([]string{any(value).(string)})
+		return body.WriteTo(w)
 	default:
-		return nil
+		pt := array.PTypeForType[T]()
+		width := pt.ByteWidth()
+		n, err := array.Header{Version: versionNumber, PType: pt, Length: 1, NumBytes: uint64(width)}.WriteTo(w)
+		if err != nil {
+			return n, err
+		}
+		var buf [8]byte
+		copy(buf[:width], unsafe.Slice((*byte)(unsafe.Pointer(&value)), width))
+		nn, err := w.Write(buf[:width])
+		if err == nil && nn != width {
+			err = io.ErrShortWrite
+		}
+		return n + int64(nn), err
 	}
 }

@@ -128,7 +128,7 @@ func (c *Strings[T]) header() Header {
 		Version: 1,
 		PType:   PTypeString,
 		Length:  c.Length(),
-		NBytes:  c.bodySize(),
+		NumBytes:  c.bodySize(),
 	}
 }
 
@@ -177,7 +177,7 @@ func readStringsWithHeader(r io.Reader, h Header) (Array[string], error) {
 	if h.PType != PTypeString {
 		return nil, errors.New("array: not a string array")
 	}
-	if h.NBytes < 5 || h.Length == ^uint64(0) {
+	if h.NumBytes < 5 || h.Length == ^uint64(0) {
 		return nil, errors.New("array: invalid string body")
 	}
 	numOffsets := h.Length + 1
@@ -185,10 +185,10 @@ func readStringsWithHeader(r io.Reader, h Header) (Array[string], error) {
 	if err := binary.Read(r, binary.LittleEndian, &bufLen); err != nil {
 		return nil, err
 	}
-	if uint64(bufLen)+4 > h.NBytes {
+	if uint64(bufLen)+4 > h.NumBytes {
 		return nil, errors.New("array: invalid string body")
 	}
-	offsetsSize := h.NBytes - 4 - uint64(bufLen)
+	offsetsSize := h.NumBytes - 4 - uint64(bufLen)
 	if offsetsSize == 0 {
 		return nil, errors.New("array: invalid string body")
 	}
@@ -250,7 +250,7 @@ func readStringsFromBuf(br *BufReader, h Header) (Array[string], error) {
 	if h.PType != PTypeString {
 		return nil, errors.New("array: not a string array")
 	}
-	if h.NBytes < 5 || h.Length == ^uint64(0) {
+	if h.NumBytes < 5 || h.Length == ^uint64(0) {
 		return nil, errors.New("array: invalid string body")
 	}
 	numOffsets := h.Length + 1
@@ -259,10 +259,10 @@ func readStringsFromBuf(br *BufReader, h Header) (Array[string], error) {
 		return nil, err
 	}
 	bufLen := binary.LittleEndian.Uint32(bufLenBytes)
-	if uint64(bufLen)+4 > h.NBytes {
+	if uint64(bufLen)+4 > h.NumBytes {
 		return nil, errors.New("array: invalid string body")
 	}
-	offsetsSize := h.NBytes - 4 - uint64(bufLen)
+	offsetsSize := h.NumBytes - 4 - uint64(bufLen)
 	if offsetsSize == 0 {
 		return nil, errors.New("array: invalid string body")
 	}

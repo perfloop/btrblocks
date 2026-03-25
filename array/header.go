@@ -23,7 +23,7 @@ type Header struct {
 	PType   PType  // Element type (int8, uint32, string, etc.).
 	Flags   uint16 // Reserved for future use.
 	Length  uint64 // Number of elements in the array.
-	NBytes  uint64 // Number of bytes in the body following this header.
+	NumBytes  uint64 // Number of bytes in the body following this header.
 }
 
 // readHeader reads a 20-byte header from r.
@@ -37,7 +37,7 @@ func readHeader(r io.Reader) (Header, error) {
 		PType:   PType(buf[1]),
 		Flags:   binary.LittleEndian.Uint16(buf[2:4]),
 		Length:  binary.LittleEndian.Uint64(buf[4:12]),
-		NBytes:  binary.LittleEndian.Uint64(buf[12:20]),
+		NumBytes:  binary.LittleEndian.Uint64(buf[12:20]),
 	}, nil
 }
 
@@ -52,7 +52,7 @@ func readHeaderFromBuf(br *BufReader) (Header, error) {
 		PType:   PType(buf[1]),
 		Flags:   binary.LittleEndian.Uint16(buf[2:4]),
 		Length:  binary.LittleEndian.Uint64(buf[4:12]),
-		NBytes:  binary.LittleEndian.Uint64(buf[12:20]),
+		NumBytes:  binary.LittleEndian.Uint64(buf[12:20]),
 	}, nil
 }
 
@@ -78,8 +78,8 @@ func validateHeader(h Header, opts ReadOptions) error {
 	if opts.MaxLength > 0 && h.Length > opts.MaxLength {
 		return fmt.Errorf("array: length %d exceeds limit %d", h.Length, opts.MaxLength)
 	}
-	if opts.MaxBytes > 0 && h.NBytes > opts.MaxBytes {
-		return fmt.Errorf("array: body size %d exceeds limit %d", h.NBytes, opts.MaxBytes)
+	if opts.MaxBytes > 0 && h.NumBytes > opts.MaxBytes {
+		return fmt.Errorf("array: body size %d exceeds limit %d", h.NumBytes, opts.MaxBytes)
 	}
 	return nil
 }
@@ -95,7 +95,7 @@ func (h Header) WriteTo(w io.Writer) (int64, error) {
 	buf[1] = byte(h.PType)
 	binary.LittleEndian.PutUint16(buf[2:4], h.Flags)
 	binary.LittleEndian.PutUint64(buf[4:12], h.Length)
-	binary.LittleEndian.PutUint64(buf[12:20], h.NBytes)
+	binary.LittleEndian.PutUint64(buf[12:20], h.NumBytes)
 	n, err := w.Write(buf[:])
 	if err == nil && n != len(buf) {
 		err = io.ErrShortWrite

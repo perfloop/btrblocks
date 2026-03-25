@@ -41,6 +41,10 @@ func (f *fsstArray[I, J]) ValueAt(offset uint64) string {
 	return unsafe.String(&decoded[0], len(decoded))
 }
 
+// DecompressInto decodes FSST-compressed strings into dst. It uses per-string
+// Decode into a single pre-sized output buffer rather than DecodeAll, which
+// over-allocates at 4x the compressed size. The output buffer is exactly sized
+// from the pre-decoded lengths, and each dst[i] aliases it via unsafe.String.
 func (f *fsstArray[I, J]) DecompressInto(dst []string) error {
 	if err := checkDstLen(dst, f.length); err != nil {
 		return err
@@ -49,8 +53,16 @@ func (f *fsstArray[I, J]) DecompressInto(dst []string) error {
 	if err != nil {
 		return err
 	}
+	offsets, err := Decompress(f.offsets)
+	if err != nil {
+		return err
+	}
 
-	decoded := f.table.DecodeAll(f.codes)
+	totalLen := uint64(0)
+	for _, l := range lengths {
+		totalLen += uint64(l)
+	}
+	outBuf := make([]byte, totalLen)
 
 	pos := uint64(0)
 	for i := uint64(0); i < f.length; i++ {
@@ -58,7 +70,10 @@ func (f *fsstArray[I, J]) DecompressInto(dst []string) error {
 		if l == 0 {
 			dst[i] = ""
 		} else {
-			buf := decoded[pos : pos+l]
+			codeStart := uint64(offsets[i])
+			codeEnd := uint64(offsets[i+1])
+			f.table.Decode(outBuf[pos:], f.codes[codeStart:codeEnd])
+			buf := outBuf[pos : pos+l]
 			dst[i] = unsafe.String(unsafe.SliceData(buf), len(buf))
 		}
 		pos += l

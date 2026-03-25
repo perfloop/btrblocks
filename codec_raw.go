@@ -61,10 +61,10 @@ func readRawArray[T Integer | Float | String](br *array.BufReader, h header, opt
 		return nil, err
 	}
 	if h.Length != arr.Length() {
-		return nil, fmt.Errorf("codec: raw length = %d, want %d", h.Length, arr.Length())
+		return nil, fmt.Errorf("codec: raw length = %d, want %d", arr.Length(), h.Length)
 	}
 	if h.NumBytes != arr.BinarySize() {
-		return nil, fmt.Errorf("codec: raw body size = %d, want %d", h.NumBytes, arr.BinarySize())
+		return nil, fmt.Errorf("codec: raw body size = %d, want %d", arr.BinarySize(), h.NumBytes)
 	}
 	return &rawArray[T]{arr: arr}, nil
 }

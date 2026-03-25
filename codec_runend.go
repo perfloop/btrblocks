@@ -237,13 +237,11 @@ func buildRunEndWithEnds[V Integer | Float | String, I UnsignedInteger](arr arra
 	return &runEndArray[V, I]{length: arr.Length(), runs: runsCodec, ends: endsCodec}, nil
 }
 
-func estimateRunEnd[T Integer | Float | String, S statsSource[T]](avgRunLength float64, cmp cmpFn[T]) func(S, planContext) (float64, bool) {
-	return func(stats S, ctx planContext) (float64, bool) {
-		if ctx.depth <= 0 || avgRunLength < 4 {
-			return 0, false
-		}
-		return estimateBySample(stats, ctx, func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
-			return buildRunEndArray(arr, ctx, cmp)
-		})
+func estimateRunEnd[T Integer | Float | String, S statsSource[T]](stats S, ctx planContext, avgRunLength float64, cmp cmpFn[T]) (float64, bool) {
+	if ctx.depth <= 0 || avgRunLength < 4 {
+		return 0, false
 	}
+	return estimateBySample(stats, ctx, func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
+		return buildRunEndArray(arr, ctx, cmp)
+	})
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"unsafe"
 
 	"github.com/axiomhq/btrblocks/array"
@@ -130,6 +131,16 @@ func Decompress[T Integer | Float | String](e EncodedArray[T]) ([]T, error) {
 	return dst, e.DecompressInto(dst)
 }
 
+// chunkBufPool holds reusable byte buffers for writeVirtualArray. Each buffer
+// is 8192 bytes (1024 elements * 8 bytes max width), avoiding a fresh heap
+// allocation on every FoR, ZigZag, and ALP serialization call.
+var chunkBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 1024*8)
+		return &b
+	},
+}
+
 // writeVirtualArray writes a header + chunked transformed values to w.
 // Used by forEncodedArray, zigzagEncodedArray, and alpEncodedArray which all
 // need to write a virtual array (source values passed through a transform)
@@ -137,10 +148,10 @@ func Decompress[T Integer | Float | String](e EncodedArray[T]) ([]T, error) {
 func writeVirtualArray[T Integer | Float](w io.Writer, length uint64, transform func(uint64) T) (int64, error) {
 	bodySize := length * uint64(array.PTypeForType[T]().ByteWidth())
 	n, err := array.Header{
-		Version: versionNumber,
-		PType:   array.PTypeForType[T](),
-		Length:  length,
-		NBytes:  bodySize,
+		Version:  versionNumber,
+		PType:    array.PTypeForType[T](),
+		Length:   length,
+		NumBytes: bodySize,
 	}.WriteTo(w)
 	if err != nil {
 		return n, err
@@ -153,11 +164,15 @@ func writeVirtualArray[T Integer | Float](w io.Writer, length uint64, transform 
 	if length < chunkElems {
 		chunkElems = length
 	}
-	buf := make([]T, chunkElems)
 	width := int(unsafe.Sizeof(T(0)))
+
+	bp := chunkBufPool.Get().(*[]byte)
+	defer chunkBufPool.Put(bp)
+	buf := unsafe.Slice((*T)(unsafe.Pointer(unsafe.SliceData(*bp))), int(chunkElems))
+
 	var written int64
 	for offset := uint64(0); offset < length; {
-		chunk := len(buf)
+		chunk := int(chunkElems)
 		if remaining := length - offset; remaining < uint64(chunk) {
 			chunk = int(remaining)
 		}

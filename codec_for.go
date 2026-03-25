@@ -187,7 +187,7 @@ func readFoRArray[T UnsignedInteger](br *array.BufReader, h header, opts ReadOpt
 		return nil, err
 	}
 	if child.Length() != h.Length {
-		return nil, fmt.Errorf("codec: for length = %d, want %d", h.Length, child.Length())
+		return nil, fmt.Errorf("codec: for length = %d, want %d", child.Length(), h.Length)
 	}
 	return &forArray[T]{min: minValue, child: child}, nil
 }
@@ -231,23 +231,21 @@ func buildFoRArray[T UnsignedInteger](arr array.ArrayCore[T], ctx planContext) (
 	return &forArray[T]{min: minValue, child: child}, nil
 }
 
-func estimateFoR[T UnsignedInteger, S statsSource[T]](minValue, maxValue T) func(S, planContext) (float64, bool) {
-	return func(stats S, ctx planContext) (float64, bool) {
-		if ctx.depth <= 0 || minValue == 0 {
-			return 0, false
-		}
-
-		bitpackWidth := bitWidthForUnsigned(uint64(maxValue))
-		rangeWidth := bitWidthForUnsigned(uint64(maxValue - minValue))
-		if rangeWidth == 0 || rangeWidth >= bitpackWidth {
-			return 0, false
-		}
-
-		// Bit-width ratio (matches Vortex FORScheme). Cheaper than materializing
-		// byte sizes and sufficient for scheme ranking. May over-estimate for very
-		// small arrays where per-node header overhead dominates, but headers are
-		// noise at scale.
-		fullWidth := uint(array.PTypeForType[T]().ByteWidth()) * 8
-		return float64(fullWidth) / float64(rangeWidth), true
+func estimateFoR[T UnsignedInteger](ctx planContext, minValue, maxValue T) (float64, bool) {
+	if ctx.depth <= 0 || minValue == 0 {
+		return 0, false
 	}
+
+	bitpackWidth := bitWidthForUnsigned(uint64(maxValue))
+	rangeWidth := bitWidthForUnsigned(uint64(maxValue - minValue))
+	if rangeWidth == 0 || rangeWidth >= bitpackWidth {
+		return 0, false
+	}
+
+	// Bit-width ratio (matches Vortex FORScheme). Cheaper than materializing
+	// byte sizes and sufficient for scheme ranking. May over-estimate for very
+	// small arrays where per-node header overhead dominates, but headers are
+	// noise at scale.
+	fullWidth := uint(array.PTypeForType[T]().ByteWidth()) * 8
+	return float64(fullWidth) / float64(rangeWidth), true
 }

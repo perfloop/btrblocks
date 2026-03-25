@@ -1,100 +1,143 @@
 # btrblocks
 
-A Go implementation of [BtrBlocks](https://db.in.tum.de/~durner/papers/btrblocks.pdf)-style cascaded columnar encoding for integers, floats, and strings.
+A Go library for cascaded columnar compression. Encodes typed arrays of integers, floats, and strings into compact binary representations using layered encoding schemes that compose automatically.
 
-## Encoding Schemes
+Based on the [BtrBlocks paper](https://db.in.tum.de/~durner/papers/btrblocks.pdf) from TU Munich.
 
-| Scheme | Types | Description |
-|--------|-------|-------------|
-| Const | all | Single repeated value |
-| Raw | all | Uncompressed leaf array |
-| Dict | all | Dictionary + ordinal indices |
-| RunEnd | all | Run-length with encoded run values and end boundaries |
-| Sequence | int | Arithmetic progression (base + step) |
-| ZigZag | signed int | Maps signed to unsigned via zigzag transform, then encodes child |
-| FoR | unsigned int | Frame-of-Reference: subtract min, then bitpack delta |
-| Bitpack | unsigned int | Fixed-width bit-packed values with optional patches |
-| ALP | float | Adaptive Lossless floating-Point: multiply by 10^e / 10^f to integer |
-| ALP-RD | float | ALP for Real Doubles: dictionary on upper bits, bitpack lower bits |
-| FSST | string | Fast Static Symbol Table compression |
+```go
+import (
+    "github.com/axiomhq/btrblocks"
+    "github.com/axiomhq/btrblocks/array"
+)
 
-Schemes cascade: a dict's indices may be bitpacked, which may use FoR, etc. A planner samples ~1% of the data, estimates compression ratios, and picks the best scheme at each level up to a configurable depth.
+// Compress
+arr := array.NewPrimitivesUnsafe([]int32{1, 2, 3, 2, 1, 2, 3, 2})
+encoded, err := btrblocks.Compress(arr, btrblocks.Options{})
 
-## Performance Decisions
+// Serialize
+var buf bytes.Buffer
+encoded.WriteTo(&buf)
 
-This section documents the key decisions made to optimize decode (decompress) throughput and memory usage. All numbers are from `go test -bench` on Apple M3 Max, 1M-element arrays.
+// Load
+loaded, err := btrblocks.Load[int32](buf.Bytes())
 
-### 1. Word-at-a-time bitpack decode
+// Decompress
+values, err := btrblocks.Decompress(loaded)
+```
 
-**Problem:** The original `unpackUnsigned` extracted values one byte-span at a time, looping 2-4 iterations per value for typical bit widths (3-8 bits). Since bitpacking underlies dict indices, FoR deltas, zigzag children, and ALP integer children, this was the hottest inner loop in the system.
+## API
 
-**Solution:** Read a 64-bit word from the buffer at the value's byte offset and extract with a single shift+mask. This works for any `bitWidth + alignment_offset <= 64` (covers all practical cases up to 56-bit values). The last 7 bytes of the buffer fall back to byte-at-a-time to avoid out-of-bounds reads.
+Three functions. That's the public surface.
 
-A batch variant (`unpackBatchTyped`) hoists the mask out of the loop and writes directly into the caller's typed slice, eliminating per-element function call overhead.
+```go
+// Compress encodes an array. The planner picks the best scheme automatically.
+func Compress[T Integer | Float | String](arr array.Array[T], opts Options) (EncodedArray[T], error)
 
-**Impact:** Bitpack 1M: 2,420us -> 939us (**2.6x faster**). Cascades to every compound codec.
+// Load deserializes an encoded array from bytes. Zero-copy: the returned
+// value may reference the input slice, so keep it alive.
+func Load[T Integer | Float | String](data []byte, opts ...ReadOptions) (EncodedArray[T], error)
 
-### 2. Native-typed ordinal scatter (dict decompress)
+// Decompress decodes an encoded array into a new slice.
+func Decompress[T Integer | Float | String](e EncodedArray[T]) ([]T, error)
+```
 
-**Problem:** `dictArray.DecompressInto` called `decompressOrdinals` which: (a) decompressed indices into their native type (e.g. `[]uint8`), then (b) widened every element into a new `[]uint64` slice. For a 1M-row dict column with uint8 ordinals, the widening allocated 8MB that was immediately iterated and discarded.
+`EncodedArray[T]` also supports:
+- `DecompressInto(dst []T)` — decode into a caller-owned buffer (zero alloc on hot path)
+- `ValueAt(offset uint64) T` — random access without full decompression
+- `WriteTo(w io.Writer)` — serialize to any writer
+- `Slice(start, end uint64)` — logical sub-range
 
-**Solution:** `scatterOrdinals` type-switches on the ordinal view once, decompresses into the native typed slice, and scatters `values[idx]` directly into `dst`. The `[]uint64` widening allocation is eliminated entirely.
+### Options
 
-**Impact:** Dict 1M: 13MB -> 5MB allocs (**61% less memory**), 3,230us -> 1,413us (**2.3x faster** combined with bitpack improvement).
+The zero value of `Options` enables all schemes with a default cascade depth of 3. Use the fluent API to restrict:
 
-### 3. Per-element ValueAt vs bulk decompress
+```go
+// Exclude specific schemes:
+opts := btrblocks.Options{}.WithExcludeFloat(btrblocks.CodecTypeALP)
 
-**Decision:** During iteration on dict and runend, we benchmarked replacing bulk `Decompress()` + scatter with per-element `ValueAt()` calls through the codec tree. This was a **50x regression** for RunEnd (3.1ms -> 158ms) because virtual dispatch + bit extraction per element through the codec tree dominates. Bulk decompress in a tight loop with no per-element dispatch is fundamentally faster for sequential access.
+// Allow only specific schemes:
+opts := btrblocks.EmptySchemes().WithIncludeInteger(btrblocks.CodecTypeBitpack, btrblocks.CodecTypeFor)
 
-**Rule:** Use bulk decompress for sequential scans. Reserve `ValueAt` for random access (point queries, patch lookup). Never replace a bulk decompress loop with per-element `ValueAt` on the hot path.
+// Limit cascade depth:
+opts := btrblocks.Options{}.WithMaxDepth(2)
+```
 
-### 4. Batch unpack vs per-element unpack for ALPRD
+## Encoding schemes
 
-**Problem:** After the word-at-a-time `unpackUnsigned` optimization (decision 1), ALPRD still calls `unpackUnsigned` twice per element (left codes + right parts). We benchmarked batch-unpacking both into `[]uint64` scratch buffers, then assembling floats in a separate loop.
+| Scheme | Types | What it does |
+|--------|-------|--------------|
+| **Raw** | all | Uncompressed. Fallback when nothing beats it. |
+| **Const** | all | One repeated value. Header only, no body. |
+| **Dict** | all | Unique values + ordinal indices. Indices are recursively compressed. |
+| **RunEnd** | all | Run values + boundary positions. Both children are recursively compressed. |
+| **Sequence** | int | Arithmetic progression. Stores base + step (2 values). |
+| **ZigZag** | signed int | `(n << 1) ^ (n >> 63)` maps signed to unsigned, then compresses the child. |
+| **FoR** | unsigned int | Subtract min, bitpack the deltas. Width = `bits.Len(max - min)`. |
+| **Bitpack** | unsigned int | Fixed-width bit packing. Outliers go to a sparse patch array. |
+| **ALP** | float | Multiply by `10^e / 10^f` to get integers. Exceptions patched. |
+| **ALP-RD** | float | Split bit pattern: dictionary on upper bits, bitpack lower bits. |
+| **FSST** | string | Fast Static Symbol Table. Byte-level dictionary compression. |
 
-**Result:** Only ~6% faster (3.7ms -> 3.5ms) but triples memory usage (8MB -> 24MB for 1M elements) due to two N*8-byte scratch allocations. The word-at-a-time fast path already captures most of the gain since each `unpackUnsigned` call does a single 64-bit load + shift + mask.
+### Cascading
 
-**Decision:** Keep per-element `unpackUnsigned` for ALPRD. The memory cost of scratch buffers is not justified by a 6% speed improvement. Document the tradeoff in the code so future optimizers don't re-run this experiment.
+Schemes compose. The planner picks a scheme at each level, up to `MaxDepth`:
 
-### 5. FoR multi-pass reduction
+```
+int32 column: [-5, -5, 3, 3, 3, 7, 7]
+  └─ RunEnd (3 runs)
+       ├─ runs: [-5, 3, 7] → ZigZag → Bitpack(4-bit)
+       └─ ends: [2, 5]     → FoR(min=2) → Bitpack(2-bit)
+```
 
-**Problem:** `buildFoRArray` made 4 passes over the input array: (1) find min, (2) find range width, (3) histogram in `unsignedBitWidthHistogram`, (4) pack + collect patches. Each pass called `arr.ValueAt` N times, and through `forEncodedArray` that includes a subtraction per call.
+The planner samples ~1% of the data, estimates compression ratios for all applicable schemes, picks the winner, and builds it. If the winner doesn't beat raw, raw is used.
 
-**Solution:** Merge passes 1+2 into a single min/max scan. Skip pass 3 entirely by passing the known bit width directly to `buildBitPackedArrayWithWidth` — FoR deltas are always in `[0, max-min]` with no exceptions, so the histogram-based width selection is unnecessary.
+## Wire format
 
-**Impact:** FoR compress 1M: 23,350us -> 18,479us (**21% faster**). Reduces from 4N to 2N element reads.
+Every node in the compression tree starts with a 24-byte header:
 
-### 6. BodySize header contract
+```
+Offset  Size  Field
+0       1     Version (must be 1)
+1       1     CodecType
+2       1     PType (element type)
+3       1     Reserved (must be 0)
+4       4     Flags (codec-specific)
+8       8     Length (logical element count)
+16      8     BodySize (inline bytes after header, before children)
+```
 
-Each encoded array has a 24-byte header with a `BodySize` field. The contract:
+What follows the header depends on `BodySize`:
 
-- **BodySize = bytes of inline data written directly after the header, before any recursive EncodedArray children or patch streams.**
-- Leaf-wrapping codecs (raw, const): BodySize = the wrapped `array.Array`'s full binary size.
-- Codecs with recursive children (dict, runend, zigzag): BodySize = 0.
-- Codecs with fixed inline fields + children (for, bitpack, alp, alprd, fsst, sequence): BodySize = inline portion only.
+- **BodySize = 0**: children follow immediately (dict, runend, zigzag)
+- **BodySize > 0**: inline data, then children (for: min value; bitpack: width + packed bits; alp: exponents; etc.)
 
-All readers validate BodySize against expected values during deserialization.
+Leaf arrays (raw, const) embed a 20-byte `array.Header` + body inside `BodySize`.
 
-### 7. Immutable stats flow
+All integers are little-endian. The format requires a little-endian platform (enforced at init).
 
-Compressor structs carry no mutable state. The `Schemes(stats)` method receives pre-computed statistics (including distinct-value maps for dict encoding) as a parameter. Build closures capture from the immutable stats value, not from shared mutable fields on the compressor. This eliminates a class of stale-data bugs and makes concurrent compression safe.
+## Array types
 
-### 8. FSST zero-copy string decompress
+The `array` sub-package provides the input/output types:
 
-**Problem:** `fsstArray.DecompressInto` called `string(decoded[pos:pos+l])` for each element, which copies the bytes into a new heap-allocated string. For 1M strings this produced 1,000,006 allocations and 150MB of memory.
+```go
+// Fixed-width numeric arrays. Zero-copy read, O(1) access.
+arr := array.NewPrimitivesUnsafe([]uint32{1, 2, 3})  // borrows slice
+arr := array.NewPrimitives([]uint32{1, 2, 3})         // copies slice
 
-**Solution:** Decode all compressed codes into a single contiguous buffer via `table.DecodeAll(f.codes)` (one allocation), then use `unsafe.String(unsafe.SliceData(buf), len(buf))` to create strings that alias directly into the decoded buffer. This reduces allocations from O(N) to O(1).
+// Variable-length strings. Offset type chosen automatically.
+arr := array.NewStrings([]string{"hello", "world"})
+```
 
-**Ownership contract:** The returned strings alias the decoded buffer. They remain valid as long as any string in the output slice is reachable — Go's GC traces the `unsafe.Pointer` in the string header back to the decoded slice. This is the same aliasing contract as `array.Strings.ValueAt`.
+Both implement `array.Array[T]` which provides `ValueAt`, `Length`, `Slice`, `WriteTo`, and `BinarySize`.
 
-**Impact:** FSST 1M: 102,500us -> 85,660us (**16% faster**), 1,000,006 -> 4 allocs (**250,000x fewer**), 150MB -> 90MB (**40% less memory**).
+## Performance
 
-## Benchmark Summary
+All numbers from `go test -bench` on Apple M3 Max, 1M-element arrays.
 
-Decompress throughput on 1M elements (Apple M3 Max):
+### Decompress throughput
 
-| Codec | Throughput | Allocs | Bytes/op |
-|-------|-----------|--------|----------|
+| Codec | Time | Allocs | Memory |
+|-------|------|--------|--------|
 | Bitpack | 939 us | 1 | 4.0 MB |
 | Dict | 1,413 us | 3 | 5.0 MB |
 | ALP | 1,396 us | 4 | 9.0 MB |
@@ -102,3 +145,30 @@ Decompress throughput on 1M elements (Apple M3 Max):
 | RunEnd | 2,065 us | 6 | 10.3 MB |
 | ALP-RD | 3,653 us | 1 | 8.0 MB |
 | FSST | 85,660 us | 4 | 90 MB |
+
+### Key implementation decisions
+
+**Word-at-a-time bitpack decode.** Single 64-bit load + shift + mask per value instead of byte-at-a-time loop. Covers all practical bit widths up to 56 bits. Last 7 bytes fall back to byte-at-a-time. **2.6x faster** for bitpack; cascades to every compound codec that uses bitpacked children.
+
+**Bulk decompress, not per-element.** `DecompressInto` decodes children into temporary slices then scatters, rather than calling `ValueAt` per element through the codec tree. Per-element dispatch through interface calls + bit extraction is ~50x slower. `ValueAt` exists for random access; hot-path iteration always bulk-decodes.
+
+**Native-typed ordinal scatter.** Dict decompression type-switches on the ordinal width once, decodes into the native slice, and scatters directly. No intermediate `[]uint64` widening. **2.3x faster, 61% less memory.**
+
+**FSST zero-copy strings.** Decode all compressed codes into one buffer, return strings that alias it via `unsafe.String`. One allocation instead of N. **250,000x fewer allocs, 40% less memory.**
+
+**FoR single-pass min/max.** Merged four passes (min, range, histogram, pack) into two (min/max, pack). Skipped histogram since FoR deltas have no exceptions. **21% faster.**
+
+**Per-element ALPRD (intentional).** Batch-unpacking left+right parts was only 6% faster but tripled memory. Kept per-element because the word-at-a-time fast path already handles each unpack in one 64-bit load.
+
+## Ownership and zero-copy
+
+`Load` returns an `EncodedArray` that may alias the input `[]byte`. The caller must keep the input alive for the lifetime of the returned value. This is the same contract as `array.Primitives` constructed via `NewPrimitivesUnsafe`.
+
+`Compress` may return a raw-encoded array that references the input `array.Array`. The input must remain valid.
+
+`Decompress` always returns a new, owned slice.
+
+## Requirements
+
+- Go 1.25+
+- Little-endian platform (x86_64, ARM64)

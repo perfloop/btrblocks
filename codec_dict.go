@@ -97,7 +97,7 @@ func readDictArray[V Integer | Float | String](br *array.BufReader, h header, op
 			return nil, fmt.Errorf("codec: dict index %w", err)
 		}
 		if indices.Length() != h.Length {
-			return nil, fmt.Errorf("codec: dict length = %d, want %d", h.Length, indices.Length())
+			return nil, fmt.Errorf("codec: dict length = %d, want %d", indices.Length(), h.Length)
 		}
 		return &dictArray[V, uint8]{values: values, indices: indices}, nil
 	case PTypeUint16:
@@ -106,7 +106,7 @@ func readDictArray[V Integer | Float | String](br *array.BufReader, h header, op
 			return nil, fmt.Errorf("codec: dict index %w", err)
 		}
 		if indices.Length() != h.Length {
-			return nil, fmt.Errorf("codec: dict length = %d, want %d", h.Length, indices.Length())
+			return nil, fmt.Errorf("codec: dict length = %d, want %d", indices.Length(), h.Length)
 		}
 		return &dictArray[V, uint16]{values: values, indices: indices}, nil
 	case PTypeUint32:
@@ -115,7 +115,7 @@ func readDictArray[V Integer | Float | String](br *array.BufReader, h header, op
 			return nil, fmt.Errorf("codec: dict index %w", err)
 		}
 		if indices.Length() != h.Length {
-			return nil, fmt.Errorf("codec: dict length = %d, want %d", h.Length, indices.Length())
+			return nil, fmt.Errorf("codec: dict length = %d, want %d", indices.Length(), h.Length)
 		}
 		return &dictArray[V, uint32]{values: values, indices: indices}, nil
 	case PTypeUint64:
@@ -124,7 +124,7 @@ func readDictArray[V Integer | Float | String](br *array.BufReader, h header, op
 			return nil, fmt.Errorf("codec: dict index %w", err)
 		}
 		if indices.Length() != h.Length {
-			return nil, fmt.Errorf("codec: dict length = %d, want %d", h.Length, indices.Length())
+			return nil, fmt.Errorf("codec: dict length = %d, want %d", indices.Length(), h.Length)
 		}
 		return &dictArray[V, uint64]{values: values, indices: indices}, nil
 	default:
@@ -283,64 +283,58 @@ func buildStringDictWithCodes[T String, I UnsignedInteger](arr array.ArrayCore[T
 	return &dictArray[T, I]{values: valuesCodec, indices: codesCodec}, nil
 }
 
-func estimateIntegerDict[T Integer, S statsSource[T]](distinctCount uint64, avgRunLength float64) func(S, planContext) (float64, bool) {
-	return func(stats S, ctx planContext) (float64, bool) {
-		if ctx.depth <= 0 {
-			return 0, false
-		}
-
-		n := stats.Source().Length()
-		if n == 0 || distinctCount <= 1 || distinctCount > n/2 {
-			return 0, false
-		}
-
-		// Bit-cost ratio (matches Vortex DictScheme). All costs are in bits,
-		// avoiding header-size accounting and wrapper allocations. May over-
-		// estimate for very small arrays where per-node header overhead
-		// dominates, but headers are noise at scale.
-		elemBitWidth := uint64(array.PTypeForType[T]().ByteWidth()) * 8
-		valuesCost := elemBitWidth * distinctCount
-		codesBW := uint64(bitWidthForUnsigned(distinctCount - 1))
-		codesCost := codesBW * n
-
-		if avgRunLength >= 4 {
-			runCount := uint64(float64(n)/avgRunLength + 0.5)
-			if runCount == 0 {
-				runCount = 1
-			}
-			// Assume codes may be RLE-compressed: codes bitpacked + 32-bit run ends.
-			rleCost := (codesBW + 32) * runCount
-			if rleCost < codesCost {
-				codesCost = rleCost
-			}
-		}
-
-		before := n * elemBitWidth
-		after := valuesCost + codesCost
-		if after >= before {
-			return 0, false
-		}
-		return float64(before) / float64(after), true
+func estimateIntegerDict[T Integer, S statsSource[T]](stats S, ctx planContext, distinctCount uint64, avgRunLength float64) (float64, bool) {
+	if ctx.depth <= 0 {
+		return 0, false
 	}
+
+	n := stats.Source().Length()
+	if n == 0 || distinctCount <= 1 || distinctCount > n/2 {
+		return 0, false
+	}
+
+	// Bit-cost ratio (matches Vortex DictScheme). All costs are in bits,
+	// avoiding header-size accounting and wrapper allocations. May over-
+	// estimate for very small arrays where per-node header overhead
+	// dominates, but headers are noise at scale.
+	elemBitWidth := uint64(array.PTypeForType[T]().ByteWidth()) * 8
+	valuesCost := elemBitWidth * distinctCount
+	codesBW := uint64(bitWidthForUnsigned(distinctCount - 1))
+	codesCost := codesBW * n
+
+	if avgRunLength >= 4 {
+		runCount := uint64(float64(n)/avgRunLength + 0.5)
+		if runCount == 0 {
+			runCount = 1
+		}
+		// Assume codes may be RLE-compressed: codes bitpacked + 32-bit run ends.
+		rleCost := (codesBW + 32) * runCount
+		if rleCost < codesCost {
+			codesCost = rleCost
+		}
+	}
+
+	before := n * elemBitWidth
+	after := valuesCost + codesCost
+	if after >= before {
+		return 0, false
+	}
+	return float64(before) / float64(after), true
 }
 
-func estimateStringDict[S statsSource[string]](estimatedDistinctCount uint64) func(S, planContext) (float64, bool) {
-	return func(stats S, ctx planContext) (float64, bool) {
-		n := stats.Source().Length()
-		if ctx.depth <= 0 || n == 0 || estimatedDistinctCount > n/2 {
-			return 0, false
-		}
-		return estimateBySample(stats, ctx, buildStringDictArray[string])
+func estimateStringDict[S statsSource[string]](stats S, ctx planContext, estimatedDistinctCount uint64) (float64, bool) {
+	n := stats.Source().Length()
+	if ctx.depth <= 0 || n == 0 || estimatedDistinctCount > n/2 {
+		return 0, false
 	}
+	return estimateBySample(stats, ctx, buildStringDictArray[string])
 }
 
-func estimateFloatDict[T Float, S statsSource[T]](distinctCount uint64, valueCount uint64) func(S, planContext) (float64, bool) {
-	return func(stats S, ctx planContext) (float64, bool) {
-		if ctx.depth <= 0 || valueCount == 0 || distinctCount > valueCount/2 {
-			return 0, false
-		}
-		return estimateBySample(stats, ctx, func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
-			return buildFloatDictFromDistinct(arr, nil, ctx)
-		})
+func estimateFloatDict[T Float, S statsSource[T]](stats S, ctx planContext, distinctCount uint64, valueCount uint64) (float64, bool) {
+	if ctx.depth <= 0 || valueCount == 0 || distinctCount > valueCount/2 {
+		return 0, false
 	}
+	return estimateBySample(stats, ctx, func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
+		return buildFloatDictFromDistinct(arr, nil, ctx)
+	})
 }

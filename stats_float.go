@@ -60,7 +60,7 @@ func computeFloatStats[T Float](arr array.Array[T]) floatStats[T] {
 				}
 			}
 		}
-		if !cmpFloatEq(v, prev) {
+		if !cmpFloatBits(v, prev) {
 			runs++
 			prev = v
 		}

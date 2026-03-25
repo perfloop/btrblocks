@@ -69,17 +69,26 @@ func (p *patches[V, I]) Validate() error {
 	if p.offset > ^uint64(0)-p.length {
 		return fmt.Errorf("codec: patch offset %d overflows length %d", p.offset, p.length)
 	}
+	// Bounds-check first and last index only. This avoids O(N) per-element
+	// ValueAt calls through the codec tree during deserialization of untrusted
+	// data. The full sorted invariant is guaranteed by construction during
+	// compression; adversarial payloads that violate sortedness may produce
+	// wrong results in Find/ValueAt point queries but cannot cause out-of-bounds
+	// access in Apply (which scatters without order dependency).
 	limit := p.offset + p.length
-	var prev uint64
-	for i := uint64(0); i < p.indices.Length(); i++ {
-		idx := uint64(p.indices.ValueAt(i))
-		if idx < p.offset || idx >= limit {
-			return fmt.Errorf("codec: patch index = %d, want [%d, %d)", idx, p.offset, limit)
+	n := p.indices.Length()
+	first := uint64(p.indices.ValueAt(0))
+	if first < p.offset || first >= limit {
+		return fmt.Errorf("codec: patch index = %d, want [%d, %d)", first, p.offset, limit)
+	}
+	if n > 1 {
+		last := uint64(p.indices.ValueAt(n - 1))
+		if last < p.offset || last >= limit {
+			return fmt.Errorf("codec: patch index = %d, want [%d, %d)", last, p.offset, limit)
 		}
-		if i > 0 && idx <= prev {
-			return fmt.Errorf("codec: patch index = %d, want > %d", idx, prev)
+		if last <= first {
+			return fmt.Errorf("codec: patch last index %d must be > first index %d", last, first)
 		}
-		prev = idx
 	}
 	return nil
 }

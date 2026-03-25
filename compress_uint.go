@@ -18,7 +18,7 @@ func (c *unsignedIntCompressor[T]) Schemes(stats unsignedStats[T]) []scheme[T, u
 		registeredScheme[T, unsignedStats[T]]{
 			kind: CodecTypeConst,
 			estimate: func(stats unsignedStats[T], ctx planContext) (float64, bool) {
-				return estimateConst[T](stats.base.isConst)(stats.Source(), ctx)
+				return estimateConst(stats.Source(), ctx, stats.base.isConst)
 			},
 			build: func(arr array.ArrayCore[T], _ planContext) (EncodedArray[T], error) {
 				return newConstIntegerArray(arr)
@@ -36,7 +36,7 @@ func (c *unsignedIntCompressor[T]) Schemes(stats unsignedStats[T]) []scheme[T, u
 		registeredScheme[T, unsignedStats[T]]{
 			kind: CodecTypeFor,
 			estimate: func(stats unsignedStats[T], ctx planContext) (float64, bool) {
-				return estimateFoR[T, unsignedStats[T]](stats.min, stats.max)(stats, ctx)
+				return estimateFoR(ctx, stats.min, stats.max)
 			},
 			build: buildFoRArray[T],
 		},
@@ -50,7 +50,7 @@ func (c *unsignedIntCompressor[T]) Schemes(stats unsignedStats[T]) []scheme[T, u
 		registeredScheme[T, unsignedStats[T]]{
 			kind: CodecTypeDict,
 			estimate: func(stats unsignedStats[T], ctx planContext) (float64, bool) {
-				return estimateIntegerDict[T, unsignedStats[T]](stats.base.distinctCount, stats.base.avgRunLength)(stats, ctx)
+				return estimateIntegerDict[T, unsignedStats[T]](stats, ctx, stats.base.distinctCount, stats.base.avgRunLength)
 			},
 			build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
 				return buildIntegerDictFromDistinct(arr, stats.distinct, ctx)
@@ -59,7 +59,7 @@ func (c *unsignedIntCompressor[T]) Schemes(stats unsignedStats[T]) []scheme[T, u
 		registeredScheme[T, unsignedStats[T]]{
 			kind: CodecTypeRunEnd,
 			estimate: func(stats unsignedStats[T], ctx planContext) (float64, bool) {
-				return estimateRunEnd[T, unsignedStats[T]](stats.base.avgRunLength, cmpIntegers[T])(stats, ctx)
+				return estimateRunEnd[T, unsignedStats[T]](stats, ctx, stats.base.avgRunLength, cmpIntegers[T])
 			},
 			build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
 				return buildRunEndArray(arr, ctx, cmpIntegers[T])

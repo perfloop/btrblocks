@@ -73,7 +73,7 @@ func (c *Primitives[T]) WriteTo(w io.Writer) (int64, error) {
 		Version: 1,
 		PType:   c.pType,
 		Length:  c.Length(),
-		NBytes:  c.bodySize(),
+		NumBytes:  c.bodySize(),
 	}.WriteTo(w)
 	if err != nil {
 		return hn, err
@@ -96,7 +96,7 @@ func readPrimitivesWithHeader[T PrimitiveType](r io.Reader, h Header) (*Primitiv
 		return nil, fmt.Errorf("array: unknown PType %v", h.PType)
 	}
 	if h.Length == 0 {
-		if h.NBytes != 0 {
+		if h.NumBytes != 0 {
 			return nil, errors.New("array: invalid primitive body size")
 		}
 		return &Primitives[T]{pType: h.PType, data: nil}, nil
@@ -105,11 +105,11 @@ func readPrimitivesWithHeader[T PrimitiveType](r io.Reader, h Header) (*Primitiv
 	if h.Length > platformSliceLimit()/width64 {
 		return nil, errors.New("array: primitive payload exceeds platform limit")
 	}
-	if h.NBytes != h.Length*width64 {
+	if h.NumBytes != h.Length*width64 {
 		return nil, errors.New("array: invalid primitive body size")
 	}
 	n := int(h.Length)
-	bodySize := int(h.NBytes)
+	bodySize := int(h.NumBytes)
 	data := make([]T, n)
 	b := unsafe.Slice((*byte)(unsafe.Pointer(&data[0])), bodySize)
 	if _, err := io.ReadFull(r, b); err != nil {
@@ -132,7 +132,7 @@ func readPrimitivesFromBuf[T PrimitiveType](br *BufReader, h Header) (*Primitive
 		return nil, fmt.Errorf("array: unknown PType %v", h.PType)
 	}
 	if h.Length == 0 {
-		if h.NBytes != 0 {
+		if h.NumBytes != 0 {
 			return nil, errors.New("array: invalid primitive body size")
 		}
 		return &Primitives[T]{pType: h.PType, data: nil}, nil
@@ -141,10 +141,10 @@ func readPrimitivesFromBuf[T PrimitiveType](br *BufReader, h Header) (*Primitive
 	if h.Length > platformSliceLimit()/width64 {
 		return nil, errors.New("array: primitive payload exceeds platform limit")
 	}
-	if h.NBytes != h.Length*width64 {
+	if h.NumBytes != h.Length*width64 {
 		return nil, errors.New("array: invalid primitive body size")
 	}
-	raw, err := br.Read(int(h.NBytes))
+	raw, err := br.Read(int(h.NumBytes))
 	if err != nil {
 		return nil, err
 	}

@@ -18,7 +18,7 @@ func (c *floatCompressor[T]) Schemes(stats floatStats[T]) []scheme[T, floatStats
 		registeredScheme[T, floatStats[T]]{
 			kind: CodecTypeConst,
 			estimate: func(stats floatStats[T], ctx planContext) (float64, bool) {
-				return estimateConst[T](stats.base.isConst)(stats.Source(), ctx)
+				return estimateConst(stats.Source(), ctx, stats.base.isConst)
 			},
 			build: func(arr array.ArrayCore[T], _ planContext) (EncodedArray[T], error) {
 				return newConstFloatArray(arr)
@@ -27,14 +27,14 @@ func (c *floatCompressor[T]) Schemes(stats floatStats[T]) []scheme[T, floatStats
 		registeredScheme[T, floatStats[T]]{
 			kind: CodecTypeALP,
 			estimate: func(stats floatStats[T], ctx planContext) (float64, bool) {
-				return estimateALP[T, floatStats[T]](stats.base.isConst)(stats, ctx)
+				return estimateALP[T, floatStats[T]](stats, ctx, stats.base.isConst)
 			},
 			build: buildALPArray[T],
 		},
 		registeredScheme[T, floatStats[T]]{
 			kind: CodecTypeDict,
 			estimate: func(stats floatStats[T], ctx planContext) (float64, bool) {
-				return estimateFloatDict[T, floatStats[T]](stats.base.distinctCount, stats.Source().Length())(stats, ctx)
+				return estimateFloatDict[T, floatStats[T]](stats, ctx, stats.base.distinctCount, stats.Source().Length())
 			},
 			build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
 				return buildFloatDictFromDistinct(arr, stats.distinct, ctx)
@@ -43,14 +43,14 @@ func (c *floatCompressor[T]) Schemes(stats floatStats[T]) []scheme[T, floatStats
 		registeredScheme[T, floatStats[T]]{
 			kind: CodecTypeALPRD,
 			estimate: func(stats floatStats[T], ctx planContext) (float64, bool) {
-				return estimateALPRD[T, floatStats[T]](stats.base.isConst)(stats, ctx)
+				return estimateALPRD[T, floatStats[T]](stats, ctx, stats.base.isConst)
 			},
 			build: buildALPRDArray[T],
 		},
 		registeredScheme[T, floatStats[T]]{
 			kind: CodecTypeRunEnd,
 			estimate: func(stats floatStats[T], ctx planContext) (float64, bool) {
-				return estimateRunEnd[T, floatStats[T]](stats.base.avgRunLength, cmpFloatEq[T])(stats, ctx)
+				return estimateRunEnd[T, floatStats[T]](stats, ctx, stats.base.avgRunLength, cmpFloatBits[T])
 			},
 			build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
 				return buildRunEndArray(arr, ctx, cmpFloatBits[T])

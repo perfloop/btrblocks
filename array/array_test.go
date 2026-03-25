@@ -37,12 +37,12 @@ func TestReadArrayRejectsUnsupportedHeader(t *testing.T) {
 	}{
 		{
 			name:   "version",
-			header: Header{Version: 2, PType: PTypeUint64, Length: 0, NBytes: 0},
+			header: Header{Version: 2, PType: PTypeUint64, Length: 0, NumBytes: 0},
 			want:   "version",
 		},
 		{
 			name:   "flags",
-			header: Header{Version: 1, PType: PTypeUint64, Flags: 1, Length: 0, NBytes: 0},
+			header: Header{Version: 1, PType: PTypeUint64, Flags: 1, Length: 0, NumBytes: 0},
 			want:   "flags",
 		},
 	}

@@ -54,7 +54,7 @@ func TestPrimitiveWriteToIncludesHeaderAndBody(t *testing.T) {
 		Version: 1,
 		PType:   PTypeUint16,
 		Length:  uint64(len(values)),
-		NBytes:  uint64(len(wantBody)),
+		NumBytes:  uint64(len(wantBody)),
 	})
 	require.Equal(t, wantBody, got[headerSize:])
 }
@@ -125,12 +125,12 @@ func TestReadPrimitivesRejectsUnsupportedHeader(t *testing.T) {
 	}{
 		{
 			name:   "version",
-			header: Header{Version: 2, PType: PTypeInt32, Length: 0, NBytes: 0},
+			header: Header{Version: 2, PType: PTypeInt32, Length: 0, NumBytes: 0},
 			want:   "version",
 		},
 		{
 			name:   "flags",
-			header: Header{Version: 1, PType: PTypeInt32, Flags: 1, Length: 0, NBytes: 0},
+			header: Header{Version: 1, PType: PTypeInt32, Flags: 1, Length: 0, NumBytes: 0},
 			want:   "flags",
 		},
 	}
@@ -153,7 +153,7 @@ func TestReadPrimitivesRejectsZeroLengthWithBody(t *testing.T) {
 		Version: 1,
 		PType:   PTypeUint32,
 		Length:  0,
-		NBytes:  4,
+		NumBytes:  4,
 	}.WriteTo(&buf)
 	require.NoError(t, err)
 
@@ -198,7 +198,7 @@ func assertHeaderBytes(t *testing.T, got []byte, want Header) {
 	require.Equal(t, want.PType, PType(got[1]))
 	require.Equal(t, want.Flags, binary.LittleEndian.Uint16(got[2:4]))
 	require.Equal(t, want.Length, binary.LittleEndian.Uint64(got[4:12]))
-	require.Equal(t, want.NBytes, binary.LittleEndian.Uint64(got[12:20]))
+	require.Equal(t, want.NumBytes, binary.LittleEndian.Uint64(got[12:20]))
 }
 
 func BenchmarkWritePrimitives(b *testing.B) {

@@ -182,10 +182,6 @@ func cmpFloatBits[T Float](a, b T) bool {
 	return floatBits(a) == floatBits(b)
 }
 
-// cmpFloatEq compares floats by value. NaN != NaN, so consecutive NaNs break
-// runs. +0 == -0. Used by run-length detection.
-func cmpFloatEq[T Float](a, b T) bool { return a == b }
-
 type cmpFn[T Integer | Float | String] func(T, T) bool
 
 func cmpIntegers[T Integer](a, b T) bool { return a == b }

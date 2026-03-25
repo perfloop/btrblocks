@@ -307,7 +307,7 @@ func readALPArrayTyped[T Float, I SignedInteger](br *array.BufReader, h header, 
 		return nil, err
 	}
 	if encoded.Length() != h.Length {
-		return nil, fmt.Errorf("codec: ALP length = %d, want %d", h.Length, encoded.Length())
+		return nil, fmt.Errorf("codec: ALP length = %d, want %d", encoded.Length(), h.Length)
 	}
 
 	if h.Flags&flagALPHasPatches == 0 {
@@ -483,11 +483,9 @@ func buildALPPatchesTyped[T Float, J UnsignedInteger](length uint64, patchIdx []
 	return newPatches[T, J](length, 0, patchIdxCodec, newRawArray(array.NewPrimitivesUnsafe(patchVals)))
 }
 
-func estimateALP[T Float, S statsSource[T]](isConst bool) func(S, planContext) (float64, bool) {
-	return func(stats S, ctx planContext) (float64, bool) {
-		if ctx.depth <= 0 || isConst {
-			return 0, false
-		}
-		return estimateBySample(stats, ctx, buildALPArray[T])
+func estimateALP[T Float, S statsSource[T]](stats S, ctx planContext, isConst bool) (float64, bool) {
+	if ctx.depth <= 0 || isConst {
+		return 0, false
 	}
+	return estimateBySample(stats, ctx, buildALPArray[T])
 }

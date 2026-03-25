@@ -184,7 +184,7 @@ func readZigZagArray[T SignedInteger](br *array.BufReader, h header, opts ReadOp
 			return nil, err
 		}
 		if child.Length() != h.Length {
-			return nil, fmt.Errorf("codec: zigzag length = %d, want %d", h.Length, child.Length())
+			return nil, fmt.Errorf("codec: zigzag length = %d, want %d", child.Length(), h.Length)
 		}
 		return &zigzagArray[T, uint8]{child: child}, nil
 	case PTypeUint16:
@@ -193,7 +193,7 @@ func readZigZagArray[T SignedInteger](br *array.BufReader, h header, opts ReadOp
 			return nil, err
 		}
 		if child.Length() != h.Length {
-			return nil, fmt.Errorf("codec: zigzag length = %d, want %d", h.Length, child.Length())
+			return nil, fmt.Errorf("codec: zigzag length = %d, want %d", child.Length(), h.Length)
 		}
 		return &zigzagArray[T, uint16]{child: child}, nil
 	case PTypeUint32:
@@ -202,7 +202,7 @@ func readZigZagArray[T SignedInteger](br *array.BufReader, h header, opts ReadOp
 			return nil, err
 		}
 		if child.Length() != h.Length {
-			return nil, fmt.Errorf("codec: zigzag length = %d, want %d", h.Length, child.Length())
+			return nil, fmt.Errorf("codec: zigzag length = %d, want %d", child.Length(), h.Length)
 		}
 		return &zigzagArray[T, uint32]{child: child}, nil
 	case PTypeUint64:
@@ -211,7 +211,7 @@ func readZigZagArray[T SignedInteger](br *array.BufReader, h header, opts ReadOp
 			return nil, err
 		}
 		if child.Length() != h.Length {
-			return nil, fmt.Errorf("codec: zigzag length = %d, want %d", h.Length, child.Length())
+			return nil, fmt.Errorf("codec: zigzag length = %d, want %d", child.Length(), h.Length)
 		}
 		return &zigzagArray[T, uint64]{child: child}, nil
 	default:
@@ -252,11 +252,9 @@ func buildZigZagArray[T SignedInteger](arr array.ArrayCore[T], ctx planContext) 
 	}
 }
 
-func estimateZigZag[T SignedInteger, S statsSource[T]](hasNegative bool) func(S, planContext) (float64, bool) {
-	return func(stats S, ctx planContext) (float64, bool) {
-		if ctx.depth <= 0 || !hasNegative {
-			return 0, false
-		}
-		return estimateBySample(stats, ctx, buildZigZagArray[T])
+func estimateZigZag[T SignedInteger, S statsSource[T]](stats S, ctx planContext, hasNegative bool) (float64, bool) {
+	if ctx.depth <= 0 || !hasNegative {
+		return 0, false
 	}
+	return estimateBySample(stats, ctx, buildZigZagArray[T])
 }

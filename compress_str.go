@@ -18,7 +18,7 @@ func (stringCompressor) Schemes(stats stringStats) []scheme[string, stringStats]
 		registeredScheme[string, stringStats]{
 			kind: CodecTypeConst,
 			estimate: func(stats stringStats, ctx planContext) (float64, bool) {
-				return estimateConst[string](stats.base.isConst)(stats.Source(), ctx)
+				return estimateConst(stats.Source(), ctx, stats.base.isConst)
 			},
 			build: func(arr array.ArrayCore[string], _ planContext) (EncodedArray[string], error) {
 				return newConstStringArray(arr)
@@ -27,14 +27,14 @@ func (stringCompressor) Schemes(stats stringStats) []scheme[string, stringStats]
 		registeredScheme[string, stringStats]{
 			kind: CodecTypeDict,
 			estimate: func(stats stringStats, ctx planContext) (float64, bool) {
-				return estimateStringDict[stringStats](stats.estimatedDistinctCount)(stats, ctx)
+				return estimateStringDict(stats, ctx, stats.estimatedDistinctCount)
 			},
 			build: buildStringDictArray[string],
 		},
 		registeredScheme[string, stringStats]{
 			kind: CodecTypeRunEnd,
 			estimate: func(stats stringStats, ctx planContext) (float64, bool) {
-				return estimateRunEnd[string, stringStats](stats.base.avgRunLength, cmpStrings[string])(stats, ctx)
+				return estimateRunEnd[string, stringStats](stats, ctx, stats.base.avgRunLength, cmpStrings[string])
 			},
 			build: func(arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
 				return buildRunEndArray(arr, ctx, cmpStrings[string])
