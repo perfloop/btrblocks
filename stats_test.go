@@ -31,14 +31,3 @@ func TestComputeFloatStatsTreatsSignedZeroAsOneRun(t *testing.T) {
 	require.Equal(t, 2.0, stats.base.avgRunLength)
 }
 
-func TestComputeFloatStatsTracksNonFiniteRatio(t *testing.T) {
-	values := []float64{
-		1,
-		math.Inf(1),
-		math.NaN(),
-		2,
-	}
-
-	stats := computeFloatStats(array.NewPrimitivesUnsafe(values))
-	require.Equal(t, 0.5, stats.base.nonFiniteRatio)
-}

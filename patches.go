@@ -10,29 +10,29 @@ import (
 )
 
 // patches stores sparse override positions and values for a base encoded array.
-type patches[T Integer | Float] struct {
+type patches[V Integer | Float, I UnsignedInteger] struct {
 	length  uint64
 	offset  uint64
-	indices ordinalArray
-	values  EncodedArray[T]
+	indices EncodedArray[I]
+	values  EncodedArray[V]
 }
 
-func newPatches[T Integer | Float](length, offset uint64, indices ordinalArray, values EncodedArray[T]) (*patches[T], error) {
-	p := &patches[T]{length: length, offset: offset, indices: indices, values: values}
+func newPatches[V Integer | Float, I UnsignedInteger](length, offset uint64, indices EncodedArray[I], values EncodedArray[V]) (*patches[V, I], error) {
+	p := &patches[V, I]{length: length, offset: offset, indices: indices, values: values}
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}
 	return p, nil
 }
 
-func (p *patches[T]) BinarySize() uint64 {
+func (p *patches[V, I]) BinarySize() uint64 {
 	if p == nil {
 		return 0
 	}
 	return 8 + p.indices.BinarySize() + p.values.BinarySize()
 }
 
-func (p *patches[T]) WriteTo(w io.Writer) (int64, error) {
+func (p *patches[V, I]) WriteTo(w io.Writer) (int64, error) {
 	if p == nil {
 		return 0, nil
 	}
@@ -53,7 +53,7 @@ func (p *patches[T]) WriteTo(w io.Writer) (int64, error) {
 	return int64(nn) + n + nn64, err
 }
 
-func (p *patches[T]) Validate() error {
+func (p *patches[V, I]) Validate() error {
 	if p == nil {
 		return nil
 	}
@@ -72,7 +72,7 @@ func (p *patches[T]) Validate() error {
 	limit := p.offset + p.length
 	var prev uint64
 	for i := uint64(0); i < p.indices.Length(); i++ {
-		idx := p.indices.ValueAt(i)
+		idx := uint64(p.indices.ValueAt(i))
 		if idx < p.offset || idx >= limit {
 			return fmt.Errorf("codec: patch index = %d, want [%d, %d)", idx, p.offset, limit)
 		}
@@ -84,7 +84,7 @@ func (p *patches[T]) Validate() error {
 	return nil
 }
 
-func (p *patches[T]) Find(offset uint64) (uint64, bool) {
+func (p *patches[V, I]) Find(offset uint64) (uint64, bool) {
 	if p == nil {
 		return 0, false
 	}
@@ -92,20 +92,20 @@ func (p *patches[T]) Find(offset uint64) (uint64, bool) {
 	lo, hi := uint64(0), p.indices.Length()
 	for lo < hi {
 		mid := lo + (hi-lo)/2
-		if p.indices.ValueAt(mid) < offset {
+		if uint64(p.indices.ValueAt(mid)) < offset {
 			lo = mid + 1
 		} else {
 			hi = mid
 		}
 	}
-	if lo < p.indices.Length() && p.indices.ValueAt(lo) == offset {
+	if lo < p.indices.Length() && uint64(p.indices.ValueAt(lo)) == offset {
 		return lo, true
 	}
 	return 0, false
 }
 
-func (p *patches[T]) ValueAt(offset uint64) (T, bool) {
-	var zero T
+func (p *patches[V, I]) ValueAt(offset uint64) (V, bool) {
+	var zero V
 	if p == nil {
 		return zero, false
 	}
@@ -116,17 +116,17 @@ func (p *patches[T]) ValueAt(offset uint64) (T, bool) {
 	return p.values.ValueAt(idx), true
 }
 
-func (p *patches[T]) Apply(dst []T) error {
+func (p *patches[V, I]) Apply(dst []V) error {
 	if p == nil {
 		return nil
 	}
 	for i := uint64(0); i < p.indices.Length(); i++ {
-		dst[int(p.indices.ValueAt(i)-p.offset)] = p.values.ValueAt(i)
+		dst[int(uint64(p.indices.ValueAt(i))-p.offset)] = p.values.ValueAt(i)
 	}
 	return nil
 }
 
-func (p *patches[T]) Slice(start, end uint64) (*patches[T], error) {
+func (p *patches[V, I]) Slice(start, end uint64) (*patches[V, I], error) {
 	if p == nil {
 		return nil, nil
 	}
@@ -137,18 +137,18 @@ func (p *patches[T]) Slice(start, end uint64) (*patches[T], error) {
 	absEnd := p.offset + end
 
 	first := uint64(0)
-	for first < p.indices.Length() && p.indices.ValueAt(first) < absStart {
+	for first < p.indices.Length() && uint64(p.indices.ValueAt(first)) < absStart {
 		first++
 	}
 	last := first
-	for last < p.indices.Length() && p.indices.ValueAt(last) < absEnd {
+	for last < p.indices.Length() && uint64(p.indices.ValueAt(last)) < absEnd {
 		last++
 	}
 	if first == last {
 		return nil, nil
 	}
 
-	indices := make([]uint64, last-first)
+	indices := make([]I, last-first)
 	for i := range indices {
 		indices[i] = p.indices.ValueAt(first + uint64(i))
 	}
@@ -156,7 +156,7 @@ func (p *patches[T]) Slice(start, end uint64) (*patches[T], error) {
 	if err != nil {
 		return nil, err
 	}
-	return newPatches(end-start, absStart, buildOrdinalSlice(indices[len(indices)-1], indices), values)
+	return newPatches[V, I](end-start, absStart, newRawArray(array.NewPrimitivesUnsafe(indices)), values)
 }
 
 func prefixPatchError(err error, prefix string) error {

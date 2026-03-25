@@ -9,7 +9,7 @@ import (
 func benchDecompress[T Integer | Float | String](b *testing.B, encoded EncodedArray[T]) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := encoded.Decompress(); err != nil {
+		if _, err := Decompress(encoded); err != nil {
 			b.Fatal(err)
 		}
 	}

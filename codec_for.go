@@ -106,10 +106,6 @@ func (f *forArray[T]) DecompressInto(dst []T) error {
 	return nil
 }
 
-func (f *forArray[T]) Decompress() ([]T, error) {
-	dst := make([]T, f.child.Length())
-	return dst, f.DecompressInto(dst)
-}
 
 func (f *forArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	child, err := f.child.Slice(start, end)
@@ -168,29 +164,29 @@ func (f *forArray[T]) WriteTo(w io.Writer) (int64, error) {
 	return n + nn, err
 }
 
-func readAnyFoRArray[T Integer | Float | String](r io.Reader, h header) (EncodedArray[T], error) {
+func readAnyFoRArray[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case uint8:
-		c, err := readFoRArray[uint8](r, h)
+		c, err := readFoRArray[uint8](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint16:
-		c, err := readFoRArray[uint16](r, h)
+		c, err := readFoRArray[uint16](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint32:
-		c, err := readFoRArray[uint32](r, h)
+		c, err := readFoRArray[uint32](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint64:
-		c, err := readFoRArray[uint64](r, h)
+		c, err := readFoRArray[uint64](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -200,7 +196,7 @@ func readAnyFoRArray[T Integer | Float | String](r io.Reader, h header) (Encoded
 	}
 }
 
-func readFoRArray[T UnsignedInteger](r io.Reader, h header) (EncodedArray[T], error) {
+func readFoRArray[T UnsignedInteger](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
 	minSize := uint64(unsafe.Sizeof(T(0)))
 	if h.BodySize != minSize {
 		return nil, fmt.Errorf("codec: for body size = %d, want %d", h.BodySize, minSize)
@@ -222,7 +218,7 @@ func readFoRArray[T UnsignedInteger](r io.Reader, h header) (EncodedArray[T], er
 		minValue = T(binary.LittleEndian.Uint64(buf[:8]))
 	}
 
-	child, err := readEncodedArray[T](r)
+	child, err := readEncodedArray[T](r, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -232,43 +228,43 @@ func readFoRArray[T UnsignedInteger](r io.Reader, h header) (EncodedArray[T], er
 	return &forArray[T]{min: minValue, child: child}, nil
 }
 
-func buildFoRArray[T UnsignedInteger](arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
+func buildFoRArray[T UnsignedInteger](arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
 	if ctx.depth <= 0 {
 		return nil, errDepthExhausted
 	}
 	if arr.Length() == 0 {
 		return nil, errDataEmpty
 	}
+
+	// Single pass: find min and max range width simultaneously. This
+	// replaces two separate N-element passes over arr.ValueAt.
+	n := arr.Length()
 	minValue := arr.ValueAt(0)
-	for i := uint64(1); i < arr.Length(); i++ {
-		if value := arr.ValueAt(i); value < minValue {
-			minValue = value
+	maxValue := minValue
+	for i := uint64(1); i < n; i++ {
+		v := arr.ValueAt(i)
+		if v < minValue {
+			minValue = v
+		}
+		if v > maxValue {
+			maxValue = v
 		}
 	}
+	rangeWidth := bitWidthForUnsigned(uint64(maxValue - minValue))
 
-	rangeWidth := bitWidthForUnsigned(uint64(arr.ValueAt(0) - minValue))
-	for i := uint64(1); i < arr.Length(); i++ {
-		if width := bitWidthForUnsigned(uint64(arr.ValueAt(i) - minValue)); width > rangeWidth {
-			rangeWidth = width
-		}
-	}
-
-	child, err := buildBitPackedArray(forEncodedArray[T]{
-		length:  arr.Length(),
+	// Build bitpack child with known width. FoR deltas are always in
+	// [0, max-min], so the optimal bitpack width equals rangeWidth with no
+	// exceptions. We pass the width hint to skip the histogram pass inside
+	// buildBitPackedArray (saves another N-element scan).
+	child, err := buildBitPackedArrayWithWidth(forEncodedArray[T]{
+		length:  n,
 		min:     minValue,
 		valueAt: arr.ValueAt,
-	}, ctx.descend())
+	}, rangeWidth)
 	if err != nil {
 		return nil, err
 	}
-	bitpackChild, ok := child.(*bitPackedArray[T])
-	if !ok {
-		return nil, fmt.Errorf("codec: FoR child kind = %s, want bitpack", child.Encoding())
-	}
-	if bitpackChild.bitWidth > rangeWidth {
-		return nil, fmt.Errorf("codec: FoR child bit width = %d, want <= %d", bitpackChild.bitWidth, rangeWidth)
-	}
-	return &forArray[T]{min: minValue, child: bitpackChild}, nil
+	return &forArray[T]{min: minValue, child: child}, nil
 }
 
 func estimateFoR[T UnsignedInteger, S statsSource[T]](minValue, maxValue T) func(S, planContext) (float64, bool) {

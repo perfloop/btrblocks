@@ -29,7 +29,7 @@ func TestZigZagRoundTripInt32Negatives(t *testing.T) {
 	readBack, err := Read[int32](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -54,7 +54,7 @@ func TestZigZagRoundTripInt64Mixed(t *testing.T) {
 	readBack, err := Read[int64](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -79,7 +79,7 @@ func TestZigZagRoundTripInt8SmallNegatives(t *testing.T) {
 	readBack, err := Read[int8](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -229,7 +229,7 @@ func FuzzZigZagRoundTrip(f *testing.F) {
 			t.Fatal(err)
 		}
 
-		decoded, err := readBack.Decompress()
+		decoded, err := Decompress(readBack)
 		if err != nil {
 			t.Fatal(err)
 		}

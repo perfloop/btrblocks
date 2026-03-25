@@ -20,7 +20,7 @@ func (c *floatCompressor[T]) Schemes(stats floatStats[T]) []scheme[T, floatStats
 			estimate: func(stats floatStats[T], ctx planContext) (float64, bool) {
 				return estimateConst[T](stats.base.isConst)(stats.Source(), ctx)
 			},
-			build: func(arr array.Array[T], _ planContext) (EncodedArray[T], error) {
+			build: func(arr array.ArrayCore[T], _ planContext) (EncodedArray[T], error) {
 				return newConstFloatArray(arr)
 			},
 		},
@@ -36,7 +36,7 @@ func (c *floatCompressor[T]) Schemes(stats floatStats[T]) []scheme[T, floatStats
 			estimate: func(stats floatStats[T], ctx planContext) (float64, bool) {
 				return estimateFloatDict[T, floatStats[T]](stats.base.distinctRatio)(stats, ctx)
 			},
-			build: func(arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
+			build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
 				return buildFloatDictFromDistinct(arr, stats.distinct, ctx)
 			},
 		},
@@ -52,7 +52,7 @@ func (c *floatCompressor[T]) Schemes(stats floatStats[T]) []scheme[T, floatStats
 			estimate: func(stats floatStats[T], ctx planContext) (float64, bool) {
 				return estimateRunEnd[T, floatStats[T]](stats.base.avgRunLength, cmpFloatRuns[T])(stats, ctx)
 			},
-			build: func(arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
+			build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
 				return buildRunEndArray(arr, ctx, cmpFloats[T])
 			},
 		},

@@ -13,20 +13,25 @@ func init() {
 	}
 }
 
-// Array is the common interface for columnar array types (primitives and strings).
-// All arrays have a fixed PType, support O(1) ValueAt by index, and can be serialized via WriteTo.
-type Array[T Integer | Float | String] interface {
-	io.WriterTo
+// ArrayCore is the minimal read interface for columnar data: element access and length.
+// Used by planner estimation and codec build paths that only need to scan values.
+type ArrayCore[T Integer | Float | String] interface {
 	// ValueAt returns the value at the given index. Panics if offset >= Length().
 	ValueAt(offset uint64) T
+	// Length is the number of elements in the array.
+	Length() uint64
+}
+
+// Array is a fully materialized columnar array that can be serialized and sliced.
+type Array[T Integer | Float | String] interface {
+	ArrayCore[T]
+	io.WriterTo
 	// CopyTo copies all elements into dst. len(dst) must be >= Length().
 	CopyTo(dst []T)
 	// Slice returns a view of the half-open interval [start, end).
 	Slice(start, end uint64) (Array[T], error)
 	// BinarySize is the total size in bytes when written (header + body).
 	BinarySize() uint64
-	// Length is the number of elements in the array.
-	Length() uint64
 	// PType identifies the element type for this array.
 	PType() PType
 }
@@ -41,16 +46,23 @@ func ValidateSliceBounds(length, start, end uint64) error {
 	return nil
 }
 
-func ReadArray[T Integer | Float | String](r io.Reader) (Array[T], error) {
+func ReadArray[T Integer | Float | String](r io.Reader, opts ...ReadOptions) (Array[T], error) {
 	header, err := readHeader(r)
 	if err != nil {
 		return nil, err
 	}
-	return readArrayWithHeader[T](r, header)
+	return readArrayWithHeader[T](r, header, readOpts(opts))
 }
 
-func readArrayWithHeader[T Integer | Float | String](r io.Reader, header Header) (Array[T], error) {
-	if err := validateHeader(header); err != nil {
+func readOpts(opts []ReadOptions) ReadOptions {
+	if len(opts) > 0 {
+		return opts[0]
+	}
+	return ReadOptions{}
+}
+
+func readArrayWithHeader[T Integer | Float | String](r io.Reader, header Header, opts ReadOptions) (Array[T], error) {
+	if err := validateHeader(header, opts); err != nil {
 		return nil, err
 	}
 	expected := PTypeForType[T]()

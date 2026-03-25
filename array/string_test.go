@@ -266,7 +266,8 @@ func FuzzReadStrings(f *testing.F) {
 	_, _ = arr.WriteTo(&buf)
 	f.Add(buf.Bytes())
 	f.Fuzz(func(t *testing.T, data []byte) {
-		_, _ = ReadStrings(bytes.NewReader(data))
+		opts := ReadOptions{MaxLength: 1 << 20, MaxBytes: 1 << 24}
+		_, _ = ReadStrings(bytes.NewReader(data), opts)
 		// Must not panic; error is acceptable for invalid/corrupt input.
 	})
 }

@@ -21,7 +21,7 @@ func TestSequenceRoundTripUint32Arithmetic(t *testing.T) {
 	readBack, err := Read[uint32](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -38,7 +38,7 @@ func TestSequenceRoundTripInt64Descending(t *testing.T) {
 	readBack, err := Read[int64](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -55,7 +55,7 @@ func TestSequenceRoundTripInt32NegativeStep(t *testing.T) {
 	readBack, err := Read[int32](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -118,7 +118,7 @@ func TestSequenceSliceShiftsBase(t *testing.T) {
 	require.Equal(t, uint64(3), sliced.Length())
 	require.Equal(t, CodecTypeSequence, sliced.Encoding())
 
-	decoded, err := sliced.Decompress()
+	decoded, err := Decompress(sliced)
 	require.NoError(t, err)
 	require.Equal(t, []uint32{20, 30, 40}, decoded)
 }
@@ -138,7 +138,7 @@ func TestSequenceSliceAfterRead(t *testing.T) {
 	sliced, err := readBack.Slice(1, 4)
 	require.NoError(t, err)
 
-	decoded, err := sliced.Decompress()
+	decoded, err := Decompress(sliced)
 	require.NoError(t, err)
 	require.Equal(t, []int32{-5, -10, -15}, decoded)
 }
@@ -180,7 +180,7 @@ func BenchmarkSequence(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				_, err = readBack.Decompress()
+				_, err = Decompress(readBack)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -221,7 +221,7 @@ func FuzzSequence(f *testing.F) {
 		readBack, err := Read[int64](&buf)
 		require.NoError(t, err)
 
-		decoded, err := readBack.Decompress()
+		decoded, err := Decompress(readBack)
 		require.NoError(t, err)
 		require.Equal(t, values, decoded)
 	})

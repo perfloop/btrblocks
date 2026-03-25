@@ -24,7 +24,7 @@ func TestConstRoundTripInt32(t *testing.T) {
 	readBack, err := Read[int32](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -42,7 +42,7 @@ func TestConstRoundTripFloat64(t *testing.T) {
 	readBack, err := Read[float64](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.True(t, equalFloats(values, decoded))
 }
@@ -60,7 +60,7 @@ func TestConstRoundTripString(t *testing.T) {
 	readBack, err := Read[string](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -107,7 +107,7 @@ func TestConstSlicePreservesEncoding(t *testing.T) {
 	require.Equal(t, CodecTypeConst, sliced.Encoding())
 	require.Equal(t, uint64(3), sliced.Length())
 
-	decoded, err := sliced.Decompress()
+	decoded, err := Decompress(sliced)
 	require.NoError(t, err)
 	require.Equal(t, []uint64{99, 99, 99}, decoded)
 }
@@ -156,7 +156,7 @@ func BenchmarkConstUint64(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				_, err = readBack.Decompress()
+				_, err = Decompress(readBack)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -196,7 +196,7 @@ func FuzzConstUint8Roundtrip(f *testing.F) {
 		readBack, err := Read[uint8](&buf)
 		require.NoError(t, err)
 
-		decoded, err := readBack.Decompress()
+		decoded, err := Decompress(readBack)
 		require.NoError(t, err)
 		require.Equal(t, data, decoded)
 	})

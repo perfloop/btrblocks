@@ -11,29 +11,29 @@ import (
 )
 
 // fsstArray stores FSST-compressed string data.
-type fsstArray struct {
+type fsstArray[I, J UnsignedInteger] struct {
 	length   uint64
 	tableRaw []byte       // serialized fsst.Table
 	codes    []byte       // concatenated compressed string bytes
-	offsets  ordinalArray // length+1 offsets into codes
-	lengths  ordinalArray // length original uncompressed string lengths
+	offsets  EncodedArray[I] // length+1 offsets into codes
+	lengths  EncodedArray[J] // length original uncompressed string lengths
 	table    *fsst.Table
 }
 
-func (f *fsstArray) Encoding() CodeType { return CodecTypeFSST }
-func (f *fsstArray) Length() uint64     { return f.length }
-func (f *fsstArray) PType() PType       { return array.PTypeForType[string]() }
+func (f *fsstArray[I, J]) Encoding() CodeType { return CodecTypeFSST }
+func (f *fsstArray[I, J]) Length() uint64      { return f.length }
+func (f *fsstArray[I, J]) PType() PType        { return array.PTypeForType[string]() }
 
-func (f *fsstArray) BinarySize() uint64 {
+func (f *fsstArray[I, J]) BinarySize() uint64 {
 	return uint64(headerSize) + 4 + uint64(len(f.tableRaw)) + 4 + uint64(len(f.codes)) + f.offsets.BinarySize() + f.lengths.BinarySize()
 }
 
-func (f *fsstArray) ValueAt(offset uint64) string {
+func (f *fsstArray[I, J]) ValueAt(offset uint64) string {
 	if offset >= f.length {
 		panic(errOffsetOutOfRange)
 	}
-	start := f.offsets.ValueAt(offset)
-	end := f.offsets.ValueAt(offset + 1)
+	start := uint64(f.offsets.ValueAt(offset))
+	end := uint64(f.offsets.ValueAt(offset + 1))
 	if start == end {
 		return ""
 	}
@@ -41,15 +41,11 @@ func (f *fsstArray) ValueAt(offset uint64) string {
 	return unsafe.String(&decoded[0], len(decoded))
 }
 
-func (f *fsstArray) DecompressInto(dst []string) error {
+func (f *fsstArray[I, J]) DecompressInto(dst []string) error {
 	if err := checkDstLen(dst, f.length); err != nil {
 		return err
 	}
-	offsets, err := decompressOrdinals(f.offsets)
-	if err != nil {
-		return err
-	}
-	lengths, err := decompressOrdinals(f.lengths)
+	lengths, err := Decompress(f.lengths)
 	if err != nil {
 		return err
 	}
@@ -58,24 +54,24 @@ func (f *fsstArray) DecompressInto(dst []string) error {
 
 	pos := uint64(0)
 	for i := uint64(0); i < f.length; i++ {
-		l := lengths[i]
-		_ = offsets[i] // keep offsets in scope for validation
-		dst[i] = string(decoded[pos : pos+l])
+		l := uint64(lengths[i])
+		if l == 0 {
+			dst[i] = ""
+		} else {
+			buf := decoded[pos : pos+l]
+			dst[i] = unsafe.String(unsafe.SliceData(buf), len(buf))
+		}
 		pos += l
 	}
 	return nil
 }
 
-func (f *fsstArray) Decompress() ([]string, error) {
-	dst := make([]string, f.length)
-	return dst, f.DecompressInto(dst)
-}
 
-func (f *fsstArray) Slice(start, end uint64) (EncodedArray[string], error) {
+func (f *fsstArray[I, J]) Slice(start, end uint64) (EncodedArray[string], error) {
 	return sliceToRawArray(f, start, end)
 }
 
-func (f *fsstArray) WriteTo(w io.Writer) (int64, error) {
+func (f *fsstArray[I, J]) WriteTo(w io.Writer) (int64, error) {
 	bodySize := uint64(4) + uint64(len(f.tableRaw)) + uint64(4) + uint64(len(f.codes))
 	n, err := header{
 		Version:  versionNumber,
@@ -129,7 +125,75 @@ func (f *fsstArray) WriteTo(w io.Writer) (int64, error) {
 	return n, err
 }
 
-func readFSSTArray(r io.Reader, h header) (EncodedArray[string], error) {
+// readFSSTWithLengths reads the lengths child and constructs fsstArray[I, J].
+func readFSSTWithLengths[I, J UnsignedInteger](h header, tableRaw, codes []byte, table *fsst.Table, offsets EncodedArray[I], r io.Reader, opts ReadOptions) (EncodedArray[string], error) {
+	lengthsHeader, err := readHeader(r)
+	if err != nil {
+		return nil, err
+	}
+	lengths, err := readEncodedArrayWithHeader[J](r, lengthsHeader, opts)
+	if err != nil {
+		return nil, fmt.Errorf("codec: fsst lengths %w", err)
+	}
+	if lengths.Length() != h.Length {
+		return nil, fmt.Errorf("codec: fsst lengths length = %d, want %d", lengths.Length(), h.Length)
+	}
+	return &fsstArray[I, J]{
+		length:   h.Length,
+		tableRaw: tableRaw,
+		codes:    codes,
+		offsets:  offsets,
+		lengths:  lengths,
+		table:    table,
+	}, nil
+}
+
+// readFSSTWithOffsets reads offsets, then dispatches on lengths ElemType.
+func readFSSTWithOffsets[I UnsignedInteger](h header, tableRaw, codes []byte, table *fsst.Table, offsetsHeader header, r io.Reader, opts ReadOptions) (EncodedArray[string], error) {
+	offsets, err := readEncodedArrayWithHeader[I](r, offsetsHeader, opts)
+	if err != nil {
+		return nil, fmt.Errorf("codec: fsst offsets %w", err)
+	}
+	if offsets.Length() != h.Length+1 {
+		return nil, fmt.Errorf("codec: fsst offsets length = %d, want %d", offsets.Length(), h.Length+1)
+	}
+	lengthsHeader, err := readHeader(r)
+	if err != nil {
+		return nil, err
+	}
+	switch lengthsHeader.ElemType {
+	case PTypeUint8:
+		return readFSSTWithLengthsTyped[I, uint8](h, tableRaw, codes, table, offsets, r, lengthsHeader, opts)
+	case PTypeUint16:
+		return readFSSTWithLengthsTyped[I, uint16](h, tableRaw, codes, table, offsets, r, lengthsHeader, opts)
+	case PTypeUint32:
+		return readFSSTWithLengthsTyped[I, uint32](h, tableRaw, codes, table, offsets, r, lengthsHeader, opts)
+	case PTypeUint64:
+		return readFSSTWithLengthsTyped[I, uint64](h, tableRaw, codes, table, offsets, r, lengthsHeader, opts)
+	default:
+		return nil, fmt.Errorf("codec: fsst lengths child type = %v, want unsigned integer", lengthsHeader.ElemType)
+	}
+}
+
+func readFSSTWithLengthsTyped[I, J UnsignedInteger](h header, tableRaw, codes []byte, table *fsst.Table, offsets EncodedArray[I], r io.Reader, lengthsHeader header, opts ReadOptions) (EncodedArray[string], error) {
+	lengths, err := readEncodedArrayWithHeader[J](r, lengthsHeader, opts)
+	if err != nil {
+		return nil, fmt.Errorf("codec: fsst lengths %w", err)
+	}
+	if lengths.Length() != h.Length {
+		return nil, fmt.Errorf("codec: fsst lengths length = %d, want %d", lengths.Length(), h.Length)
+	}
+	return &fsstArray[I, J]{
+		length:   h.Length,
+		tableRaw: tableRaw,
+		codes:    codes,
+		offsets:  offsets,
+		lengths:  lengths,
+		table:    table,
+	}, nil
+}
+
+func readFSSTArray(r io.Reader, h header, opts ReadOptions) (EncodedArray[string], error) {
 	// read table
 	var buf4 [4]byte
 	if _, err := io.ReadFull(r, buf4[:]); err != nil {
@@ -155,53 +219,36 @@ func readFSSTArray(r io.Reader, h header) (EncodedArray[string], error) {
 		return nil, fmt.Errorf("codec: fsst body size = %d, want %d", h.BodySize, expectedBody)
 	}
 
-	// read offsets child
-	offsetsHeader, err := readHeader(r)
-	if err != nil {
-		return nil, err
-	}
-	offsets, err := readOrdinalArray(r, offsetsHeader)
-	if err != nil {
-		return nil, fmt.Errorf("codec: fsst offsets %w", err)
-	}
-
-	// read lengths child
-	lengthsHeader, err := readHeader(r)
-	if err != nil {
-		return nil, err
-	}
-	lengths, err := readOrdinalArray(r, lengthsHeader)
-	if err != nil {
-		return nil, fmt.Errorf("codec: fsst lengths %w", err)
-	}
-
-	if offsets.Length() != h.Length+1 {
-		return nil, fmt.Errorf("codec: fsst offsets length = %d, want %d", offsets.Length(), h.Length+1)
-	}
-	if lengths.Length() != h.Length {
-		return nil, fmt.Errorf("codec: fsst lengths length = %d, want %d", lengths.Length(), h.Length)
-	}
-
 	table := &fsst.Table{}
 	if err := table.UnmarshalBinary(tableRaw); err != nil {
 		return nil, fmt.Errorf("codec: fsst table: %w", err)
 	}
 
-	return &fsstArray{
-		length:   h.Length,
-		tableRaw: tableRaw,
-		codes:    codes,
-		offsets:  offsets,
-		lengths:  lengths,
-		table:    table,
-	}, nil
+	// read offsets header
+	offsetsHeader, err := readHeader(r)
+	if err != nil {
+		return nil, err
+	}
+
+	switch offsetsHeader.ElemType {
+	case PTypeUint8:
+		return readFSSTWithOffsets[uint8](h, tableRaw, codes, table, offsetsHeader, r, opts)
+	case PTypeUint16:
+		return readFSSTWithOffsets[uint16](h, tableRaw, codes, table, offsetsHeader, r, opts)
+	case PTypeUint32:
+		return readFSSTWithOffsets[uint32](h, tableRaw, codes, table, offsetsHeader, r, opts)
+	case PTypeUint64:
+		return readFSSTWithOffsets[uint64](h, tableRaw, codes, table, offsetsHeader, r, opts)
+	default:
+		return nil, fmt.Errorf("codec: fsst offsets child type = %v, want unsigned integer", offsetsHeader.ElemType)
+	}
 }
 
-func readAnyFSSTArray[T Integer | Float | String](r io.Reader, h header) (EncodedArray[T], error) {
+func readAnyFSSTArray[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case string:
-		c, err := readFSSTArray(r, h)
+		c, err := readFSSTArray(r, h, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -211,7 +258,7 @@ func readAnyFSSTArray[T Integer | Float | String](r io.Reader, h header) (Encode
 	}
 }
 
-func buildFSSTArray(arr array.Array[string], ctx planContext) (EncodedArray[string], error) {
+func buildFSSTArray(arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
 	if ctx.depth <= 0 {
 		return nil, errDepthExhausted
 	}
@@ -249,18 +296,54 @@ func buildFSSTArray(arr array.Array[string], ctx planContext) (EncodedArray[stri
 		return nil, fmt.Errorf("codec: fsst marshal table: %w", err)
 	}
 
-	// Compress offsets and lengths children
+	// Use max(maxOffset, maxLength) to pick a single width for both.
 	childCtx := ctx.descend()
-	offsetsCodec, err := buildCompressedOrdinals(offsets, childCtx)
-	if err != nil {
-		return nil, err
+	var maxOff, maxLen uint64
+	for _, v := range offsets {
+		if v > maxOff {
+			maxOff = v
+		}
 	}
-	lengthsCodec, err := buildCompressedOrdinals(lengths, childCtx)
-	if err != nil {
-		return nil, err
+	for _, v := range lengths {
+		if v > maxLen {
+			maxLen = v
+		}
+	}
+	maxVal := maxOff
+	if maxLen > maxVal {
+		maxVal = maxLen
 	}
 
-	return &fsstArray{
+	switch {
+	case maxVal <= uint64(^uint8(0)):
+		return buildFSSTTyped[uint8](n, tableRaw, allCodes, table, offsets, lengths, childCtx)
+	case maxVal <= uint64(^uint16(0)):
+		return buildFSSTTyped[uint16](n, tableRaw, allCodes, table, offsets, lengths, childCtx)
+	case maxVal <= uint64(^uint32(0)):
+		return buildFSSTTyped[uint32](n, tableRaw, allCodes, table, offsets, lengths, childCtx)
+	default:
+		return buildFSSTTyped[uint64](n, tableRaw, allCodes, table, offsets, lengths, childCtx)
+	}
+}
+
+func buildFSSTTyped[I UnsignedInteger](n uint64, tableRaw, allCodes []byte, table *fsst.Table, offsets, lengths []uint64, ctx planContext) (EncodedArray[string], error) {
+	narrowOff := make([]I, len(offsets))
+	for i, v := range offsets {
+		narrowOff[i] = I(v)
+	}
+	offsetsCodec, err := compressArray(array.NewPrimitivesUnsafe(narrowOff), ctx)
+	if err != nil {
+		return nil, err
+	}
+	narrowLen := make([]I, len(lengths))
+	for i, v := range lengths {
+		narrowLen[i] = I(v)
+	}
+	lengthsCodec, err := compressArray(array.NewPrimitivesUnsafe(narrowLen), ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &fsstArray[I, I]{
 		length:   n,
 		tableRaw: tableRaw,
 		codes:    allCodes,

@@ -28,7 +28,7 @@ func TestALPRoundTripFloat64(t *testing.T) {
 	readBack, err := Read[float64](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.True(t, equalFloats(values, decoded))
 }
@@ -50,7 +50,7 @@ func TestALPRoundTripFloat32(t *testing.T) {
 	readBack, err := Read[float32](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.True(t, equalFloats(values, decoded))
 }
@@ -74,7 +74,7 @@ func TestALPRoundTripFloat64WithPatches(t *testing.T) {
 	readBack, err := Read[float64](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.True(t, equalFloats(values, decoded))
 }
@@ -169,7 +169,7 @@ func BenchmarkALPDecompress(b *testing.B) {
 		}
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				if _, err := codec.Decompress(); err != nil {
+				if _, err := Decompress(codec); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -199,7 +199,7 @@ func FuzzALPRoundTrip(f *testing.F) {
 		if err != nil {
 			return
 		}
-		decoded, err := codec.Decompress()
+		decoded, err := Decompress(codec)
 		require.NoError(t, err)
 		require.Equal(t, len(values), len(decoded))
 		for i := range values {

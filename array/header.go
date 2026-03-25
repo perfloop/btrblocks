@@ -41,12 +41,30 @@ func readHeader(r io.Reader) (Header, error) {
 	}, nil
 }
 
-func validateHeader(h Header) error {
+// ReadOptions constrains resource usage when decoding from untrusted streams.
+// The zero value applies no limits (suitable for trusted internal streams).
+type ReadOptions struct {
+	// MaxLength is the maximum number of elements allowed in a single array.
+	// Zero means no limit.
+	MaxLength uint64
+
+	// MaxBytes is the maximum body size in bytes allowed after a header.
+	// Zero means no limit.
+	MaxBytes uint64
+}
+
+func validateHeader(h Header, opts ReadOptions) error {
 	if h.Version != 1 {
 		return fmt.Errorf("array: unsupported version = %d", h.Version)
 	}
 	if h.Flags != 0 {
 		return fmt.Errorf("array: unsupported flags = 0x%x", h.Flags)
+	}
+	if opts.MaxLength > 0 && h.Length > opts.MaxLength {
+		return fmt.Errorf("array: length %d exceeds limit %d", h.Length, opts.MaxLength)
+	}
+	if opts.MaxBytes > 0 && h.NBytes > opts.MaxBytes {
+		return fmt.Errorf("array: body size %d exceeds limit %d", h.NBytes, opts.MaxBytes)
 	}
 	return nil
 }

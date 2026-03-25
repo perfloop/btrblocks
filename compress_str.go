@@ -20,7 +20,7 @@ func (stringCompressor) Schemes(_ stringStats) []scheme[string, stringStats] {
 			estimate: func(stats stringStats, ctx planContext) (float64, bool) {
 				return estimateConst[string](isConstArray(stats.Source(), cmpStrings[string]))(stats.Source(), ctx)
 			},
-			build: func(arr array.Array[string], _ planContext) (EncodedArray[string], error) {
+			build: func(arr array.ArrayCore[string], _ planContext) (EncodedArray[string], error) {
 				return newConstStringArray(arr)
 			},
 		},
@@ -36,7 +36,7 @@ func (stringCompressor) Schemes(_ stringStats) []scheme[string, stringStats] {
 			estimate: func(stats stringStats, ctx planContext) (float64, bool) {
 				return estimateRunEnd[string, stringStats](avgRunLength(stats.Source(), cmpStrings[string]), cmpStrings[string])(stats, ctx)
 			},
-			build: func(arr array.Array[string], ctx planContext) (EncodedArray[string], error) {
+			build: func(arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
 				return buildRunEndArray(arr, ctx, cmpStrings[string])
 			},
 		},

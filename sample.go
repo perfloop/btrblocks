@@ -1,10 +1,6 @@
 package btrblocks
 
-import (
-	"io"
-
-	"github.com/axiomhq/btrblocks/array"
-)
+import "github.com/axiomhq/btrblocks/array"
 
 const (
 	sampleWindow  = 64
@@ -22,6 +18,7 @@ type indexRange struct {
 }
 
 // sampledArray is a small chunked array used for stratified planner samples.
+// It implements only array.ArrayCore[T] — it is not serializable or sliceable.
 type sampledArray[T Integer | Float | String] struct {
 	pType   PType
 	length  uint64
@@ -29,7 +26,7 @@ type sampledArray[T Integer | Float | String] struct {
 	chunks  []array.Array[T]
 }
 
-func newSampledArray[T Integer | Float | String](chunks []array.Array[T]) array.Array[T] {
+func newSampledArray[T Integer | Float | String](chunks []array.Array[T]) array.ArrayCore[T] {
 	if len(chunks) == 1 {
 		return chunks[0]
 	}
@@ -59,42 +56,18 @@ func (a *sampledArray[T]) ValueAt(offset uint64) T {
 	return a.chunks[chunkIdx].ValueAt(offset - a.offsets[chunkIdx])
 }
 
-func (a *sampledArray[T]) CopyTo(_ []T) { panic("sampledArray.CopyTo should not be used") }
+func (a *sampledArray[T]) Length() uint64 { return a.length }
 
-func (a *sampledArray[T]) Slice(_, _ uint64) (array.Array[T], error) {
-	panic("sampledArray.Slice should not be used")
-}
-
-func (a *sampledArray[T]) WriteTo(w io.Writer) (int64, error) {
-	panic("sampledArray.WriteTo does not support writing")
-}
-
-func sampledStringBytes(chunk array.Array[string]) uint64 {
-	switch c := chunk.(type) {
-	case *array.Strings[uint8]:
-		return uint64(len(c.Buffer()))
-	case *array.Strings[uint16]:
-		return uint64(len(c.Buffer()))
-	case *array.Strings[uint32]:
-		return uint64(len(c.Buffer()))
-	case *array.Strings[uint64]:
-		return uint64(len(c.Buffer()))
-	default:
-		total := uint64(0)
-		for i := uint64(0); i < chunk.Length(); i++ {
-			total += uint64(len(chunk.ValueAt(i)))
-		}
-		return total
-	}
-}
-
-func (a *sampledArray[T]) BinarySize() uint64 {
+// rawBinarySize estimates the uncompressed serialized size of an ArrayCore.
+// For primitives: header + length * element width.
+// For strings: computed by scanning string lengths.
+func rawBinarySize[T Integer | Float | String](arr array.ArrayCore[T]) uint64 {
 	var zero T
 	switch any(zero).(type) {
 	case string:
 		totalBytes := uint64(0)
-		for _, chunk := range a.chunks {
-			totalBytes += sampledStringBytes(any(chunk).(array.Array[string]))
+		for i := uint64(0); i < arr.Length(); i++ {
+			totalBytes += uint64(len(any(arr.ValueAt(i)).(string)))
 		}
 		offsetWidth := uint64(4)
 		switch {
@@ -103,14 +76,11 @@ func (a *sampledArray[T]) BinarySize() uint64 {
 		case totalBytes <= uint64(^uint16(0)):
 			offsetWidth = 2
 		}
-		return array.HeaderSize + 4 + (a.length+1)*offsetWidth + totalBytes
+		return array.HeaderSize + 4 + (arr.Length()+1)*offsetWidth + totalBytes
 	default:
-		return array.HeaderSize + a.length*uint64(a.pType.ByteWidth())
+		return array.HeaderSize + arr.Length()*uint64(array.PTypeForType[T]().ByteWidth())
 	}
 }
-
-func (a *sampledArray[T]) Length() uint64 { return a.length }
-func (a *sampledArray[T]) PType() PType   { panic("sampledArray.PType should not be used") }
 
 func sampleCountApproxOnePercent(length uint64) uint64 {
 	if length == 0 {
@@ -151,7 +121,7 @@ func partitionIndices(length, partitions uint64) []indexRange {
 	return ranges
 }
 
-func sampleArray[T Integer | Float | String](arr array.Array[T]) array.Array[T] {
+func sampleArray[T Integer | Float | String](arr array.Array[T]) array.ArrayCore[T] {
 	length := arr.Length()
 	sampleRuns := sampleCountApproxOnePercent(length)
 	totalSample := uint64(sampleWindow) * sampleRuns

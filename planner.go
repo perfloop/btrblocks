@@ -9,21 +9,21 @@ import (
 // statsSource exposes the source array and its sampling policy to the planner.
 type statsSource[T Integer | Float | String] interface {
 	Source() array.Array[T]
-	Sample(planContext) array.Array[T]
+	Sample(planContext) array.ArrayCore[T]
 }
 
 // scheme is a planner-visible encoding candidate with estimate and build hooks.
 type scheme[T Integer | Float | String, S statsSource[T]] interface {
 	Encoding() CodeType
 	Estimate(stats S, ctx planContext) (float64, bool)
-	Build(arr array.Array[T], ctx planContext) (EncodedArray[T], error)
+	Build(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error)
 }
 
 // registeredScheme is the concrete function-backed implementation of a scheme.
 type registeredScheme[T Integer | Float | String, S statsSource[T]] struct {
 	kind     CodeType
 	estimate func(stats S, ctx planContext) (float64, bool)
-	build    func(arr array.Array[T], ctx planContext) (EncodedArray[T], error)
+	build    func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error)
 }
 
 func (s registeredScheme[T, S]) Encoding() CodeType {
@@ -37,7 +37,7 @@ func (s registeredScheme[T, S]) Estimate(stats S, ctx planContext) (float64, boo
 	return s.estimate(stats, ctx)
 }
 
-func (s registeredScheme[T, S]) Build(arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
+func (s registeredScheme[T, S]) Build(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
 	return s.build(arr, ctx)
 }
 
@@ -86,20 +86,28 @@ func chooseScheme[T Integer | Float | String, S statsSource[T]](stats S, ctx pla
 func rawScheme[T Integer | Float | String, S statsSource[T]]() scheme[T, S] {
 	return registeredScheme[T, S]{
 		kind: CodecTypeRaw,
-		build: func(arr array.Array[T], _ planContext) (EncodedArray[T], error) {
-			return newRawArray(arr), nil
+		build: func(arr array.ArrayCore[T], _ planContext) (EncodedArray[T], error) {
+			if full, ok := arr.(array.Array[T]); ok {
+				return newRawArray(full), nil
+			}
+			// Materialize ArrayCore into a full Array for wrapping.
+			values := make([]T, arr.Length())
+			for i := range values {
+				values[i] = arr.ValueAt(uint64(i))
+			}
+			return newRawArray(buildArray(values)), nil
 		},
 	}
 }
 
-func estimateBySample[T Integer | Float | String, S statsSource[T]](stats S, ctx planContext, build func(array.Array[T], planContext) (EncodedArray[T], error)) (float64, bool) {
+func estimateBySample[T Integer | Float | String, S statsSource[T]](stats S, ctx planContext, build func(array.ArrayCore[T], planContext) (EncodedArray[T], error)) (float64, bool) {
 	sampledCtx := ctx.sampled()
 	sample := stats.Sample(ctx)
 	codec, err := build(sample, sampledCtx)
 	if err != nil {
 		return 0, false
 	}
-	before := newRawArray(sample).BinarySize()
+	before := rawBinarySize[T](sample)
 	after := codec.BinarySize()
 	if after == 0 {
 		return 0, false

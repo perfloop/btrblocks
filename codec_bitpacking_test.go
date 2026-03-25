@@ -26,7 +26,7 @@ func TestBitpackRoundTripUint32SmallValues(t *testing.T) {
 	readBack, err := Read[uint32](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -47,7 +47,7 @@ func TestBitpackRoundTripUint8TwoBitValues(t *testing.T) {
 	readBack, err := Read[uint8](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -70,7 +70,7 @@ func TestBitpackRoundTripWithPatches(t *testing.T) {
 	readBack, err := Read[uint32](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -86,7 +86,7 @@ func TestBitpackPatchesPresent(t *testing.T) {
 	codec, err := buildBitPackedArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 
-	bitpack, ok := codec.(*bitPackedArray[uint32])
+	bitpack, ok := codec.(*bitPackedArray[uint32, uint64])
 	require.True(t, ok)
 	require.NotNil(t, bitpack.patches)
 	require.Less(t, bitpack.bitWidth, bitWidthForUnsigned(uint64(values[100])))
@@ -103,7 +103,7 @@ func TestBitpackValueAtIncludingPatches(t *testing.T) {
 	codec, err := buildBitPackedArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 
-	bitpack, ok := codec.(*bitPackedArray[uint32])
+	bitpack, ok := codec.(*bitPackedArray[uint32, uint64])
 	require.True(t, ok)
 
 	require.Equal(t, values[0], bitpack.ValueAt(0))
@@ -119,7 +119,7 @@ func TestBitpackZeroWidthAllZeros(t *testing.T) {
 	codec, err := buildBitPackedArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 
-	bitpack, ok := codec.(*bitPackedArray[uint32])
+	bitpack, ok := codec.(*bitPackedArray[uint32, uint64])
 	require.True(t, ok)
 	require.Equal(t, uint(0), bitpack.bitWidth)
 
@@ -130,7 +130,7 @@ func TestBitpackZeroWidthAllZeros(t *testing.T) {
 	readBack, err := Read[uint32](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -170,7 +170,7 @@ func BenchmarkBitpackDecompress(b *testing.B) {
 		codec, _ := makeBitpackUint32(n)
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				if _, err := codec.Decompress(); err != nil {
+				if _, err := Decompress(codec); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -195,7 +195,7 @@ func FuzzBitpackRoundTrip(f *testing.F) {
 			return
 		}
 
-		decoded, err := codec.Decompress()
+		decoded, err := Decompress(codec)
 		require.NoError(t, err)
 		require.Equal(t, input, decoded)
 	})

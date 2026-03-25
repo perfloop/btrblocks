@@ -23,10 +23,8 @@ func checkDstLen[T Integer | Float | String](dst []T, need uint64) error {
 }
 
 const (
-	versionNumber                = 1
-	headerSize                   = 24
-	flagBitpackHasPatches uint32 = 1 << 0
-	flagALPHasPatches        uint32 = 1 << 0
+	versionNumber = 1
+	headerSize    = 24
 )
 
 type kindSet uint16
@@ -121,10 +119,14 @@ type EncodedArray[T Integer | Float | String] interface {
 	BinarySize() uint64
 	Length() uint64
 	PType() PType
-	// Decompress recursively decodes the entire tree into a newly allocated slice.
-	Decompress() ([]T, error)
 	// DecompressInto recursively decodes into dst, which must have length >= Length().
 	DecompressInto(dst []T) error
+}
+
+// Decompress recursively decodes an encoded array into a newly allocated slice.
+func Decompress[T Integer | Float | String](e EncodedArray[T]) ([]T, error) {
+	dst := make([]T, e.Length())
+	return dst, e.DecompressInto(dst)
 }
 
 // header is the fixed encoded-array stream prefix written before each node body.
@@ -203,7 +205,7 @@ func sliceToRawArray[T Integer | Float | String](src interface {
 	return newRawArray(values), nil
 }
 
-func validateHeaderForType[T Integer | Float | String](h header) error {
+func validateHeaderForType[T Integer | Float | String](h header, opts ReadOptions) error {
 	if h.Version != versionNumber {
 		return fmt.Errorf("codec: unsupported version = %d", h.Version)
 	}
@@ -215,64 +217,64 @@ func validateHeaderForType[T Integer | Float | String](h header) error {
 	default:
 		return fmt.Errorf("codec: unknown kind = %d", h.Kind)
 	}
-	if h.Kind == CodecTypeBitpack {
-		if h.Flags&^flagBitpackHasPatches != 0 {
-			return fmt.Errorf("codec: unsupported bitpack flags = 0x%x", h.Flags)
+	// Codecs that use flags (bitpack, ALP, ALPRD) validate their own flags
+	// in their read functions. All other codecs must have flags == 0.
+	switch h.Kind {
+	case CodecTypeBitpack, CodecTypeALP, CodecTypeALPRD:
+		// Validated per-codec.
+	default:
+		if h.Flags != 0 {
+			return fmt.Errorf("codec: unsupported flags = 0x%x for %s", h.Flags, h.Kind)
 		}
-	} else if h.Kind == CodecTypeALP {
-		if h.Flags&^flagALPHasPatches != 0 {
-			return fmt.Errorf("codec: unsupported ALP flags = 0x%x", h.Flags)
-		}
-	} else if h.Kind == CodecTypeALPRD {
-		if h.Flags&^flagALPRDHasPatches != 0 {
-			return fmt.Errorf("codec: unsupported ALPRD flags = 0x%x", h.Flags)
-		}
-	} else if h.Flags != 0 {
-		return fmt.Errorf("codec: unsupported flags = 0x%x", h.Flags)
 	}
-
 	expected := array.PTypeForType[T]()
 	if h.ElemType != expected {
 		return fmt.Errorf("codec: element type = %v, want %v", h.ElemType, expected)
 	}
+	if opts.MaxLength > 0 && h.Length > opts.MaxLength {
+		return fmt.Errorf("codec: length %d exceeds limit %d", h.Length, opts.MaxLength)
+	}
+	if opts.MaxBytes > 0 && h.BodySize > opts.MaxBytes {
+		return fmt.Errorf("codec: body size %d exceeds limit %d", h.BodySize, opts.MaxBytes)
+	}
 	return nil
 }
 
-func readEncodedArray[T Integer | Float | String](r io.Reader) (EncodedArray[T], error) {
+func readEncodedArray[T Integer | Float | String](r io.Reader, opts ReadOptions) (EncodedArray[T], error) {
 	h, err := readHeader(r)
 	if err != nil {
 		return nil, err
 	}
-	return readEncodedArrayWithHeader[T](r, h)
+	return readEncodedArrayWithHeader[T](r, h, opts)
 }
 
-func readEncodedArrayWithHeader[T Integer | Float | String](r io.Reader, h header) (EncodedArray[T], error) {
-	if err := validateHeaderForType[T](h); err != nil {
+func readEncodedArrayWithHeader[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
+	if err := validateHeaderForType[T](h, opts); err != nil {
 		return nil, err
 	}
 	switch h.Kind {
 	case CodecTypeConst:
-		return readConstArray[T](r, h)
+		return readConstArray[T](r, h, opts)
 	case CodecTypeRaw:
-		return readRawArray[T](r, h)
+		return readRawArray[T](r, h, opts)
 	case CodecTypeDict:
-		return readDictArray[T](r, h)
+		return readDictArray[T](r, h, opts)
 	case CodecTypeRunEnd:
-		return readRunEndArray[T](r, h)
+		return readRunEndArray[T](r, h, opts)
 	case CodecTypeZigZag:
-		return readAnyZigZagArray[T](r, h)
+		return readAnyZigZagArray[T](r, h, opts)
 	case CodecTypeBitpack:
-		return readAnyBitPackedArray[T](r, h)
+		return readAnyBitPackedArray[T](r, h, opts)
 	case CodecTypeFor:
-		return readAnyFoRArray[T](r, h)
+		return readAnyFoRArray[T](r, h, opts)
 	case CodecTypeSequence:
-		return readAnySequenceArray[T](r, h)
+		return readAnySequenceArray[T](r, h, opts)
 	case CodecTypeALP:
-		return readAnyALPArray[T](r, h)
+		return readAnyALPArray[T](r, h, opts)
 	case CodecTypeALPRD:
-		return readAnyALPRDArray[T](r, h)
+		return readAnyALPRDArray[T](r, h, opts)
 	case CodecTypeFSST:
-		return readAnyFSSTArray[T](r, h)
+		return readAnyFSSTArray[T](r, h, opts)
 	default:
 		return nil, fmt.Errorf("codec: unknown kind = %d", h.Kind)
 	}

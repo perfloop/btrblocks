@@ -65,7 +65,7 @@ func (s testStatsUint32) Source() array.Array[uint32] {
 	return s.arr
 }
 
-func (s testStatsUint32) Sample(ctx planContext) array.Array[uint32] {
+func (s testStatsUint32) Sample(ctx planContext) array.ArrayCore[uint32] {
 	if ctx.isSample {
 		return s.arr
 	}
@@ -145,7 +145,7 @@ func TestCompressRoundTripInts(t *testing.T) {
 	require.NoError(t, err)
 	require.LessOrEqual(t, codec.BinarySize(), newRawArray(buildArray(values)).BinarySize())
 
-	decoded, err := codec.Decompress()
+	decoded, err := Decompress(codec)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 
@@ -155,7 +155,7 @@ func TestCompressRoundTripInts(t *testing.T) {
 
 	readEncodedArray, err := Read[int32](&buf)
 	require.NoError(t, err)
-	decoded, err = readEncodedArray.Decompress()
+	decoded, err = Decompress(readEncodedArray)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -166,7 +166,7 @@ func TestCompressRoundTripUints(t *testing.T) {
 	require.NoError(t, err)
 	require.LessOrEqual(t, codec.BinarySize(), newRawArray(buildArray(values)).BinarySize())
 
-	decoded, err := codec.Decompress()
+	decoded, err := Decompress(codec)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 
@@ -176,7 +176,7 @@ func TestCompressRoundTripUints(t *testing.T) {
 
 	readEncodedArray, err := Read[uint32](&buf)
 	require.NoError(t, err)
-	decoded, err = readEncodedArray.Decompress()
+	decoded, err = Decompress(readEncodedArray)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -187,7 +187,7 @@ func TestCompressRoundTripFloats(t *testing.T) {
 	require.NoError(t, err)
 	require.LessOrEqual(t, codec.BinarySize(), newRawArray(buildArray(values)).BinarySize())
 
-	decoded, err := codec.Decompress()
+	decoded, err := Decompress(codec)
 	require.NoError(t, err)
 	require.True(t, equalFloats(values, decoded))
 
@@ -197,7 +197,7 @@ func TestCompressRoundTripFloats(t *testing.T) {
 
 	readEncodedArray, err := Read[float64](&buf)
 	require.NoError(t, err)
-	decoded, err = readEncodedArray.Decompress()
+	decoded, err = Decompress(readEncodedArray)
 	require.NoError(t, err)
 	require.True(t, equalFloats(values, decoded))
 }
@@ -208,7 +208,7 @@ func TestCompressRoundTripStrings(t *testing.T) {
 	require.NoError(t, err)
 	require.LessOrEqual(t, codec.BinarySize(), newRawArray(buildArray(values)).BinarySize())
 
-	decoded, err := codec.Decompress()
+	decoded, err := Decompress(codec)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 
@@ -218,7 +218,7 @@ func TestCompressRoundTripStrings(t *testing.T) {
 
 	readEncodedArray, err := Read[string](&buf)
 	require.NoError(t, err)
-	decoded, err = readEncodedArray.Decompress()
+	decoded, err = Decompress(readEncodedArray)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -236,7 +236,7 @@ func TestDecompressFromCodec(t *testing.T) {
 	codec, err := Compress(buildArray(values), Options{})
 	require.NoError(t, err)
 
-	decompressed, err := codec.Decompress()
+	decompressed, err := Decompress(codec)
 	require.NoError(t, err)
 	require.Equal(t, values, decompressed)
 }
@@ -253,7 +253,7 @@ func TestDecompressFromReadCodec(t *testing.T) {
 	readEncodedArray, err := Read[string](&buf)
 	require.NoError(t, err)
 
-	decompressed, err := readEncodedArray.Decompress()
+	decompressed, err := Decompress(readEncodedArray)
 	require.NoError(t, err)
 	require.Equal(t, values, decompressed)
 }
@@ -263,7 +263,7 @@ func TestDecompressCodec(t *testing.T) {
 	codec, err := Compress(buildArray(values), Options{})
 	require.NoError(t, err)
 
-	decompressed, err := codec.Decompress()
+	decompressed, err := Decompress(codec)
 	require.NoError(t, err)
 	require.Equal(t, values, decompressed)
 }
@@ -275,13 +275,13 @@ func TestRunEndDecompressUsesValueAt(t *testing.T) {
 	ends := &spyArray[uint8]{
 		values: []uint8{2, 5},
 	}
-	codec := &runEndArray[uint32]{
+	codec := &runEndArray[uint32, uint8]{
 		length: 7,
 		runs:   runs,
-		ends:   wrapOrdinalArray(ends),
+		ends:   ends,
 	}
 
-	decoded, err := codec.Decompress()
+	decoded, err := Decompress(codec)
 	require.NoError(t, err)
 	require.Equal(t, []uint32{10, 10, 20, 20, 20, 30, 30}, decoded)
 }
@@ -299,7 +299,7 @@ func TestRunEndCodecRoundTripAfterRead(t *testing.T) {
 	readEncodedArray, err := Read[uint32](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readEncodedArray.Decompress()
+	decoded, err := Decompress(readEncodedArray)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -311,19 +311,19 @@ func TestDictDecompressUsesValueAt(t *testing.T) {
 	indices := &spyArray[uint8]{
 		values: []uint8{1, 0, 1, 1},
 	}
-	codec := &dictArray[uint32]{
+	codec := &dictArray[uint32, uint8]{
 		values:  values,
-		indices: wrapOrdinalArray(indices),
+		indices: indices,
 	}
 
-	decoded, err := codec.Decompress()
+	decoded, err := Decompress(codec)
 	require.NoError(t, err)
 	require.Equal(t, []uint32{20, 10, 20, 20}, decoded)
 }
 
 func TestDictCodecRoundTripAfterRead(t *testing.T) {
 	values := []uint32{7, 9, 7, 9, 7, 9}
-	codec, err := buildIntegerDictFromDistinct(array.NewPrimitivesUnsafe(values), intDistinctValues[uint32]{}, newPlanContext(Options{MaxDepth: 3}))
+	codec, err := buildIntegerDictFromDistinct(array.NewPrimitivesUnsafe(values), nil, newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeDict, codec.Encoding())
 
@@ -334,7 +334,7 @@ func TestDictCodecRoundTripAfterRead(t *testing.T) {
 	readEncodedArray, err := Read[uint32](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readEncodedArray.Decompress()
+	decoded, err := Decompress(readEncodedArray)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -352,14 +352,14 @@ func TestFoRUsesBitpackChild(t *testing.T) {
 
 	forArray, ok := codec.(*forArray[uint32])
 	require.True(t, ok)
-	require.IsType(t, &bitPackedArray[uint32]{}, forArray.child)
+	require.IsType(t, &bitPackedArray[uint32, uint64]{}, forArray.child)
 }
 
 func TestIntegerDictCompressesValues(t *testing.T) {
-	codec, err := buildIntegerDictFromDistinct(array.NewPrimitivesUnsafe([]int32{7, 9, 7, 9, 7, 9}), intDistinctValues[int32]{}, newPlanContext(Options{MaxDepth: 3}))
+	codec, err := buildIntegerDictFromDistinct(array.NewPrimitivesUnsafe([]int32{7, 9, 7, 9, 7, 9}), nil, newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 
-	dict, ok := codec.(*dictArray[int32])
+	dict, ok := codec.(*dictArray[int32, uint8])
 	require.True(t, ok)
 	// Values are recursively compressed (excluding Dict to prevent loops).
 	require.NotEqual(t, CodecTypeDict, dict.values.Encoding())
@@ -369,7 +369,7 @@ func TestStringDictExcludesNestedDictOnValues(t *testing.T) {
 	codec, err := buildStringDictArray(array.NewStrings([]string{"aa", "bb", "aa", "bb", "aa", "bb"}), newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 
-	dict, ok := codec.(*dictArray[string])
+	dict, ok := codec.(*dictArray[string, uint8])
 	require.True(t, ok)
 	require.NotEqual(t, CodecTypeDict, dict.values.Encoding())
 }
@@ -420,7 +420,7 @@ func TestChooseSchemeBuildsOnlyWinner(t *testing.T) {
 				estimate: func(testStatsUint32, planContext) (float64, bool) {
 					return 10, true
 				},
-				build: func(array.Array[uint32], planContext) (EncodedArray[uint32], error) {
+				build: func(array.ArrayCore[uint32], planContext) (EncodedArray[uint32], error) {
 					firstBuilds++
 					return &testEncodedArrayUint32{kind: CodecTypeBitpack, length: arr.Length(), size: rawSize - 4}, nil
 				},
@@ -430,7 +430,7 @@ func TestChooseSchemeBuildsOnlyWinner(t *testing.T) {
 				estimate: func(testStatsUint32, planContext) (float64, bool) {
 					return 2, true
 				},
-				build: func(array.Array[uint32], planContext) (EncodedArray[uint32], error) {
+				build: func(array.ArrayCore[uint32], planContext) (EncodedArray[uint32], error) {
 					secondBuilds++
 					return &testEncodedArrayUint32{kind: CodecTypeFor, length: arr.Length(), size: rawSize - 12}, nil
 				},
@@ -455,7 +455,7 @@ func TestCompressWithKeepsRawWhenWinnerDoesNotBeatIt(t *testing.T) {
 				estimate: func(testStatsUint32, planContext) (float64, bool) {
 					return 2, true
 				},
-				build: func(array.Array[uint32], planContext) (EncodedArray[uint32], error) {
+				build: func(array.ArrayCore[uint32], planContext) (EncodedArray[uint32], error) {
 					return &testEncodedArrayUint32{kind: CodecTypeBitpack, length: arr.Length(), size: rawSize}, nil
 				},
 			},
@@ -464,7 +464,7 @@ func TestCompressWithKeepsRawWhenWinnerDoesNotBeatIt(t *testing.T) {
 				estimate: func(testStatsUint32, planContext) (float64, bool) {
 					return 3, true
 				},
-				build: func(array.Array[uint32], planContext) (EncodedArray[uint32], error) {
+				build: func(array.ArrayCore[uint32], planContext) (EncodedArray[uint32], error) {
 					return &testEncodedArrayUint32{kind: CodecTypeFor, length: arr.Length(), size: rawSize + 8}, nil
 				},
 			},
@@ -485,7 +485,7 @@ func TestCompressWithKeepsBorrowedRawWhenKeepingRaw(t *testing.T) {
 	values[0] = 99
 	values[1] = 88
 
-	decoded, err := codec.Decompress()
+	decoded, err := Decompress(codec)
 	require.NoError(t, err)
 	require.Equal(t, []uint32{99, 88, 3, 4}, decoded)
 }
@@ -499,7 +499,7 @@ func TestCompressWithKeepsBorrowedRawWhenBuildFails(t *testing.T) {
 				estimate: func(testStatsUint32, planContext) (float64, bool) {
 					return 2, true
 				},
-				build: func(array.Array[uint32], planContext) (EncodedArray[uint32], error) {
+				build: func(array.ArrayCore[uint32], planContext) (EncodedArray[uint32], error) {
 					return nil, io.ErrUnexpectedEOF
 				},
 			},
@@ -512,7 +512,7 @@ func TestCompressWithKeepsBorrowedRawWhenBuildFails(t *testing.T) {
 
 	values[2] = 777
 
-	decoded, err := codec.Decompress()
+	decoded, err := Decompress(codec)
 	require.NoError(t, err)
 	require.Equal(t, []uint32{10, 20, 777, 40}, decoded)
 }
@@ -578,7 +578,7 @@ func TestUnsignedOutliersChoosePatchedBitpack(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeBitpack, codec.Encoding())
 
-	bitpack, ok := codec.(*bitPackedArray[uint32])
+	bitpack, ok := codec.(*bitPackedArray[uint32, uint64])
 	require.True(t, ok)
 	require.NotNil(t, bitpack.patches)
 	require.Less(t, bitpack.bitWidth, bitWidthForUnsigned(uint64(values[400])))
@@ -597,7 +597,7 @@ func TestALPPropagatesFloatDictExcludesToIntegerChild(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	alp, ok := codec.(*alpArray[float64, int64])
+	alp, ok := codec.(*alpArray[float64, int64, uint64])
 	require.True(t, ok)
 	require.NotEqual(t, CodecTypeDict, alp.encoded.Encoding())
 }
@@ -605,14 +605,14 @@ func TestALPPropagatesFloatDictExcludesToIntegerChild(t *testing.T) {
 func TestDictSlicePreservesEncoding(t *testing.T) {
 	values := []uint32{9, 7, 9, 8, 7, 8, 9}
 
-	encoded, err := buildIntegerDictFromDistinct(array.NewPrimitivesUnsafe(values), intDistinctValues[uint32]{}, newPlanContext(Options{MaxDepth: 3}))
+	encoded, err := buildIntegerDictFromDistinct(array.NewPrimitivesUnsafe(values), nil, newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 
 	sliced, err := encoded.Slice(1, 6)
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeDict, sliced.Encoding())
 
-	decoded, err := sliced.Decompress()
+	decoded, err := Decompress(sliced)
 	require.NoError(t, err)
 	require.Equal(t, values[1:6], decoded)
 }
@@ -631,12 +631,12 @@ func TestBitpackSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
 	sliced, err := encoded.Slice(16, 40)
 	require.NoError(t, err)
 
-	bitpack, ok := sliced.(*bitPackedArray[uint32])
+	bitpack, ok := sliced.(*bitPackedArray[uint32, uint64])
 	require.True(t, ok)
 	require.NotNil(t, bitpack.patches)
 	require.Equal(t, uint64(16), bitpack.patches.offset)
 
-	decoded, err := sliced.Decompress()
+	decoded, err := Decompress(sliced)
 	require.NoError(t, err)
 	require.Equal(t, values[16:40], decoded)
 
@@ -646,26 +646,37 @@ func TestBitpackSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
 
 	readBack, err := Read[uint32](&buf)
 	require.NoError(t, err)
-	roundTrip := readBack.(*bitPackedArray[uint32])
-	require.NotNil(t, roundTrip.patches)
-	require.Equal(t, uint64(16), roundTrip.patches.offset)
+	// After read, the patch index type may differ (narrowed on read).
+	// Try uint64 first (build path), then uint8 (read path).
+	if roundTrip, ok := readBack.(*bitPackedArray[uint32, uint64]); ok {
+		require.NotNil(t, roundTrip.patches)
+		require.Equal(t, uint64(16), roundTrip.patches.offset)
+	} else if roundTrip, ok := readBack.(*bitPackedArray[uint32, uint8]); ok {
+		require.NotNil(t, roundTrip.patches)
+		require.Equal(t, uint64(16), roundTrip.patches.offset)
+	} else if roundTrip, ok := readBack.(*bitPackedArray[uint32, uint16]); ok {
+		require.NotNil(t, roundTrip.patches)
+		require.Equal(t, uint64(16), roundTrip.patches.offset)
+	} else {
+		require.Fail(t, "unexpected bitpack type")
+	}
 
-	decoded, err = readBack.Decompress()
+	decoded, err = Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values[16:40], decoded)
 }
 
 func TestALPSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
-	encoded := &alpArray[float64, int64]{
+	encoded := &alpArray[float64, int64, uint8]{
 		length:  5,
 		expE:    0,
 		expF:    0,
 		encoded: newRawArray(buildArray([]int64{1, 2, 3, 4, 5})),
 		decode:  alpDecode64,
-		patches: &patches[float64]{
+		patches: &patches[float64, uint8]{
 			length:  5,
 			offset:  0,
-			indices: buildOrdinalSlice(4, []uint64{1, 4}),
+			indices: newRawArray(array.NewPrimitivesUnsafe([]uint8{1, 4})),
 			values:  newRawArray(buildArray([]float64{20.5, 50.5})),
 		},
 	}
@@ -673,11 +684,11 @@ func TestALPSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
 	sliced, err := encoded.Slice(1, 5)
 	require.NoError(t, err)
 
-	alp := sliced.(*alpArray[float64, int64])
+	alp := sliced.(*alpArray[float64, int64, uint8])
 	require.NotNil(t, alp.patches)
 	require.Equal(t, uint64(1), alp.patches.offset)
 
-	decoded, err := sliced.Decompress()
+	decoded, err := Decompress(sliced)
 	require.NoError(t, err)
 	require.Equal(t, []float64{20.5, 3.0, 4.0, 50.5}, decoded)
 
@@ -687,11 +698,11 @@ func TestALPSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
 
 	readBack, err := Read[float64](&buf)
 	require.NoError(t, err)
-	roundTrip := readBack.(*alpArray[float64, int64])
+	roundTrip := readBack.(*alpArray[float64, int64, uint8])
 	require.NotNil(t, roundTrip.patches)
 	require.Equal(t, uint64(1), roundTrip.patches.offset)
 
-	decoded, err = readBack.Decompress()
+	decoded, err = Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, []float64{20.5, 3.0, 4.0, 50.5}, decoded)
 }
@@ -713,7 +724,7 @@ func TestExcludeIntegerPreventsDict(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, CodecTypeDict, codec.Encoding())
 
-	decoded, err := codec.Decompress()
+	decoded, err := Decompress(codec)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -729,7 +740,7 @@ func TestExcludeFloatPreventsALP(t *testing.T) {
 	require.NotEqual(t, CodecTypeALP, codec.Encoding())
 	require.NotEqual(t, CodecTypeALPRD, codec.Encoding())
 
-	decoded, err := codec.Decompress()
+	decoded, err := Decompress(codec)
 	require.NoError(t, err)
 	require.True(t, equalFloats(values, decoded))
 }
@@ -750,7 +761,7 @@ func TestEmptySchemesWithIncludeRestrictsSchemes(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, CodecTypeSequence, codec.Encoding())
 
-	decoded, err := codec.Decompress()
+	decoded, err := Decompress(codec)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -766,4 +777,26 @@ func TestIncludeAfterExcludeReEnables(t *testing.T) {
 		Options{}.WithExcludeInteger(CodecTypeSequence).WithIncludeInteger(CodecTypeSequence))
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeSequence, codec.Encoding())
+}
+
+func TestReadWithMaxLengthRejectsOversized(t *testing.T) {
+	values := make([]uint32, 1000)
+	for i := range values {
+		values[i] = uint32(i % 50)
+	}
+	codec, err := Compress(array.NewPrimitivesUnsafe(values), Options{})
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	_, err = codec.WriteTo(&buf)
+	require.NoError(t, err)
+
+	// Without limits: succeeds.
+	_, err = Read[uint32](bytes.NewReader(buf.Bytes()))
+	require.NoError(t, err)
+
+	// With tight MaxLength: rejected.
+	_, err = Read[uint32](bytes.NewReader(buf.Bytes()), ReadOptions{MaxLength: 100})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds limit")
 }

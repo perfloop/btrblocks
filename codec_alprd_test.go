@@ -26,7 +26,7 @@ func TestALPRDRoundTripFloat64SharedExponents(t *testing.T) {
 	readBack, err := Read[float64](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, len(values), len(decoded))
 	for i := range values {
@@ -50,7 +50,7 @@ func TestALPRDRoundTripFloat32(t *testing.T) {
 	readBack, err := Read[float32](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, len(values), len(decoded))
 	for i := range values {
@@ -77,7 +77,7 @@ func TestALPRDRoundTripWithPatches(t *testing.T) {
 	readBack, err := Read[float64](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, len(values), len(decoded))
 	for i := range values {
@@ -120,8 +120,13 @@ func TestALPRDDictSizeSmall(t *testing.T) {
 	codec, err := buildALPRDArray[float64](array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 
-	alprd, ok := codec.(*alprdArray[float64])
-	require.True(t, ok)
+	alprd, ok := codec.(*alprdArray[float64, uint64])
+	if !ok {
+		alprd2, ok2 := codec.(*alprdArray[float64, uint8])
+		require.True(t, ok2)
+		require.LessOrEqual(t, alprd2.dictSize, uint8(8))
+		return
+	}
 	require.LessOrEqual(t, alprd.dictSize, uint8(8))
 }
 
@@ -210,7 +215,7 @@ func FuzzALPRDRoundTrip(f *testing.F) {
 			return
 		}
 
-		decoded, err := codec.Decompress()
+		decoded, err := Decompress(codec)
 		if err != nil {
 			t.Fatalf("decompress failed: %v", err)
 		}

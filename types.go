@@ -15,6 +15,7 @@ type (
 )
 
 type PType = array.PType
+type ReadOptions = array.ReadOptions
 
 const (
 	PTypeUnknown = array.PTypeUnknown

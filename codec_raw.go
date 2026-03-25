@@ -36,10 +36,6 @@ func (r *rawArray[T]) DecompressInto(dst []T) error {
 	return nil
 }
 
-func (r *rawArray[T]) Decompress() ([]T, error) {
-	dst := make([]T, r.arr.Length())
-	return dst, r.DecompressInto(dst)
-}
 
 func (r *rawArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	return sliceToRawArray(r, start, end)
@@ -60,8 +56,8 @@ func (r *rawArray[T]) WriteTo(w io.Writer) (int64, error) {
 	return n + int64(nn), err
 }
 
-func readRawArray[T Integer | Float | String](r io.Reader, h header) (EncodedArray[T], error) {
-	arr, err := array.ReadArray[T](r)
+func readRawArray[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
+	arr, err := array.ReadArray[T](r, opts)
 	if err != nil {
 		return nil, err
 	}

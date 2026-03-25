@@ -38,10 +38,6 @@ func (c *constArray[T]) DecompressInto(dst []T) error {
 	return nil
 }
 
-func (c *constArray[T]) Decompress() ([]T, error) {
-	dst := make([]T, c.length)
-	return dst, c.DecompressInto(dst)
-}
 
 func (c *constArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	if err := array.ValidateSliceBounds(c.length, start, end); err != nil {
@@ -66,7 +62,7 @@ func (c *constArray[T]) WriteTo(w io.Writer) (int64, error) {
 	return n + int64(nn), err
 }
 
-func newConstArray[T Integer | Float | String](arr array.Array[T], cmp cmpFn[T]) (*constArray[T], error) {
+func newConstArray[T Integer | Float | String](arr array.ArrayCore[T], cmp cmpFn[T]) (*constArray[T], error) {
 	if arr.Length() == 0 {
 		return nil, errDataEmpty
 	}
@@ -79,20 +75,20 @@ func newConstArray[T Integer | Float | String](arr array.Array[T], cmp cmpFn[T])
 	return &constArray[T]{length: arr.Length(), value: value}, nil
 }
 
-func newConstIntegerArray[T Integer](arr array.Array[T]) (*constArray[T], error) {
+func newConstIntegerArray[T Integer](arr array.ArrayCore[T]) (*constArray[T], error) {
 	return newConstArray(arr, cmpIntegers[T])
 }
 
-func newConstFloatArray[T Float](arr array.Array[T]) (*constArray[T], error) {
+func newConstFloatArray[T Float](arr array.ArrayCore[T]) (*constArray[T], error) {
 	return newConstArray(arr, cmpFloats[T])
 }
 
-func newConstStringArray[T String](arr array.Array[T]) (*constArray[T], error) {
+func newConstStringArray[T String](arr array.ArrayCore[T]) (*constArray[T], error) {
 	return newConstArray(arr, cmpStrings[T])
 }
 
-func readConstArray[T Integer | Float | String](r io.Reader, h header) (EncodedArray[T], error) {
-	arr, err := array.ReadArray[T](r)
+func readConstArray[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
+	arr, err := array.ReadArray[T](r, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -108,8 +104,8 @@ func readConstArray[T Integer | Float | String](r io.Reader, h header) (EncodedA
 	return &constArray[T]{length: h.Length, value: arr.ValueAt(0)}, nil
 }
 
-func estimateConst[T Integer | Float | String](isConst bool) func(array.Array[T], planContext) (float64, bool) {
-	return func(arr array.Array[T], ctx planContext) (float64, bool) {
+func estimateConst[T Integer | Float | String](isConst bool) func(array.ArrayCore[T], planContext) (float64, bool) {
+	return func(arr array.ArrayCore[T], ctx planContext) (float64, bool) {
 		if ctx.isSample || !isConst {
 			return 0, false
 		}

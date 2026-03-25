@@ -21,7 +21,7 @@ func TestRunEndRoundtripUint32(t *testing.T) {
 	decoded, err := Read[uint32](&buf)
 	require.NoError(t, err)
 
-	got, err := decoded.Decompress()
+	got, err := Decompress(decoded)
 	require.NoError(t, err)
 	require.Equal(t, values, got)
 }
@@ -48,7 +48,7 @@ func TestRunEndRoundtripFloat64(t *testing.T) {
 	decoded, err := Read[float64](&buf)
 	require.NoError(t, err)
 
-	got, err := decoded.Decompress()
+	got, err := Decompress(decoded)
 	require.NoError(t, err)
 	require.Equal(t, values, got)
 }
@@ -75,7 +75,7 @@ func TestRunEndRoundtripString(t *testing.T) {
 	decoded, err := Read[string](&buf)
 	require.NoError(t, err)
 
-	got, err := decoded.Decompress()
+	got, err := Decompress(decoded)
 	require.NoError(t, err)
 	require.Equal(t, values, got)
 }
@@ -116,7 +116,7 @@ func TestRunEndSingleRun(t *testing.T) {
 	decoded, err := Read[uint32](&buf)
 	require.NoError(t, err)
 
-	got, err := decoded.Decompress()
+	got, err := Decompress(decoded)
 	require.NoError(t, err)
 	require.Equal(t, values, got)
 }
@@ -158,7 +158,7 @@ func BenchmarkRunEndDecompress(b *testing.B) {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if _, err := codec.Decompress(); err != nil {
+				if _, err := Decompress(codec); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -188,7 +188,7 @@ func FuzzRunEndUint8(f *testing.F) {
 		decoded, err := Read[uint8](&buf)
 		require.NoError(t, err)
 
-		got, err := decoded.Decompress()
+		got, err := Decompress(decoded)
 		require.NoError(t, err)
 		require.Equal(t, values, got)
 	})

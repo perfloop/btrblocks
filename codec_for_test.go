@@ -21,7 +21,7 @@ func TestFoRRoundTripUint32HighBase(t *testing.T) {
 	readBack, err := Read[uint32](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -42,7 +42,7 @@ func TestFoRRoundTripUint64NarrowRange(t *testing.T) {
 	readBack, err := Read[uint64](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -61,7 +61,7 @@ func TestFoRChildIsBitPacked(t *testing.T) {
 
 	f, ok := codec.(*forArray[uint32])
 	require.True(t, ok)
-	require.IsType(t, &bitPackedArray[uint32]{}, f.child)
+	require.IsType(t, &bitPackedArray[uint32, uint64]{}, f.child)
 }
 
 func TestFoRValueAtSpotChecks(t *testing.T) {
@@ -84,7 +84,7 @@ func TestFoRSlicePreservesEncoding(t *testing.T) {
 	require.Equal(t, CodecTypeFor, sliced.Encoding())
 	require.Equal(t, uint64(3), sliced.Length())
 
-	decoded, err := sliced.Decompress()
+	decoded, err := Decompress(sliced)
 	require.NoError(t, err)
 	require.Equal(t, values[1:4], decoded)
 }
@@ -133,7 +133,7 @@ func BenchmarkFoRUint32(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				_, err = readBack.Decompress()
+				_, err = Decompress(readBack)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -168,7 +168,7 @@ func FuzzFoRUint32Roundtrip(f *testing.F) {
 		readBack, err := Read[uint32](&buf)
 		require.NoError(t, err)
 
-		decoded, err := readBack.Decompress()
+		decoded, err := Decompress(readBack)
 		require.NoError(t, err)
 		require.Equal(t, values, decoded)
 	})

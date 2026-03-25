@@ -15,11 +15,11 @@ func TestDictRoundTripInt32(t *testing.T) {
 		values[i] = pattern[i%len(pattern)]
 	}
 
-	codec, err := buildIntegerDictFromDistinct(buildArray(values), intDistinctValues[int32]{}, newPlanContext(Options{MaxDepth: 3}))
+	codec, err := buildIntegerDictFromDistinct(buildArray(values), nil, newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeDict, codec.Encoding())
 
-	decoded, err := codec.Decompress()
+	decoded, err := Decompress(codec)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 
@@ -30,7 +30,7 @@ func TestDictRoundTripInt32(t *testing.T) {
 	readBack, err := Read[int32](&buf)
 	require.NoError(t, err)
 
-	decoded, err = readBack.Decompress()
+	decoded, err = Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -42,11 +42,11 @@ func TestDictRoundTripFloat64(t *testing.T) {
 		values[i] = pattern[i%len(pattern)]
 	}
 
-	codec, err := buildFloatDictFromDistinct(buildArray(values), floatDistinctValues[float64]{}, newPlanContext(Options{MaxDepth: 3}))
+	codec, err := buildFloatDictFromDistinct(buildArray(values), nil, newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeDict, codec.Encoding())
 
-	decoded, err := codec.Decompress()
+	decoded, err := Decompress(codec)
 	require.NoError(t, err)
 	require.True(t, equalFloats(values, decoded))
 
@@ -57,7 +57,7 @@ func TestDictRoundTripFloat64(t *testing.T) {
 	readBack, err := Read[float64](&buf)
 	require.NoError(t, err)
 
-	decoded, err = readBack.Decompress()
+	decoded, err = Decompress(readBack)
 	require.NoError(t, err)
 	require.True(t, equalFloats(values, decoded))
 }
@@ -73,7 +73,7 @@ func TestDictRoundTripString(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeDict, codec.Encoding())
 
-	decoded, err := codec.Decompress()
+	decoded, err := Decompress(codec)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 
@@ -84,14 +84,14 @@ func TestDictRoundTripString(t *testing.T) {
 	readBack, err := Read[string](&buf)
 	require.NoError(t, err)
 
-	decoded, err = readBack.Decompress()
+	decoded, err = Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
 
 func TestDictValueAt(t *testing.T) {
 	values := []int32{10, 20, 30, 10, 20, 30}
-	codec, err := buildIntegerDictFromDistinct(buildArray(values), intDistinctValues[int32]{}, newPlanContext(Options{MaxDepth: 3}))
+	codec, err := buildIntegerDictFromDistinct(buildArray(values), nil, newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 
 	for i, want := range values {
@@ -100,21 +100,21 @@ func TestDictValueAt(t *testing.T) {
 }
 
 func TestDictEncodingType(t *testing.T) {
-	codec, err := buildIntegerDictFromDistinct(buildArray([]uint32{1, 2, 1, 2, 1, 2}), intDistinctValues[uint32]{}, newPlanContext(Options{MaxDepth: 3}))
+	codec, err := buildIntegerDictFromDistinct(buildArray([]uint32{1, 2, 1, 2, 1, 2}), nil, newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeDict, codec.Encoding())
 }
 
 func TestDictSlicePreservesValues(t *testing.T) {
 	values := []int32{10, 20, 30, 10, 20, 30, 10, 20}
-	codec, err := buildIntegerDictFromDistinct(buildArray(values), intDistinctValues[int32]{}, newPlanContext(Options{MaxDepth: 3}))
+	codec, err := buildIntegerDictFromDistinct(buildArray(values), nil, newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 
 	sliced, err := codec.Slice(2, 6)
 	require.NoError(t, err)
 	require.Equal(t, CodecTypeDict, sliced.Encoding())
 
-	decoded, err := sliced.Decompress()
+	decoded, err := Decompress(sliced)
 	require.NoError(t, err)
 	require.Equal(t, values[2:6], decoded)
 }
@@ -151,7 +151,7 @@ func BenchmarkDictDecompress(b *testing.B) {
 		}
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				if _, err := codec.Decompress(); err != nil {
+				if _, err := Decompress(codec); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -181,7 +181,7 @@ func FuzzDictRoundTrip(f *testing.F) {
 			return
 		}
 
-		codec, err := buildIntegerDictFromDistinct(buildArray(values), intDistinctValues[uint16]{}, newPlanContext(Options{MaxDepth: 3}))
+		codec, err := buildIntegerDictFromDistinct(buildArray(values), nil, newPlanContext(Options{MaxDepth: 3}))
 		if err != nil {
 			return
 		}
@@ -193,7 +193,7 @@ func FuzzDictRoundTrip(f *testing.F) {
 		readBack, err := Read[uint16](&buf)
 		require.NoError(t, err)
 
-		decoded, err := readBack.Decompress()
+		decoded, err := Decompress(readBack)
 		require.NoError(t, err)
 		require.Equal(t, values, decoded)
 	})

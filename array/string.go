@@ -214,12 +214,12 @@ func readStringsWithHeader(r io.Reader, h Header) (Array[string], error) {
 }
 
 // ReadStrings reads a string array from r. The offset width is inferred from the body; the returned Array[string] is the appropriate Strings[T] (uint8/uint16/uint32/uint64).
-func ReadStrings(r io.Reader) (Array[string], error) {
+func ReadStrings(r io.Reader, opts ...ReadOptions) (Array[string], error) {
 	h, err := readHeader(r)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateHeader(h); err != nil {
+	if err := validateHeader(h, readOpts(opts)); err != nil {
 		return nil, err
 	}
 	return readStringsWithHeader(r, h)

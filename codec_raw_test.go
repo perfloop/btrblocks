@@ -22,7 +22,7 @@ func TestRawRoundTripUint32(t *testing.T) {
 	readBack, err := Read[uint32](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -38,7 +38,7 @@ func TestRawRoundTripInt32(t *testing.T) {
 	readBack, err := Read[int32](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -54,7 +54,7 @@ func TestRawRoundTripFloat64(t *testing.T) {
 	readBack, err := Read[float64](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.True(t, equalFloats(values, decoded))
 }
@@ -70,7 +70,7 @@ func TestRawRoundTripString(t *testing.T) {
 	readBack, err := Read[string](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -86,7 +86,7 @@ func TestRawRoundTripUint64(t *testing.T) {
 	readBack, err := Read[uint64](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -125,7 +125,7 @@ func TestRawSlice(t *testing.T) {
 	require.Equal(t, uint64(3), sliced.Length())
 	require.Equal(t, CodecTypeRaw, sliced.Encoding())
 
-	decoded, err := sliced.Decompress()
+	decoded, err := Decompress(sliced)
 	require.NoError(t, err)
 	require.Equal(t, []uint32{20, 30, 40}, decoded)
 }
@@ -144,7 +144,7 @@ func TestRawSliceAfterRead(t *testing.T) {
 	sliced, err := readBack.Slice(2, 5)
 	require.NoError(t, err)
 
-	decoded, err := sliced.Decompress()
+	decoded, err := Decompress(sliced)
 	require.NoError(t, err)
 	require.Equal(t, []int32{-1, 0, 1}, decoded)
 }
@@ -183,7 +183,7 @@ func BenchmarkRaw(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				_, err = readBack.Decompress()
+				_, err = Decompress(readBack)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -216,7 +216,7 @@ func FuzzRaw(f *testing.F) {
 		readBack, err := Read[uint32](&buf)
 		require.NoError(t, err)
 
-		decoded, err := readBack.Decompress()
+		decoded, err := Decompress(readBack)
 		require.NoError(t, err)
 		require.Equal(t, owned, decoded)
 	})
@@ -248,7 +248,7 @@ func FuzzRawFloat64(f *testing.F) {
 		readBack, err := Read[float64](&buf)
 		require.NoError(t, err)
 
-		decoded, err := readBack.Decompress()
+		decoded, err := Decompress(readBack)
 		require.NoError(t, err)
 		require.True(t, equalFloats(owned, decoded))
 	})

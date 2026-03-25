@@ -20,7 +20,7 @@ func (c *signedIntCompressor[T]) Schemes(stats signedStats[T]) []scheme[T, signe
 			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
 				return estimateConst[T](stats.base.isConst)(stats.Source(), ctx)
 			},
-			build: func(arr array.Array[T], _ planContext) (EncodedArray[T], error) {
+			build: func(arr array.ArrayCore[T], _ planContext) (EncodedArray[T], error) {
 				return newConstIntegerArray(arr)
 			},
 		},
@@ -29,7 +29,7 @@ func (c *signedIntCompressor[T]) Schemes(stats signedStats[T]) []scheme[T, signe
 			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
 				return estimateSequence[T](stats.Source(), ctx)
 			},
-			build: func(arr array.Array[T], _ planContext) (EncodedArray[T], error) {
+			build: func(arr array.ArrayCore[T], _ planContext) (EncodedArray[T], error) {
 				return newSequenceArray(arr)
 			},
 		},
@@ -45,7 +45,7 @@ func (c *signedIntCompressor[T]) Schemes(stats signedStats[T]) []scheme[T, signe
 			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
 				return estimateIntegerDict[T, signedStats[T]](stats.base.distinctCount, stats.base.avgRunLength)(stats, ctx)
 			},
-			build: func(arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
+			build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
 				return buildIntegerDictFromDistinct(arr, stats.distinct, ctx)
 			},
 		},
@@ -54,7 +54,7 @@ func (c *signedIntCompressor[T]) Schemes(stats signedStats[T]) []scheme[T, signe
 			estimate: func(stats signedStats[T], ctx planContext) (float64, bool) {
 				return estimateRunEnd[T, signedStats[T]](stats.base.avgRunLength, cmpIntegers[T])(stats, ctx)
 			},
-			build: func(arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
+			build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
 				return buildRunEndArray(arr, ctx, cmpIntegers[T])
 			},
 		},

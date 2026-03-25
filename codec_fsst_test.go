@@ -24,7 +24,7 @@ func TestFSSTRoundTripRepetitiveStrings(t *testing.T) {
 	readBack, err := Read[string](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -46,7 +46,7 @@ func TestFSSTRoundTripCommonPrefixes(t *testing.T) {
 	readBack, err := Read[string](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -64,7 +64,7 @@ func TestFSSTRoundTripEmptyStringsMixed(t *testing.T) {
 	readBack, err := Read[string](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -85,7 +85,7 @@ func TestFSSTRoundTripSingleCharStrings(t *testing.T) {
 	readBack, err := Read[string](&buf)
 	require.NoError(t, err)
 
-	decoded, err := readBack.Decompress()
+	decoded, err := Decompress(readBack)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
 }
@@ -144,7 +144,7 @@ func BenchmarkFSSTDecompress(b *testing.B) {
 		}
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				if _, err := codec.Decompress(); err != nil {
+				if _, err := Decompress(codec); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -181,7 +181,7 @@ func FuzzFSSTRoundTrip(f *testing.F) {
 			return
 		}
 
-		decoded, err := codec.Decompress()
+		decoded, err := Decompress(codec)
 		require.NoError(t, err)
 		require.Equal(t, values, decoded)
 	})

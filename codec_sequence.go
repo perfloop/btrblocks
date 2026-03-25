@@ -19,7 +19,7 @@ type sequenceArray[T Integer] struct {
 	step   T
 }
 
-func newSequenceArray[T Integer](arr array.Array[T]) (*sequenceArray[T], error) {
+func newSequenceArray[T Integer](arr array.ArrayCore[T]) (*sequenceArray[T], error) {
 	if arr.Length() == 0 {
 		return nil, errDataEmpty
 	}
@@ -64,10 +64,6 @@ func (s *sequenceArray[T]) DecompressInto(dst []T) error {
 	return nil
 }
 
-func (s *sequenceArray[T]) Decompress() ([]T, error) {
-	dst := make([]T, s.length)
-	return dst, s.DecompressInto(dst)
-}
 
 func (s *sequenceArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	if err := array.ValidateSliceBounds(s.length, start, end); err != nil {
@@ -131,53 +127,53 @@ func (s *sequenceArray[T]) WriteTo(w io.Writer) (int64, error) {
 	return n, nil
 }
 
-func readAnySequenceArray[T Integer | Float | String](r io.Reader, h header) (EncodedArray[T], error) {
+func readAnySequenceArray[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case int8:
-		c, err := readSequenceArray[int8](r, h)
+		c, err := readSequenceArray[int8](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case int16:
-		c, err := readSequenceArray[int16](r, h)
+		c, err := readSequenceArray[int16](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case int32:
-		c, err := readSequenceArray[int32](r, h)
+		c, err := readSequenceArray[int32](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case int64:
-		c, err := readSequenceArray[int64](r, h)
+		c, err := readSequenceArray[int64](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint8:
-		c, err := readSequenceArray[uint8](r, h)
+		c, err := readSequenceArray[uint8](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint16:
-		c, err := readSequenceArray[uint16](r, h)
+		c, err := readSequenceArray[uint16](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint32:
-		c, err := readSequenceArray[uint32](r, h)
+		c, err := readSequenceArray[uint32](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint64:
-		c, err := readSequenceArray[uint64](r, h)
+		c, err := readSequenceArray[uint64](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -187,7 +183,7 @@ func readAnySequenceArray[T Integer | Float | String](r io.Reader, h header) (En
 	}
 }
 
-func readSequenceArray[T Integer](r io.Reader, h header) (EncodedArray[T], error) {
+func readSequenceArray[T Integer](r io.Reader, h header, _ ReadOptions) (EncodedArray[T], error) {
 	elemSize := uint64(unsafe.Sizeof(T(0)))
 	if h.BodySize != 2*elemSize {
 		return nil, fmt.Errorf("codec: sequence body size = %d, want %d", h.BodySize, 2*elemSize)
@@ -213,10 +209,10 @@ func readSequenceArray[T Integer](r io.Reader, h header) (EncodedArray[T], error
 	return &sequenceArray[T]{length: h.Length, base: vals[0], step: vals[1]}, nil
 }
 
-func estimateSequence[T Integer](arr array.Array[T], _ planContext) (float64, bool) {
+func estimateSequence[T Integer](arr array.ArrayCore[T], _ planContext) (float64, bool) {
 	codec, err := newSequenceArray(arr)
 	if err != nil {
 		return 0, false
 	}
-	return float64(newRawArray(arr).BinarySize()) / float64(codec.BinarySize()), true
+	return float64(rawBinarySize[T](arr)) / float64(codec.BinarySize()), true
 }

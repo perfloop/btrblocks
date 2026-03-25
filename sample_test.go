@@ -1,7 +1,6 @@
 package btrblocks
 
 import (
-	"io"
 	"testing"
 
 	"github.com/axiomhq/btrblocks/array"
@@ -20,28 +19,22 @@ func TestSampleArrayBuildsChunkedSlices(t *testing.T) {
 	require.Equal(t, uint64(sampleWindow)*sampleCountApproxOnePercent(uint64(len(values))), chunked.Length())
 	require.Greater(t, len(chunked.chunks), 1)
 
+	// Each chunk is a contiguous slice of the source array.
 	for _, chunk := range chunked.chunks {
 		for i := uint64(1); i < chunk.Length(); i++ {
 			require.Equal(t, chunk.ValueAt(i-1)+1, chunk.ValueAt(i))
 		}
 	}
 
+	// ValueAt works across chunk boundaries.
+	for i := uint64(0); i < chunked.Length(); i++ {
+		_ = chunked.ValueAt(i) // must not panic
+	}
+
+	// rawBinarySize matches a materialized array's BinarySize.
 	materialized, err := materializeSlice[uint32](chunked, 0, chunked.Length())
 	require.NoError(t, err)
-	require.Equal(t, materialized.BinarySize(), chunked.BinarySize())
-
-	require.Panics(t, func() {
-		chunked.CopyTo(make([]uint32, chunked.Length()))
-	})
-	require.Panics(t, func() {
-		_, _ = chunked.Slice(0, 1)
-	})
-	require.Panics(t, func() {
-		_ = chunked.PType()
-	})
-	require.Panics(t, func() {
-		_, _ = chunked.WriteTo(io.Discard)
-	})
+	require.Equal(t, materialized.BinarySize(), rawBinarySize[uint32](chunked))
 }
 
 func TestSampleArrayBinarySizeMatchesMaterializedStrings(t *testing.T) {
@@ -64,5 +57,5 @@ func TestSampleArrayBinarySizeMatchesMaterializedStrings(t *testing.T) {
 
 	materialized, err := materializeSlice[string](chunked, 0, chunked.Length())
 	require.NoError(t, err)
-	require.Equal(t, materialized.BinarySize(), chunked.BinarySize())
+	require.Equal(t, materialized.BinarySize(), rawBinarySize[string](chunked))
 }

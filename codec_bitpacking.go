@@ -9,12 +9,14 @@ import (
 	"github.com/axiomhq/btrblocks/array"
 )
 
+const flagBitpackHasPatches uint32 = 1 << 0
+
 // bitPackedArray stores fixed-width packed unsigned values plus optional patches.
-type bitPackedArray[T UnsignedInteger] struct {
+type bitPackedArray[T UnsignedInteger, I UnsignedInteger] struct {
 	length   uint64
 	bitWidth uint
 	buf      []byte
-	patches  *patches[T]
+	patches  *patches[T, I]
 }
 
 func bitWidthForUnsigned(value uint64) uint {
@@ -65,15 +67,25 @@ func findBestBitpackWidth[T UnsignedInteger](histogram []uint64) uint {
 	return bestWidth
 }
 
-func buildBitPackedArray[T UnsignedInteger](arr array.Array[T], _ planContext) (EncodedArray[T], error) {
+func buildBitPackedArray[T UnsignedInteger](arr array.ArrayCore[T], _ planContext) (EncodedArray[T], error) {
 	bitWidth := findBestBitpackWidth[T](unsignedBitWidthHistogram(arr))
+	return buildBitPackedArrayCore(arr, bitWidth)
+}
+
+// buildBitPackedArrayWithWidth builds a bitpacked array using a caller-supplied
+// bit width, skipping the histogram pass. Used by FoR where the optimal width
+// is already known from the min/max range.
+func buildBitPackedArrayWithWidth[T UnsignedInteger](arr array.ArrayCore[T], bitWidth uint) (*bitPackedArray[T, uint64], error) {
+	return buildBitPackedArrayCore(arr, bitWidth)
+}
+
+func buildBitPackedArrayCore[T UnsignedInteger](arr array.ArrayCore[T], bitWidth uint) (*bitPackedArray[T, uint64], error) {
 	n := arr.Length()
-	codec := &bitPackedArray[T]{length: n, bitWidth: bitWidth}
+	codec := &bitPackedArray[T, uint64]{length: n, bitWidth: bitWidth}
 	if n == 0 {
 		return codec, nil
 	}
 
-	// Single pass: pack values and collect patches simultaneously.
 	if bitWidth > 0 {
 		codec.buf = make([]byte, packedByteSize(n, bitWidth))
 	}
@@ -94,25 +106,17 @@ func buildBitPackedArray[T UnsignedInteger](arr array.Array[T], _ planContext) (
 		return codec, nil
 	}
 
-	patchIdxCodec, err := buildBitpackPatchIndices(patchIdx)
-	if err != nil {
-		return nil, err
-	}
+	patchIdxCodec := newRawArray(array.NewPrimitivesUnsafe(patchIdx))
 	patchValCodec, err := buildBitpackPatchValues(patchVals)
 	if err != nil {
 		return nil, err
 	}
-	patches, err := newPatches(n, 0, patchIdxCodec, patchValCodec)
+	p, err := newPatches[T, uint64](n, 0, patchIdxCodec, patchValCodec)
 	if err != nil {
 		return nil, err
 	}
-	codec.patches = patches
+	codec.patches = p
 	return codec, nil
-}
-
-func buildBitpackPatchIndices(indices []uint64) (ordinalArray, error) {
-	last := indices[len(indices)-1]
-	return buildOrdinalSlice(last, indices), nil
 }
 
 func buildBitpackPatchValues[T UnsignedInteger](values []T) (EncodedArray[T], error) {
@@ -136,10 +140,10 @@ func isAllSameUnsigned[T UnsignedInteger](values []T) bool {
 	return true
 }
 
-func (c *bitPackedArray[T]) Encoding() CodeType { return CodecTypeBitpack }
-func (c *bitPackedArray[T]) Length() uint64     { return c.length }
-func (c *bitPackedArray[T]) PType() PType       { return array.PTypeForType[T]() }
-func (c *bitPackedArray[T]) BinarySize() uint64 {
+func (c *bitPackedArray[T, I]) Encoding() CodeType { return CodecTypeBitpack }
+func (c *bitPackedArray[T, I]) Length() uint64      { return c.length }
+func (c *bitPackedArray[T, I]) PType() PType        { return array.PTypeForType[T]() }
+func (c *bitPackedArray[T, I]) BinarySize() uint64 {
 	size := uint64(headerSize) + 1 + uint64(len(c.buf))
 	if c.patches != nil {
 		size += c.patches.BinarySize()
@@ -147,7 +151,7 @@ func (c *bitPackedArray[T]) BinarySize() uint64 {
 	return size
 }
 
-func (c *bitPackedArray[T]) ValueAt(offset uint64) T {
+func (c *bitPackedArray[T, I]) ValueAt(offset uint64) T {
 	if offset >= c.length {
 		panic(errOffsetOutOfRange)
 	}
@@ -161,31 +165,44 @@ func (c *bitPackedArray[T]) ValueAt(offset uint64) T {
 	return T(unpackUnsigned(c.buf, offset*uint64(c.bitWidth), c.bitWidth))
 }
 
-func (c *bitPackedArray[T]) DecompressInto(dst []T) error {
+func (c *bitPackedArray[T, I]) DecompressInto(dst []T) error {
 	if err := checkDstLen(dst, c.length); err != nil {
 		return err
 	}
 	if c.bitWidth == 0 {
 		clear(dst[:c.length])
-		return nil
-	}
-	for i := uint64(0); i < c.length; i++ {
-		dst[i] = T(unpackUnsigned(c.buf, i*uint64(c.bitWidth), c.bitWidth))
+	} else {
+		unpackBatchTyped(c.buf, c.length, c.bitWidth, dst[:c.length])
 	}
 	return c.patches.Apply(dst[:c.length])
 }
 
-func (c *bitPackedArray[T]) Decompress() ([]T, error) {
-	dst := make([]T, c.length)
-	return dst, c.DecompressInto(dst)
+// unpackBatchTyped decodes count packed values directly into a typed slice.
+func unpackBatchTyped[T UnsignedInteger](buf []byte, count uint64, bitWidth uint, dst []T) {
+	mask := uint64((1 << bitWidth) - 1)
+	bitOff := uint64(0)
+	bufLen := uint64(len(buf))
+	for i := uint64(0); i < count; i++ {
+		byteOff := bitOff >> 3
+		bitInByte := uint(bitOff & 7)
+		if byteOff+8 <= bufLen {
+			word := binary.LittleEndian.Uint64(buf[byteOff:])
+			dst[i] = T((word >> bitInByte) & mask)
+		} else {
+			dst[i] = T(unpackUnsigned(buf, bitOff, bitWidth))
+		}
+		bitOff += uint64(bitWidth)
+	}
 }
 
-func (c *bitPackedArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
+
+
+func (c *bitPackedArray[T, I]) Slice(start, end uint64) (EncodedArray[T], error) {
 	if err := array.ValidateSliceBounds(c.length, start, end); err != nil {
 		return nil, err
 	}
 	length := end - start
-	sliced := &bitPackedArray[T]{length: length, bitWidth: c.bitWidth}
+	sliced := &bitPackedArray[T, I]{length: length, bitWidth: c.bitWidth}
 	if c.bitWidth > 0 && length > 0 {
 		sliced.buf = make([]byte, packedByteSize(length, c.bitWidth))
 		for i := uint64(0); i < length; i++ {
@@ -201,7 +218,7 @@ func (c *bitPackedArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
 	return sliced, nil
 }
 
-func (c *bitPackedArray[T]) WriteTo(w io.Writer) (int64, error) {
+func (c *bitPackedArray[T, I]) WriteTo(w io.Writer) (int64, error) {
 	flags := uint32(0)
 	if c.patches != nil {
 		flags |= flagBitpackHasPatches
@@ -247,29 +264,29 @@ func (c *bitPackedArray[T]) WriteTo(w io.Writer) (int64, error) {
 	return n, nil
 }
 
-func readAnyBitPackedArray[T Integer | Float | String](r io.Reader, h header) (EncodedArray[T], error) {
+func readAnyBitPackedArray[T Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
 	var zero T
 	switch any(zero).(type) {
 	case uint8:
-		c, err := readBitPackedArray[uint8](r, h)
+		c, err := readBitPackedArray[uint8](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint16:
-		c, err := readBitPackedArray[uint16](r, h)
+		c, err := readBitPackedArray[uint16](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint32:
-		c, err := readBitPackedArray[uint32](r, h)
+		c, err := readBitPackedArray[uint32](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case uint64:
-		c, err := readBitPackedArray[uint64](r, h)
+		c, err := readBitPackedArray[uint64](r, h, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -279,15 +296,10 @@ func readAnyBitPackedArray[T Integer | Float | String](r io.Reader, h header) (E
 	}
 }
 
-func readBitpackPatchIndexCodec(r io.Reader) (ordinalArray, error) {
-	h, err := readHeader(r)
-	if err != nil {
-		return nil, err
+func readBitPackedArray[T UnsignedInteger](r io.Reader, h header, opts ReadOptions) (EncodedArray[T], error) {
+	if h.Flags&^flagBitpackHasPatches != 0 {
+		return nil, fmt.Errorf("codec: unsupported bitpack flags = 0x%x", h.Flags)
 	}
-	return readOrdinalArray(r, h)
-}
-
-func readBitPackedArray[T UnsignedInteger](r io.Reader, h header) (EncodedArray[T], error) {
 	if h.BodySize < 1 {
 		return nil, fmt.Errorf("codec: bitpack body too small")
 	}
@@ -317,28 +329,49 @@ func readBitPackedArray[T UnsignedInteger](r io.Reader, h header) (EncodedArray[
 			return nil, err
 		}
 	}
-	codec := &bitPackedArray[T]{length: h.Length, bitWidth: bitWidth, buf: buf}
-	if h.Flags&flagBitpackHasPatches != 0 {
-		var offsetBuf [8]byte
-		if _, err := io.ReadFull(r, offsetBuf[:]); err != nil {
-			return nil, err
-		}
-		offset := binary.LittleEndian.Uint64(offsetBuf[:])
-		idxCodec, err := readBitpackPatchIndexCodec(r)
-		if err != nil {
-			return nil, err
-		}
-		valCodec, err := readEncodedArray[T](r)
-		if err != nil {
-			return nil, err
-		}
-		patches, err := newPatches(h.Length, offset, idxCodec, valCodec)
-		if err != nil {
-			return nil, prefixPatchError(err, "bitpack")
-		}
-		codec.patches = patches
+
+	if h.Flags&flagBitpackHasPatches == 0 {
+		return &bitPackedArray[T, uint64]{length: h.Length, bitWidth: bitWidth, buf: buf}, nil
 	}
-	return codec, nil
+
+	var offsetBuf [8]byte
+	if _, err := io.ReadFull(r, offsetBuf[:]); err != nil {
+		return nil, err
+	}
+	offset := binary.LittleEndian.Uint64(offsetBuf[:])
+
+	idxHeader, err := readHeader(r)
+	if err != nil {
+		return nil, err
+	}
+	switch idxHeader.ElemType {
+	case PTypeUint8:
+		return readBitPackedWithPatchIdx[T, uint8](r, h, opts, bitWidth, buf, offset, idxHeader)
+	case PTypeUint16:
+		return readBitPackedWithPatchIdx[T, uint16](r, h, opts, bitWidth, buf, offset, idxHeader)
+	case PTypeUint32:
+		return readBitPackedWithPatchIdx[T, uint32](r, h, opts, bitWidth, buf, offset, idxHeader)
+	case PTypeUint64:
+		return readBitPackedWithPatchIdx[T, uint64](r, h, opts, bitWidth, buf, offset, idxHeader)
+	default:
+		return nil, fmt.Errorf("codec: bitpack patch index type = %v, want unsigned integer", idxHeader.ElemType)
+	}
+}
+
+func readBitPackedWithPatchIdx[T UnsignedInteger, I UnsignedInteger](r io.Reader, h header, opts ReadOptions, bitWidth uint, buf []byte, offset uint64, idxHeader header) (EncodedArray[T], error) {
+	idxCodec, err := readEncodedArrayWithHeader[I](r, idxHeader, opts)
+	if err != nil {
+		return nil, err
+	}
+	valCodec, err := readEncodedArray[T](r, opts)
+	if err != nil {
+		return nil, err
+	}
+	p, err := newPatches[T, I](h.Length, offset, idxCodec, valCodec)
+	if err != nil {
+		return nil, prefixPatchError(err, "bitpack")
+	}
+	return &bitPackedArray[T, I]{length: h.Length, bitWidth: bitWidth, buf: buf, patches: p}, nil
 }
 
 func packedByteSize(length uint64, bitWidth uint) int {
@@ -365,30 +398,47 @@ func checkedPackedByteSize(length uint64, bitWidth uint) (int, error) {
 }
 
 func packUnsigned(buf []byte, bitOffset uint64, bitWidth uint, value uint64) {
+	byteOff := bitOffset / 8
+	bitInByte := uint(bitOffset % 8)
+	if bitWidth+bitInByte <= 64 && byteOff+8 <= uint64(len(buf)) {
+		word := binary.LittleEndian.Uint64(buf[byteOff:])
+		word |= (value & ((1 << bitWidth) - 1)) << bitInByte
+		binary.LittleEndian.PutUint64(buf[byteOff:], word)
+		return
+	}
 	for written := uint(0); written < bitWidth; {
-		byteOffset := int(bitOffset / 8)
-		bitInByte := uint(bitOffset % 8)
-		take := minUint(bitWidth-written, 8-bitInByte)
+		off := int(bitOffset / 8)
+		inByte := uint(bitOffset % 8)
+		take := minUint(bitWidth-written, 8-inByte)
 		chunk := byte((value >> written) & uint64(maskForBits(take)))
-		buf[byteOffset] |= chunk << bitInByte
+		buf[off] |= chunk << inByte
 		written += take
 		bitOffset += uint64(take)
 	}
 }
 
 func unpackUnsigned(buf []byte, bitOffset uint64, bitWidth uint) uint64 {
+	byteOff := bitOffset / 8
+	bitInByte := uint(bitOffset % 8)
+	if bitWidth+bitInByte <= 64 && byteOff+8 <= uint64(len(buf)) {
+		word := binary.LittleEndian.Uint64(buf[byteOff:])
+		return (word >> bitInByte) & ((1 << bitWidth) - 1)
+	}
 	var value uint64
+	bo := bitOffset
 	for read := uint(0); read < bitWidth; {
-		byteOffset := int(bitOffset / 8)
-		bitInByte := uint(bitOffset % 8)
-		take := minUint(bitWidth-read, 8-bitInByte)
-		chunk := (buf[byteOffset] >> bitInByte) & maskForBits(take)
+		off := int(bo / 8)
+		inByte := uint(bo % 8)
+		take := minUint(bitWidth-read, 8-inByte)
+		chunk := (buf[off] >> inByte) & maskForBits(take)
 		value |= uint64(chunk) << read
 		read += take
-		bitOffset += uint64(take)
+		bo += uint64(take)
 	}
 	return value
 }
+
+
 
 func maskForBits(width uint) byte {
 	if width >= 8 {

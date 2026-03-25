@@ -119,12 +119,12 @@ func readPrimitivesWithHeader[T PrimitiveType](r io.Reader, h Header) (*Primitiv
 }
 
 // ReadPrimitives reads a primitive array from r. The type parameter T must match the array's PType; otherwise an error is returned.
-func ReadPrimitives[T PrimitiveType](r io.Reader) (*Primitives[T], error) {
+func ReadPrimitives[T PrimitiveType](r io.Reader, opts ...ReadOptions) (*Primitives[T], error) {
 	h, err := readHeader(r)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateHeader(h); err != nil {
+	if err := validateHeader(h, readOpts(opts)); err != nil {
 		return nil, err
 	}
 	return readPrimitivesWithHeader[T](r, h)

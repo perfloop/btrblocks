@@ -8,46 +8,46 @@ import (
 )
 
 // runEndArray stores run values plus ordinal run-end boundaries.
-type runEndArray[T Integer | Float | String] struct {
+type runEndArray[V Integer | Float | String, I UnsignedInteger] struct {
 	length uint64
-	runs   EncodedArray[T]
-	ends   ordinalArray
+	runs   EncodedArray[V]
+	ends   EncodedArray[I]
 }
 
-func validateRunEndChildren[T Integer | Float | String](length uint64, runs EncodedArray[T], ends ordinalArray) error {
+func validateRunEndChildren[V Integer | Float | String, I UnsignedInteger](length uint64, runs EncodedArray[V], ends EncodedArray[I]) error {
 	if runs.Length() != ends.Length()+1 {
 		return fmt.Errorf("codec: runend runs length = %d, want %d", runs.Length(), ends.Length()+1)
 	}
 	if ends.Length() == 0 {
 		return nil
 	}
-	first := ends.ValueAt(0)
+	first := uint64(ends.ValueAt(0))
 	if first == 0 {
 		return fmt.Errorf("codec: runend first end = 0, want > 0")
 	}
-	last := ends.ValueAt(ends.Length() - 1)
+	last := uint64(ends.ValueAt(ends.Length() - 1))
 	if last >= length {
 		return fmt.Errorf("codec: runend last end = %d, want < %d", last, length)
 	}
 	return nil
 }
 
-func (r *runEndArray[T]) Encoding() CodeType { return CodecTypeRunEnd }
-func (r *runEndArray[T]) Length() uint64     { return r.length }
-func (r *runEndArray[T]) PType() PType       { return array.PTypeForType[T]() }
+func (r *runEndArray[V, I]) Encoding() CodeType { return CodecTypeRunEnd }
+func (r *runEndArray[V, I]) Length() uint64      { return r.length }
+func (r *runEndArray[V, I]) PType() PType        { return array.PTypeForType[V]() }
 
-func (r *runEndArray[T]) BinarySize() uint64 {
+func (r *runEndArray[V, I]) BinarySize() uint64 {
 	return uint64(headerSize) + r.runs.BinarySize() + r.ends.BinarySize()
 }
 
-func (r *runEndArray[T]) ValueAt(offset uint64) T {
+func (r *runEndArray[V, I]) ValueAt(offset uint64) V {
 	if offset >= r.length {
 		panic(errOffsetOutOfRange)
 	}
 	lo, hi := uint64(0), r.ends.Length()
 	for lo < hi {
 		mid := lo + (hi-lo)/2
-		if offset < r.ends.ValueAt(mid) {
+		if offset < uint64(r.ends.ValueAt(mid)) {
 			hi = mid
 			continue
 		}
@@ -72,41 +72,37 @@ func fillRun[T Integer | Float | String](dst []T, start, end int, value T) {
 	}
 }
 
-func (r *runEndArray[T]) DecompressInto(dst []T) error {
+func (r *runEndArray[V, I]) DecompressInto(dst []V) error {
 	if err := checkDstLen(dst, r.length); err != nil {
 		return err
 	}
-	runs, err := r.runs.Decompress()
+	runs, err := Decompress(r.runs)
 	if err != nil {
 		return err
 	}
-	ends, err := decompressOrdinals(r.ends)
+	ends, err := Decompress(r.ends)
 	if err != nil {
 		return err
 	}
 	pos := 0
 	for i, rawEnd := range ends {
-		fillRun(dst, pos, int(rawEnd), runs[i])
-		pos = int(rawEnd)
+		fillRun(dst, pos, int(uint64(rawEnd)), runs[i])
+		pos = int(uint64(rawEnd))
 	}
 	fillRun(dst, pos, int(r.length), runs[len(ends)])
 	return nil
 }
 
-func (r *runEndArray[T]) Decompress() ([]T, error) {
-	dst := make([]T, r.length)
-	return dst, r.DecompressInto(dst)
-}
 
-func (r *runEndArray[T]) Slice(start, end uint64) (EncodedArray[T], error) {
+func (r *runEndArray[V, I]) Slice(start, end uint64) (EncodedArray[V], error) {
 	return sliceToRawArray(r, start, end)
 }
 
-func (r *runEndArray[T]) WriteTo(w io.Writer) (int64, error) {
+func (r *runEndArray[V, I]) WriteTo(w io.Writer) (int64, error) {
 	n, err := header{
 		Version:  versionNumber,
 		Kind:     CodecTypeRunEnd,
-		ElemType: array.PTypeForType[T](),
+		ElemType: array.PTypeForType[V](),
 		Length:   r.length,
 		BodySize: 0,
 	}.WriteTo(w)
@@ -122,14 +118,14 @@ func (r *runEndArray[T]) WriteTo(w io.Writer) (int64, error) {
 	return n + nn, err
 }
 
-func readRunEndArray[T Integer | Float | String](r io.Reader, h header) (EncodedArray[T], error) {
+func readRunEndArray[V Integer | Float | String](r io.Reader, h header, opts ReadOptions) (EncodedArray[V], error) {
 	if h.BodySize != 0 {
 		return nil, fmt.Errorf("codec: runend body size = %d, want 0", h.BodySize)
 	}
 	if h.Length == 0 {
 		return nil, fmt.Errorf("codec: runend length = 0")
 	}
-	runs, err := readEncodedArray[T](r)
+	runs, err := readEncodedArray[V](r, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -137,47 +133,97 @@ func readRunEndArray[T Integer | Float | String](r io.Reader, h header) (Encoded
 	if err != nil {
 		return nil, err
 	}
-	ends, err := readOrdinalArray(r, childHeader)
-	if err != nil {
-		return nil, fmt.Errorf("codec: runend end %w", err)
+	switch childHeader.ElemType {
+	case PTypeUint8:
+		ends, err := readEncodedArrayWithHeader[uint8](r, childHeader, opts)
+		if err != nil {
+			return nil, fmt.Errorf("codec: runend end %w", err)
+		}
+		if err := validateRunEndChildren(h.Length, runs, ends); err != nil {
+			return nil, err
+		}
+		return &runEndArray[V, uint8]{length: h.Length, runs: runs, ends: ends}, nil
+	case PTypeUint16:
+		ends, err := readEncodedArrayWithHeader[uint16](r, childHeader, opts)
+		if err != nil {
+			return nil, fmt.Errorf("codec: runend end %w", err)
+		}
+		if err := validateRunEndChildren(h.Length, runs, ends); err != nil {
+			return nil, err
+		}
+		return &runEndArray[V, uint16]{length: h.Length, runs: runs, ends: ends}, nil
+	case PTypeUint32:
+		ends, err := readEncodedArrayWithHeader[uint32](r, childHeader, opts)
+		if err != nil {
+			return nil, fmt.Errorf("codec: runend end %w", err)
+		}
+		if err := validateRunEndChildren(h.Length, runs, ends); err != nil {
+			return nil, err
+		}
+		return &runEndArray[V, uint32]{length: h.Length, runs: runs, ends: ends}, nil
+	case PTypeUint64:
+		ends, err := readEncodedArrayWithHeader[uint64](r, childHeader, opts)
+		if err != nil {
+			return nil, fmt.Errorf("codec: runend end %w", err)
+		}
+		if err := validateRunEndChildren(h.Length, runs, ends); err != nil {
+			return nil, err
+		}
+		return &runEndArray[V, uint64]{length: h.Length, runs: runs, ends: ends}, nil
+	default:
+		return nil, fmt.Errorf("codec: runend ordinal child type = %v, want unsigned integer", childHeader.ElemType)
 	}
-	if err := validateRunEndChildren(h.Length, runs, ends); err != nil {
-		return nil, err
-	}
-	return &runEndArray[T]{length: h.Length, runs: runs, ends: ends}, nil
 }
 
-func buildRunEndArray[T Integer | Float | String](arr array.Array[T], ctx planContext, cmp cmpFn[T]) (EncodedArray[T], error) {
+func buildRunEndArray[V Integer | Float | String](arr array.ArrayCore[V], ctx planContext, cmp cmpFn[V]) (EncodedArray[V], error) {
 	if ctx.depth <= 0 {
 		return nil, errDepthExhausted
 	}
-	if arr.Length() == 0 {
+	n := arr.Length()
+	if n == 0 {
 		return nil, errDataEmpty
 	}
 
-	runs := make([]T, 0)
-	ends := make([]uint64, 0)
+	// Pick I from arr.Length() — ends are positions in [0, N), so max end < N.
+	switch {
+	case n <= 1<<8:
+		return buildRunEndWithEnds[V, uint8](arr, ctx, cmp)
+	case n <= 1<<16:
+		return buildRunEndWithEnds[V, uint16](arr, ctx, cmp)
+	case n <= 1<<32:
+		return buildRunEndWithEnds[V, uint32](arr, ctx, cmp)
+	default:
+		return buildRunEndWithEnds[V, uint64](arr, ctx, cmp)
+	}
+}
+
+// buildRunEndWithEnds scans the array once, building runs and []I ends directly.
+func buildRunEndWithEnds[V Integer | Float | String, I UnsignedInteger](arr array.ArrayCore[V], ctx planContext, cmp cmpFn[V]) (EncodedArray[V], error) {
+	runs := make([]V, 0)
+	ends := make([]I, 0)
 	prev := arr.ValueAt(0)
 	runs = append(runs, prev)
 	for i := uint64(1); i < arr.Length(); i++ {
 		value := arr.ValueAt(i)
 		if !cmp(prev, value) {
-			ends = append(ends, i)
+			ends = append(ends, I(i))
 			runs = append(runs, value)
 			prev = value
 		}
 	}
 
-	runsChildCtx := withTypeExcludes[T](ctx.descend(), CodecTypeRunEnd, CodecTypeDict)
+	runsChildCtx := withTypeExcludes[V](ctx.descend(), CodecTypeRunEnd, CodecTypeDict)
 	runsCodec, err := compressArray(buildArray(runs), runsChildCtx)
 	if err != nil {
 		return nil, err
 	}
-	endsCodec, err := buildCompressedOrdinals(ends, ctx.descend(), CodecTypeRunEnd, CodecTypeDict)
+
+	endsChildCtx := ctx.descend().withIntegerExcludes(CodecTypeRunEnd, CodecTypeDict)
+	endsCodec, err := compressArray(array.NewPrimitivesUnsafe(ends), endsChildCtx)
 	if err != nil {
 		return nil, err
 	}
-	return &runEndArray[T]{length: arr.Length(), runs: runsCodec, ends: endsCodec}, nil
+	return &runEndArray[V, I]{length: arr.Length(), runs: runsCodec, ends: endsCodec}, nil
 }
 
 func estimateRunEnd[T Integer | Float | String, S statsSource[T]](avgRunLength float64, cmp cmpFn[T]) func(S, planContext) (float64, bool) {
@@ -185,7 +231,7 @@ func estimateRunEnd[T Integer | Float | String, S statsSource[T]](avgRunLength f
 		if ctx.depth <= 0 || avgRunLength < 4 {
 			return 0, false
 		}
-		return estimateBySample(stats, ctx, func(arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
+		return estimateBySample(stats, ctx, func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
 			return buildRunEndArray(arr, ctx, cmp)
 		})
 	}
