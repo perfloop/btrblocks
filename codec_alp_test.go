@@ -25,7 +25,7 @@ func TestALPRoundTripFloat64(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[float64](&buf)
+	readBack, err := Load[float64](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -47,7 +47,7 @@ func TestALPRoundTripFloat32(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[float32](&buf)
+	readBack, err := Load[float32](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -71,7 +71,7 @@ func TestALPRoundTripFloat64WithPatches(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[float64](&buf)
+	readBack, err := Load[float64](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -136,6 +136,27 @@ func TestFindBestExponents64(t *testing.T) {
 	e, f := findBestExponents(arr, 23, alpIsException64)
 	require.True(t, e > f, "expected e > f, got e=%d f=%d", e, f)
 	require.Less(t, e, uint8(23))
+}
+
+// TestALPCompressLargeArrayDoesNotPanic verifies that ALP estimation works
+// on arrays large enough to trigger sampling (>1024 elements). Before the fix,
+// buildALPArray asserted ArrayCore to Array, which panicked on sampledArray.
+func TestALPCompressLargeArrayDoesNotPanic(t *testing.T) {
+	// 10K elements: sampleCountApproxOnePercent(10000) = 16, totalSample = 1024 < 10000.
+	// This triggers the sampling path in estimateBySample → buildALPArray.
+	values := make([]float64, 10_000)
+	for i := range values {
+		values[i] = float64(i%1000) * 0.01
+	}
+	codec, err := Compress(buildArray(values), Options{})
+	require.NoError(t, err)
+
+	decoded, err := Decompress(codec)
+	require.NoError(t, err)
+	require.Equal(t, len(values), len(decoded))
+	for i := range values {
+		require.Equal(t, values[i], decoded[i], "mismatch at index %d", i)
+	}
 }
 
 func makeALPBenchData(n int) []float64 {
@@ -208,3 +229,19 @@ func FuzzALPRoundTrip(f *testing.F) {
 		}
 	})
 }
+
+func makeALPFloat64(n int) EncodedArray[float64] {
+	values := make([]float64, n)
+	for i := range values {
+		values[i] = 3.14 * float64(i%100)
+	}
+	codec, err := Compress(array.NewPrimitivesUnsafe(values), Options{})
+	if err != nil {
+		panic(err)
+	}
+	return codec
+}
+
+func BenchmarkALPDecompress_1K(b *testing.B)      { benchDecompress(b, makeALPFloat64(1_000)) }
+func BenchmarkALPDecompress_10K(b *testing.B)     { benchDecompress(b, makeALPFloat64(10_000)) }
+func BenchmarkALPDecompressInto_10K(b *testing.B) { benchDecompressInto(b, makeALPFloat64(10_000)) }

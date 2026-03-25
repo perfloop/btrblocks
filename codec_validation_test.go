@@ -41,7 +41,7 @@ func TestReadRejectsRemovedCodecKind(t *testing.T) {
 	}.WriteTo(&buf)
 	require.NoError(t, err)
 
-	_, err = Read[uint32](&buf)
+	_, err = Load[uint32](buf.Bytes())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown kind = 8")
 }
@@ -53,7 +53,7 @@ func TestReadRunEndRejectsZeroFirstEnd(t *testing.T) {
 		ends:   newRawArray(array.NewPrimitivesUnsafe([]uint8{0})),
 	})
 
-	_, err := Read[uint32](bytes.NewReader(data))
+	_, err := Load[uint32](data)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "runend first end = 0, want > 0")
 }
@@ -65,7 +65,7 @@ func TestReadRunEndRejectsTerminalEndAtLength(t *testing.T) {
 		ends:   newRawArray(array.NewPrimitivesUnsafe([]uint8{3})),
 	})
 
-	_, err := Read[uint32](bytes.NewReader(data))
+	_, err := Load[uint32](data)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "runend last end = 3, want < 3")
 }
@@ -82,7 +82,7 @@ func TestReadBitpackRejectsEmptyPatches(t *testing.T) {
 		},
 	})
 
-	_, err := Read[uint32](bytes.NewReader(data))
+	_, err := Load[uint32](data)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "bitpack patches length = 0")
 }
@@ -99,7 +99,7 @@ func TestReadBitpackRejectsOutOfRangePatchIndex(t *testing.T) {
 		},
 	})
 
-	_, err := Read[uint32](bytes.NewReader(data))
+	_, err := Load[uint32](data)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "bitpack patch index = 3, want [0, 3)")
 }
@@ -119,7 +119,7 @@ func TestReadBitpackKeepsPatchesEncodedUntilCopy(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readEncodedArray, err := Read[uint32](&buf)
+	readEncodedArray, err := Load[uint32](buf.Bytes())
 	require.NoError(t, err)
 
 	bitpack, ok := readEncodedArray.(*bitPackedArray[uint32, uint8])
@@ -163,7 +163,7 @@ func TestReadALP64RejectsEmptyPatches(t *testing.T) {
 		},
 	})
 
-	_, err := Read[float64](bytes.NewReader(data))
+	_, err := Load[float64](data)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ALP patches length = 0")
 }
@@ -181,7 +181,7 @@ func TestReadALP32RejectsOutOfRangePatchIndex(t *testing.T) {
 		},
 	})
 
-	_, err := Read[float32](bytes.NewReader(data))
+	_, err := Load[float32](data)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ALP patch index = 3, want [0, 3)")
 }
@@ -199,7 +199,7 @@ func TestReadALP64KeepsPatchesEncodedUntilCopy(t *testing.T) {
 		},
 	})
 
-	readEncodedArray, err := Read[float64](bytes.NewReader(data))
+	readEncodedArray, err := Load[float64](data)
 	require.NoError(t, err)
 
 	codec := readEncodedArray.(*alpArray[float64, int64, uint8])
@@ -228,7 +228,7 @@ func TestReadALP32KeepsPatchesEncodedUntilCopy(t *testing.T) {
 		},
 	})
 
-	readEncodedArray, err := Read[float32](bytes.NewReader(data))
+	readEncodedArray, err := Load[float32](data)
 	require.NoError(t, err)
 
 	codec := readEncodedArray.(*alpArray[float32, int32, uint8])

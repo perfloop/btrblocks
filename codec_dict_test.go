@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/axiomhq/btrblocks/array"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,7 +28,7 @@ func TestDictRoundTripInt32(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[int32](&buf)
+	readBack, err := Load[int32](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err = Decompress(readBack)
@@ -54,7 +55,7 @@ func TestDictRoundTripFloat64(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[float64](&buf)
+	readBack, err := Load[float64](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err = Decompress(readBack)
@@ -81,7 +82,7 @@ func TestDictRoundTripString(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[string](&buf)
+	readBack, err := Load[string](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err = Decompress(readBack)
@@ -190,7 +191,7 @@ func FuzzDictRoundTrip(f *testing.F) {
 		_, err = codec.WriteTo(&buf)
 		require.NoError(t, err)
 
-		readBack, err := Read[uint16](&buf)
+		readBack, err := Load[uint16](buf.Bytes())
 		require.NoError(t, err)
 
 		decoded, err := Decompress(readBack)
@@ -198,3 +199,19 @@ func FuzzDictRoundTrip(f *testing.F) {
 		require.Equal(t, values, decoded)
 	})
 }
+
+func makeDictUint32(n int) EncodedArray[uint32] {
+	values := make([]uint32, n)
+	for i := range values {
+		values[i] = uint32(i % 50)
+	}
+	codec, err := Compress(array.NewPrimitivesUnsafe(values), Options{})
+	if err != nil {
+		panic(err)
+	}
+	return codec
+}
+
+func BenchmarkDictDecompress_1K(b *testing.B)      { benchDecompress(b, makeDictUint32(1_000)) }
+func BenchmarkDictDecompress_10K(b *testing.B)     { benchDecompress(b, makeDictUint32(10_000)) }
+func BenchmarkDictDecompressInto_10K(b *testing.B) { benchDecompressInto(b, makeDictUint32(10_000)) }

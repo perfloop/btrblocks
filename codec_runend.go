@@ -203,8 +203,15 @@ func buildRunEndArray[V Integer | Float | String](arr array.ArrayCore[V], ctx pl
 
 // buildRunEndWithEnds scans the array once, building runs and []I ends directly.
 func buildRunEndWithEnds[V Integer | Float | String, I UnsignedInteger](arr array.ArrayCore[V], ctx planContext, cmp cmpFn[V]) (EncodedArray[V], error) {
-	runs := make([]V, 0)
-	ends := make([]I, 0)
+	// Pre-size for estimated run count. With avg run length 10 (the minimum
+	// threshold for RLE viability is 4), n/8 is a reasonable upper-bound
+	// estimate that avoids most append reallocations.
+	estRuns := int(arr.Length() / 8)
+	if estRuns < 8 {
+		estRuns = 8
+	}
+	runs := make([]V, 0, estRuns)
+	ends := make([]I, 0, estRuns)
 	prev := arr.ValueAt(0)
 	runs = append(runs, prev)
 	for i := uint64(1); i < arr.Length(); i++ {

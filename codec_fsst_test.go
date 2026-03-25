@@ -21,7 +21,7 @@ func TestFSSTRoundTripRepetitiveStrings(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[string](&buf)
+	readBack, err := Load[string](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -43,7 +43,7 @@ func TestFSSTRoundTripCommonPrefixes(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[string](&buf)
+	readBack, err := Load[string](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -61,7 +61,7 @@ func TestFSSTRoundTripEmptyStringsMixed(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[string](&buf)
+	readBack, err := Load[string](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -82,7 +82,7 @@ func TestFSSTRoundTripSingleCharStrings(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[string](&buf)
+	readBack, err := Load[string](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)

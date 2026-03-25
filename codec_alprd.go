@@ -298,13 +298,13 @@ func buildALPRDArray[T Float](arr array.ArrayCore[T], ctx planContext) (EncodedA
 	var zero T
 	switch any(zero).(type) {
 	case float64:
-		c, err := buildALPRDArrayTyped(any(arr).(array.Array[float64]), ctx, alprdFuncs64)
+		c, err := buildALPRDArrayTyped(any(arr).(array.ArrayCore[float64]), ctx, alprdFuncs64)
 		if err != nil {
 			return nil, err
 		}
 		return any(c).(EncodedArray[T]), nil
 	case float32:
-		c, err := buildALPRDArrayTyped(any(arr).(array.Array[float32]), ctx, alprdFuncs32)
+		c, err := buildALPRDArrayTyped(any(arr).(array.ArrayCore[float32]), ctx, alprdFuncs32)
 		if err != nil {
 			return nil, err
 		}

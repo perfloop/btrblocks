@@ -32,9 +32,7 @@ func (c *constArray[T]) DecompressInto(dst []T) error {
 	if err := checkDstLen(dst, c.length); err != nil {
 		return err
 	}
-	for i := uint64(0); i < c.length; i++ {
-		dst[i] = c.value
-	}
+	fillRun(dst, 0, int(c.length), c.value)
 	return nil
 }
 

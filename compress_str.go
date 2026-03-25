@@ -13,12 +13,12 @@ func (stringCompressor) DefaultScheme() scheme[string, stringStats] {
 	return rawScheme[string, stringStats]()
 }
 
-func (stringCompressor) Schemes(_ stringStats) []scheme[string, stringStats] {
+func (stringCompressor) Schemes(stats stringStats) []scheme[string, stringStats] {
 	return []scheme[string, stringStats]{
 		registeredScheme[string, stringStats]{
 			kind: CodecTypeConst,
 			estimate: func(stats stringStats, ctx planContext) (float64, bool) {
-				return estimateConst[string](isConstArray(stats.Source(), cmpStrings[string]))(stats.Source(), ctx)
+				return estimateConst[string](stats.base.isConst)(stats.Source(), ctx)
 			},
 			build: func(arr array.ArrayCore[string], _ planContext) (EncodedArray[string], error) {
 				return newConstStringArray(arr)
@@ -34,7 +34,7 @@ func (stringCompressor) Schemes(_ stringStats) []scheme[string, stringStats] {
 		registeredScheme[string, stringStats]{
 			kind: CodecTypeRunEnd,
 			estimate: func(stats stringStats, ctx planContext) (float64, bool) {
-				return estimateRunEnd[string, stringStats](avgRunLength(stats.Source(), cmpStrings[string]), cmpStrings[string])(stats, ctx)
+				return estimateRunEnd[string, stringStats](stats.base.avgRunLength, cmpStrings[string])(stats, ctx)
 			},
 			build: func(arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
 				return buildRunEndArray(arr, ctx, cmpStrings[string])

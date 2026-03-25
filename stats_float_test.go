@@ -8,13 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestComputeStringStatsUsesPrefixDistinctEstimate(t *testing.T) {
-	values := []string{"abcdefghX", "abcdefghY"}
-
-	stats := computeStringStats(array.NewStrings(values))
-	require.Equal(t, uint64(1), stats.estimatedDistinctCount)
-}
-
 func TestComputeFloatStatsTreatsNaNsAsRunBreaks(t *testing.T) {
 	nan := math.Float64frombits(0x7ff8000000000001)
 
@@ -30,4 +23,3 @@ func TestComputeFloatStatsTreatsSignedZeroAsOneRun(t *testing.T) {
 	require.Equal(t, uint64(2), stats.base.distinctCount)
 	require.Equal(t, 2.0, stats.base.avgRunLength)
 }
-

@@ -23,7 +23,7 @@ func TestALPRDRoundTripFloat64SharedExponents(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[float64](&buf)
+	readBack, err := Load[float64](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -47,7 +47,7 @@ func TestALPRDRoundTripFloat32(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[float32](&buf)
+	readBack, err := Load[float32](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -74,7 +74,7 @@ func TestALPRDRoundTripWithPatches(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[float64](&buf)
+	readBack, err := Load[float64](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -182,6 +182,22 @@ func BenchmarkALPRDDecompress_1K(b *testing.B)   { benchDecompress(b, makeALPRDF
 func BenchmarkALPRDDecompress_10K(b *testing.B)  { benchDecompress(b, makeALPRDFloat64(10_000)) }
 func BenchmarkALPRDDecompress_100K(b *testing.B) { benchDecompress(b, makeALPRDFloat64(100_000)) }
 func BenchmarkALPRDDecompress_1M(b *testing.B)   { benchDecompress(b, makeALPRDFloat64(1_000_000)) }
+
+// TestALPRDCompressLargeArrayDoesNotPanic verifies the same for ALPRD.
+func TestALPRDCompressLargeArrayDoesNotPanic(t *testing.T) {
+	values := make([]float64, 10_000)
+	for i := range values {
+		values[i] = 1.0 / float64(i+1) // irrational-like pattern favoring ALPRD
+	}
+	// Use only ALPRD to force estimation through sampling path.
+	opts := EmptySchemes().WithIncludeFloat(CodecTypeALPRD)
+	codec, err := Compress(buildArray(values), opts)
+	require.NoError(t, err)
+
+	decoded, err := Decompress(codec)
+	require.NoError(t, err)
+	require.Equal(t, len(values), len(decoded))
+}
 
 func FuzzALPRDRoundTrip(f *testing.F) {
 	seed := make([]byte, 64)

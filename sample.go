@@ -49,11 +49,18 @@ func (a *sampledArray[T]) ValueAt(offset uint64) T {
 	if offset >= a.length {
 		panic(errOffsetOutOfRange)
 	}
-	chunkIdx := 0
-	for a.offsets[chunkIdx+1] <= offset {
-		chunkIdx++
+	// Binary search on sorted offsets to find the chunk containing offset.
+	// offsets has len(chunks)+1 entries; we want the largest i where offsets[i] <= offset.
+	lo, hi := 0, len(a.chunks)
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		if a.offsets[mid+1] <= offset {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
 	}
-	return a.chunks[chunkIdx].ValueAt(offset - a.offsets[chunkIdx])
+	return a.chunks[lo].ValueAt(offset - a.offsets[lo])
 }
 
 func (a *sampledArray[T]) Length() uint64 { return a.length }

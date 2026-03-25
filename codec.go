@@ -149,7 +149,10 @@ func writeVirtualArray[T Integer | Float](w io.Writer, length uint64, transform 
 		return n, nil
 	}
 
-	const chunkElems = 1024
+	chunkElems := uint64(1024)
+	if length < chunkElems {
+		chunkElems = length
+	}
 	buf := make([]T, chunkElems)
 	width := int(unsafe.Sizeof(T(0)))
 	var written int64

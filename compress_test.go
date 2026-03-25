@@ -153,7 +153,7 @@ func TestCompressRoundTripInts(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readEncodedArray, err := Read[int32](&buf)
+	readEncodedArray, err := Load[int32](buf.Bytes())
 	require.NoError(t, err)
 	decoded, err = Decompress(readEncodedArray)
 	require.NoError(t, err)
@@ -174,7 +174,7 @@ func TestCompressRoundTripUints(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readEncodedArray, err := Read[uint32](&buf)
+	readEncodedArray, err := Load[uint32](buf.Bytes())
 	require.NoError(t, err)
 	decoded, err = Decompress(readEncodedArray)
 	require.NoError(t, err)
@@ -195,7 +195,7 @@ func TestCompressRoundTripFloats(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readEncodedArray, err := Read[float64](&buf)
+	readEncodedArray, err := Load[float64](buf.Bytes())
 	require.NoError(t, err)
 	decoded, err = Decompress(readEncodedArray)
 	require.NoError(t, err)
@@ -216,7 +216,7 @@ func TestCompressRoundTripStrings(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readEncodedArray, err := Read[string](&buf)
+	readEncodedArray, err := Load[string](buf.Bytes())
 	require.NoError(t, err)
 	decoded, err = Decompress(readEncodedArray)
 	require.NoError(t, err)
@@ -250,7 +250,7 @@ func TestDecompressFromReadCodec(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readEncodedArray, err := Read[string](&buf)
+	readEncodedArray, err := Load[string](buf.Bytes())
 	require.NoError(t, err)
 
 	decompressed, err := Decompress(readEncodedArray)
@@ -296,7 +296,7 @@ func TestRunEndCodecRoundTripAfterRead(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readEncodedArray, err := Read[uint32](&buf)
+	readEncodedArray, err := Load[uint32](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readEncodedArray)
@@ -331,7 +331,7 @@ func TestDictCodecRoundTripAfterRead(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readEncodedArray, err := Read[uint32](&buf)
+	readEncodedArray, err := Load[uint32](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readEncodedArray)
@@ -659,7 +659,7 @@ func TestBitpackSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
 	_, err = sliced.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[uint32](&buf)
+	readBack, err := Load[uint32](buf.Bytes())
 	require.NoError(t, err)
 	// After read, the patch index type may differ (narrowed on read).
 	// Try uint64 first (build path), then uint8 (read path).
@@ -711,7 +711,7 @@ func TestALPSlicePreservesPatchOffsetAcrossReadWrite(t *testing.T) {
 	_, err = sliced.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[float64](&buf)
+	readBack, err := Load[float64](buf.Bytes())
 	require.NoError(t, err)
 	roundTrip := readBack.(*alpArray[float64, int64, uint8])
 	require.NotNil(t, roundTrip.patches)
@@ -807,11 +807,88 @@ func TestReadWithMaxLengthRejectsOversized(t *testing.T) {
 	require.NoError(t, err)
 
 	// Without limits: succeeds.
-	_, err = Read[uint32](bytes.NewReader(buf.Bytes()))
+	_, err = Load[uint32](buf.Bytes())
 	require.NoError(t, err)
 
 	// With tight MaxLength: rejected.
-	_, err = Read[uint32](bytes.NewReader(buf.Bytes()), ReadOptions{MaxLength: 100})
+	_, err = Load[uint32](buf.Bytes(), ReadOptions{MaxLength: 100})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "exceeds limit")
+}
+
+func benchDecompress[T Integer | Float | String](b *testing.B, encoded EncodedArray[T]) {
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := Decompress(encoded); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func benchDecompressInto[T Integer | Float | String](b *testing.B, encoded EncodedArray[T]) {
+	dst := make([]T, encoded.Length())
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := encoded.DecompressInto(dst); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// serializeForRead compresses values and serializes to []byte for ReadBytes benchmarks.
+func serializeForRead[T Integer | Float | String](values []T, opts Options) []byte {
+	codec, err := Compress(buildArray(values), opts)
+	if err != nil {
+		panic(err)
+	}
+	var buf bytes.Buffer
+	if _, err := codec.WriteTo(&buf); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}
+
+func BenchmarkReadBytes_Dict_10K(b *testing.B) {
+	values := make([]uint32, 10_000)
+	for i := range values {
+		values[i] = uint32(i % 50)
+	}
+	data := serializeForRead(values, Options{})
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := Load[uint32](data); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkReadBytes_RunEnd_10K(b *testing.B) {
+	values := make([]uint32, 10_000)
+	for i := range values {
+		values[i] = uint32(i / 20)
+	}
+	data := serializeForRead(values, Options{})
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := Load[uint32](data); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkReadBytes_Raw_10K(b *testing.B) {
+	values := make([]uint32, 10_000)
+	for i := range values {
+		values[i] = uint32(i)
+	}
+	data := serializeForRead(values, Options{})
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := Load[uint32](data); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

@@ -23,7 +23,7 @@ func TestBitpackRoundTripUint32SmallValues(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[uint32](&buf)
+	readBack, err := Load[uint32](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -44,7 +44,7 @@ func TestBitpackRoundTripUint8TwoBitValues(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[uint8](&buf)
+	readBack, err := Load[uint8](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -67,7 +67,7 @@ func TestBitpackRoundTripWithPatches(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[uint32](&buf)
+	readBack, err := Load[uint32](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -127,7 +127,7 @@ func TestBitpackZeroWidthAllZeros(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[uint32](&buf)
+	readBack, err := Load[uint32](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -199,4 +199,39 @@ func FuzzBitpackRoundTrip(f *testing.F) {
 		require.NoError(t, err)
 		require.Equal(t, input, decoded)
 	})
+}
+
+// makeBitpackWithPatches creates a bitpacked array where ~5% of values exceed
+// the chosen bit width and become patches.
+func makeBitpackWithPatches(n int) EncodedArray[uint32] {
+	values := make([]uint32, n)
+	for i := range values {
+		if i%20 == 0 {
+			values[i] = 100_000 // exceeds small bit width
+		} else {
+			values[i] = uint32(i % 16) // fits in 4 bits
+		}
+	}
+	// Force bitpack only
+	opts := EmptySchemes().WithIncludeInteger(CodecTypeBitpack)
+	codec, err := Compress(array.NewPrimitivesUnsafe(values), opts)
+	if err != nil {
+		panic(err)
+	}
+	if codec.Encoding() != CodecTypeBitpack {
+		panic("expected bitpack encoding, got " + codec.Encoding().String())
+	}
+	return codec
+}
+
+func BenchmarkBitpackPatchedDecompressInto_1K(b *testing.B) {
+	benchDecompressInto(b, makeBitpackWithPatches(1_000))
+}
+
+func BenchmarkBitpackPatchedDecompressInto_10K(b *testing.B) {
+	benchDecompressInto(b, makeBitpackWithPatches(10_000))
+}
+
+func BenchmarkBitpackPatchedDecompressInto_100K(b *testing.B) {
+	benchDecompressInto(b, makeBitpackWithPatches(100_000))
 }

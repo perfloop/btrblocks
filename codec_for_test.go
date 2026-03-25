@@ -18,7 +18,7 @@ func TestFoRRoundTripUint32HighBase(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[uint32](&buf)
+	readBack, err := Load[uint32](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -39,7 +39,7 @@ func TestFoRRoundTripUint64NarrowRange(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[uint64](&buf)
+	readBack, err := Load[uint64](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -128,8 +128,7 @@ func BenchmarkFoRUint32(b *testing.B) {
 			encoded := buf.Bytes()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				r := bytes.NewReader(encoded)
-				readBack, err := Read[uint32](r)
+				readBack, err := Load[uint32](encoded)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -165,7 +164,7 @@ func FuzzFoRUint32Roundtrip(f *testing.F) {
 		_, err = codec.WriteTo(&buf)
 		require.NoError(t, err)
 
-		readBack, err := Read[uint32](&buf)
+		readBack, err := Load[uint32](buf.Bytes())
 		require.NoError(t, err)
 
 		decoded, err := Decompress(readBack)

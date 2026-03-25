@@ -120,8 +120,16 @@ func (p *patches[V, I]) Apply(dst []V) error {
 	if p == nil {
 		return nil
 	}
-	for i := uint64(0); i < p.indices.Length(); i++ {
-		dst[int(uint64(p.indices.ValueAt(i))-p.offset)] = p.values.ValueAt(i)
+	indices, err := Decompress(p.indices)
+	if err != nil {
+		return err
+	}
+	values, err := Decompress(p.values)
+	if err != nil {
+		return err
+	}
+	for i, idx := range indices {
+		dst[int(uint64(idx)-p.offset)] = values[i]
 	}
 	return nil
 }

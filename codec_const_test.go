@@ -21,7 +21,7 @@ func TestConstRoundTripInt32(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[int32](&buf)
+	readBack, err := Load[int32](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -39,7 +39,7 @@ func TestConstRoundTripFloat64(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[float64](&buf)
+	readBack, err := Load[float64](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -57,7 +57,7 @@ func TestConstRoundTripString(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	readBack, err := Read[string](&buf)
+	readBack, err := Load[string](buf.Bytes())
 	require.NoError(t, err)
 
 	decoded, err := Decompress(readBack)
@@ -151,8 +151,7 @@ func BenchmarkConstUint64(b *testing.B) {
 			encoded := buf.Bytes()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				r := bytes.NewReader(encoded)
-				readBack, err := Read[uint64](r)
+				readBack, err := Load[uint64](encoded)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -193,11 +192,65 @@ func FuzzConstUint8Roundtrip(f *testing.F) {
 		_, err = codec.WriteTo(&buf)
 		require.NoError(t, err)
 
-		readBack, err := Read[uint8](&buf)
+		readBack, err := Load[uint8](buf.Bytes())
 		require.NoError(t, err)
 
 		decoded, err := Decompress(readBack)
 		require.NoError(t, err)
 		require.Equal(t, data, decoded)
 	})
+}
+
+func makeConstUint32(n int) EncodedArray[uint32] {
+	values := make([]uint32, n)
+	for i := range values {
+		values[i] = 42
+	}
+	codec, err := Compress(array.NewPrimitivesUnsafe(values), Options{})
+	if err != nil {
+		panic(err)
+	}
+	if codec.Encoding() != CodecTypeConst {
+		panic("expected const encoding")
+	}
+	return codec
+}
+
+func makeConstString(n int) EncodedArray[string] {
+	values := make([]string, n)
+	for i := range values {
+		values[i] = "hello world"
+	}
+	codec, err := Compress(buildArray(values), Options{})
+	if err != nil {
+		panic(err)
+	}
+	if codec.Encoding() != CodecTypeConst {
+		panic("expected const encoding")
+	}
+	return codec
+}
+
+func BenchmarkConstDecompressInto_1K(b *testing.B) {
+	benchDecompressInto(b, makeConstUint32(1_000))
+}
+
+func BenchmarkConstDecompressInto_10K(b *testing.B) {
+	benchDecompressInto(b, makeConstUint32(10_000))
+}
+
+func BenchmarkConstDecompressInto_100K(b *testing.B) {
+	benchDecompressInto(b, makeConstUint32(100_000))
+}
+
+func BenchmarkConstDecompressInto_1M(b *testing.B) {
+	benchDecompressInto(b, makeConstUint32(1_000_000))
+}
+
+func BenchmarkConstStringDecompressInto_10K(b *testing.B) {
+	benchDecompressInto(b, makeConstString(10_000))
+}
+
+func BenchmarkConstStringDecompressInto_100K(b *testing.B) {
+	benchDecompressInto(b, makeConstString(100_000))
 }

@@ -18,7 +18,7 @@ func TestRunEndRoundtripUint32(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	decoded, err := Read[uint32](&buf)
+	decoded, err := Load[uint32](buf.Bytes())
 	require.NoError(t, err)
 
 	got, err := Decompress(decoded)
@@ -45,7 +45,7 @@ func TestRunEndRoundtripFloat64(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	decoded, err := Read[float64](&buf)
+	decoded, err := Load[float64](buf.Bytes())
 	require.NoError(t, err)
 
 	got, err := Decompress(decoded)
@@ -72,7 +72,7 @@ func TestRunEndRoundtripString(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	decoded, err := Read[string](&buf)
+	decoded, err := Load[string](buf.Bytes())
 	require.NoError(t, err)
 
 	got, err := Decompress(decoded)
@@ -113,7 +113,7 @@ func TestRunEndSingleRun(t *testing.T) {
 	_, err = codec.WriteTo(&buf)
 	require.NoError(t, err)
 
-	decoded, err := Read[uint32](&buf)
+	decoded, err := Load[uint32](buf.Bytes())
 	require.NoError(t, err)
 
 	got, err := Decompress(decoded)
@@ -185,7 +185,7 @@ func FuzzRunEndUint8(f *testing.F) {
 		_, err = codec.WriteTo(&buf)
 		require.NoError(t, err)
 
-		decoded, err := Read[uint8](&buf)
+		decoded, err := Load[uint8](buf.Bytes())
 		require.NoError(t, err)
 
 		got, err := Decompress(decoded)
@@ -193,3 +193,19 @@ func FuzzRunEndUint8(f *testing.F) {
 		require.Equal(t, values, got)
 	})
 }
+
+func makeRunEndUint32(n int) EncodedArray[uint32] {
+	values := make([]uint32, n)
+	for i := range values {
+		values[i] = uint32(i / 20)
+	}
+	codec, err := Compress(array.NewPrimitivesUnsafe(values), Options{})
+	if err != nil {
+		panic(err)
+	}
+	return codec
+}
+
+func BenchmarkRunEndDecompress_1K(b *testing.B)      { benchDecompress(b, makeRunEndUint32(1_000)) }
+func BenchmarkRunEndDecompress_10K(b *testing.B)     { benchDecompress(b, makeRunEndUint32(10_000)) }
+func BenchmarkRunEndDecompressInto_10K(b *testing.B) { benchDecompressInto(b, makeRunEndUint32(10_000)) }

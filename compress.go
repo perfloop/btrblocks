@@ -2,7 +2,6 @@ package btrblocks
 
 import (
 	"fmt"
-	"io"
 
 	"github.com/axiomhq/btrblocks/array"
 )
@@ -13,20 +12,10 @@ func Compress[T Integer | Float | String](arr array.Array[T], opts Options) (Enc
 	return compressArray(arr, newPlanContext(opts))
 }
 
-func Read[T Integer | Float | String](r io.Reader, opts ...ReadOptions) (EncodedArray[T], error) {
-	var o ReadOptions
-	if len(opts) > 0 {
-		o = opts[0]
-	}
-	buf, err := io.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
-	br := &array.BufReader{Buf: buf}
-	return readEncodedArray[T](br, o)
-}
-
-func ReadBytes[T Integer | Float | String](data []byte, opts ...ReadOptions) (EncodedArray[T], error) {
+// Load deserializes an encoded array from data. The returned EncodedArray may
+// reference data's backing memory (zero-copy) — callers must keep data alive
+// for the lifetime of the returned value.
+func Load[T Integer | Float | String](data []byte, opts ...ReadOptions) (EncodedArray[T], error) {
 	var o ReadOptions
 	if len(opts) > 0 {
 		o = opts[0]
