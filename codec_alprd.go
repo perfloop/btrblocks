@@ -451,10 +451,11 @@ func readALPRDArrayTyped[T Float](br *array.BufReader, h codecHeader, opts ReadO
 		return nil, err
 	}
 
-	off := 0
-	if off >= len(body) {
-		return nil, fmt.Errorf("codec: ALPRD body too small")
+	// Minimum body: 3 fixed bytes (rightBW, leftBW, dictSize).
+	if len(body) < 3 {
+		return nil, fmt.Errorf("codec: ALPRD body too small (%d bytes)", len(body))
 	}
+	off := 0
 	rightBitWidth := body[off]
 	off++
 	leftBitWidth := body[off]
@@ -466,6 +467,12 @@ func readALPRDArrayTyped[T Float](br *array.BufReader, h codecHeader, opts ReadO
 		return nil, fmt.Errorf("codec: ALPRD dict size = %d, max %d", dictSize, alprdMaxDictSize)
 	}
 
+	// Need dictSize*2 bytes for dict entries + 4 bytes for leftLen + 4 bytes for rightLen.
+	minRemaining := int(dictSize)*2 + 4 + 4
+	if len(body)-off < minRemaining {
+		return nil, fmt.Errorf("codec: ALPRD body too small for dict + buffer lengths")
+	}
+
 	var dict [alprdMaxDictSize]uint16
 	for i := uint8(0); i < dictSize; i++ {
 		dict[i] = binary.LittleEndian.Uint16(body[off:])
@@ -474,11 +481,20 @@ func readALPRDArrayTyped[T Float](br *array.BufReader, h codecHeader, opts ReadO
 
 	leftLen := binary.LittleEndian.Uint32(body[off:])
 	off += 4
+	if len(body)-off < int(leftLen) {
+		return nil, fmt.Errorf("codec: ALPRD left buffer length %d exceeds remaining body", leftLen)
+	}
 	leftParts := body[off : off+int(leftLen)]
 	off += int(leftLen)
 
+	if len(body)-off < 4 {
+		return nil, fmt.Errorf("codec: ALPRD body too small for right buffer length")
+	}
 	rightLen := binary.LittleEndian.Uint32(body[off:])
 	off += 4
+	if len(body)-off < int(rightLen) {
+		return nil, fmt.Errorf("codec: ALPRD right buffer length %d exceeds remaining body", rightLen)
+	}
 	rightParts := body[off : off+int(rightLen)]
 
 	if h.Flags&flagALPRDHasPatches == 0 {

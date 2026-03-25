@@ -1,7 +1,6 @@
 package btrblocks
 
 import (
-	"bytes"
 	"fmt"
 	"testing"
 	"unsafe"
@@ -10,69 +9,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBitpackRoundTripUint32SmallValues(t *testing.T) {
-	values := make([]uint32, 256)
-	for i := range values {
-		values[i] = uint32(i % 16)
-	}
+func TestBitpackRoundTrip(t *testing.T) {
+	t.Run("uint32_small_values", func(t *testing.T) {
+		values := make([]uint32, 256)
+		for i := range values {
+			values[i] = uint32(i % 16)
+		}
+		codec, err := buildBitPackedArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 
-	codec, err := buildBitPackedArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
-	require.NoError(t, err)
+	t.Run("uint8_two_bit_values", func(t *testing.T) {
+		values := make([]uint8, 256)
+		for i := range values {
+			values[i] = uint8(i % 4)
+		}
+		codec, err := buildBitPackedArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[uint32](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
-}
-
-func TestBitpackRoundTripUint8TwoBitValues(t *testing.T) {
-	values := make([]uint8, 256)
-	for i := range values {
-		values[i] = uint8(i % 4)
-	}
-
-	codec, err := buildBitPackedArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
-	require.NoError(t, err)
-
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[uint8](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
-}
-
-func TestBitpackRoundTripWithPatches(t *testing.T) {
-	values := make([]uint32, 1024)
-	for i := range values {
-		values[i] = uint32(i % 8)
-	}
-	values[100] = 1 << 20
-	values[500] = 1<<20 + 7
-
-	codec, err := buildBitPackedArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
-	require.NoError(t, err)
-
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[uint32](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
+	t.Run("with_patches", func(t *testing.T) {
+		values := make([]uint32, 1024)
+		for i := range values {
+			values[i] = uint32(i % 8)
+		}
+		values[100] = 1 << 20
+		values[500] = 1<<20 + 7
+		codec, err := buildBitPackedArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 }
 
 func TestBitpackPatchesPresent(t *testing.T) {
@@ -123,16 +91,7 @@ func TestBitpackZeroWidthAllZeros(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, uint(0), bitpack.bitWidth)
 
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[uint32](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
+	assertRoundTrip(t, codec, values)
 }
 
 func makeBitpackUint32(n int) (EncodedArray[uint32], []uint32) {
@@ -148,7 +107,7 @@ func makeBitpackUint32(n int) (EncodedArray[uint32], []uint32) {
 }
 
 func BenchmarkBitpackCompress(b *testing.B) {
-	for _, n := range []int{1_000, 10_000, 100_000, 1_000_000} {
+	for _, n := range benchSizes {
 		values := make([]uint32, n)
 		for i := range values {
 			values[i] = uint32(i % 16)
@@ -156,6 +115,7 @@ func BenchmarkBitpackCompress(b *testing.B) {
 		arr := array.NewPrimitivesUnsafe(values)
 		ctx := newPlanContext(Options{MaxDepth: 3})
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
+			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				if _, err := buildBitPackedArray(arr, ctx); err != nil {
 					b.Fatal(err)
@@ -166,14 +126,18 @@ func BenchmarkBitpackCompress(b *testing.B) {
 }
 
 func BenchmarkBitpackDecompress(b *testing.B) {
-	for _, n := range []int{1_000, 10_000, 100_000, 1_000_000} {
+	for _, n := range benchSizes {
 		codec, _ := makeBitpackUint32(n)
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				if _, err := Decompress(codec); err != nil {
-					b.Fatal(err)
-				}
-			}
+			benchDecompress(b, codec)
+		})
+	}
+}
+
+func BenchmarkBitpackPatchedDecompressInto(b *testing.B) {
+	for _, n := range benchSizes[:3] {
+		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
+			benchDecompressInto(b, makeBitpackWithPatches(n))
 		})
 	}
 }
@@ -222,16 +186,4 @@ func makeBitpackWithPatches(n int) EncodedArray[uint32] {
 		panic("expected bitpack encoding, got " + codec.Encoding().String())
 	}
 	return codec
-}
-
-func BenchmarkBitpackPatchedDecompressInto_1K(b *testing.B) {
-	benchDecompressInto(b, makeBitpackWithPatches(1_000))
-}
-
-func BenchmarkBitpackPatchedDecompressInto_10K(b *testing.B) {
-	benchDecompressInto(b, makeBitpackWithPatches(10_000))
-}
-
-func BenchmarkBitpackPatchedDecompressInto_100K(b *testing.B) {
-	benchDecompressInto(b, makeBitpackWithPatches(100_000))
 }

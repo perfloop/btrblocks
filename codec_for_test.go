@@ -1,7 +1,6 @@
 package btrblocks
 
 import (
-	"bytes"
 	"fmt"
 	"testing"
 
@@ -9,42 +8,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFoRRoundTripUint32HighBase(t *testing.T) {
-	values := []uint32{1000, 1002, 1004, 1006, 1008}
-	codec, err := buildFoRArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
-	require.NoError(t, err)
+func TestFoRRoundTrip(t *testing.T) {
+	t.Run("uint32_high_base", func(t *testing.T) {
+		values := []uint32{1000, 1002, 1004, 1006, 1008}
+		codec, err := buildFoRArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[uint32](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
-}
-
-func TestFoRRoundTripUint64NarrowRange(t *testing.T) {
-	values := make([]uint64, 200)
-	for i := range values {
-		values[i] = 1_000_000 + uint64(i%100)
-	}
-
-	codec, err := buildFoRArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
-	require.NoError(t, err)
-
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[uint64](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
+	t.Run("uint64_narrow_range", func(t *testing.T) {
+		values := make([]uint64, 200)
+		for i := range values {
+			values[i] = 1_000_000 + uint64(i%100)
+		}
+		codec, err := buildFoRArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 }
 
 func TestFoREncodingIsCodecTypeFor(t *testing.T) {
@@ -64,35 +44,17 @@ func TestFoRChildIsBitPacked(t *testing.T) {
 	require.IsType(t, &bitPackedArray[uint32, uint64]{}, f.child)
 }
 
-func TestFoRValueAtSpotChecks(t *testing.T) {
+func TestFoRSlice(t *testing.T) {
 	values := []uint32{1000, 1002, 1004, 1006, 1008}
 	codec, err := buildFoRArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
 	require.NoError(t, err)
 
-	for i, v := range values {
-		require.Equal(t, v, codec.ValueAt(uint64(i)))
-	}
-}
-
-func TestFoRSlicePreservesEncoding(t *testing.T) {
-	values := []uint32{1000, 1002, 1004, 1006, 1008}
-	codec, err := buildFoRArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
-	require.NoError(t, err)
-
-	sliced, err := codec.Slice(1, 4)
-	require.NoError(t, err)
-	require.Equal(t, CodecTypeFor, sliced.Encoding())
-	require.Equal(t, uint64(3), sliced.Length())
-
-	decoded, err := Decompress(sliced)
-	require.NoError(t, err)
-	require.Equal(t, values[1:4], decoded)
+	require.Equal(t, CodecTypeFor, codec.Encoding())
+	assertSliceRoundTrip(t, codec, 1, 4, values)
 }
 
 func BenchmarkFoRUint32(b *testing.B) {
-	sizes := []int{1_000, 10_000, 100_000, 1_000_000}
-
-	for _, n := range sizes {
+	for _, n := range benchSizes {
 		values := make([]uint32, n)
 		for i := range values {
 			values[i] = 1_000_000 + uint32(i%64)
@@ -100,15 +62,10 @@ func BenchmarkFoRUint32(b *testing.B) {
 
 		b.Run(fmt.Sprintf("compress/%d", n), func(b *testing.B) {
 			arr := buildArray(values)
+			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				codec, err := Compress(arr, Options{})
-				if err != nil {
-					b.Fatal(err)
-				}
-				var buf bytes.Buffer
-				_, err = codec.WriteTo(&buf)
-				if err != nil {
+				if _, err := Compress(arr, Options{}); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -120,23 +77,16 @@ func BenchmarkFoRUint32(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			var buf bytes.Buffer
-			_, err = codec.WriteTo(&buf)
+			benchDecompress(b, codec)
+		})
+
+		b.Run(fmt.Sprintf("decompressInto/%d", n), func(b *testing.B) {
+			arr := buildArray(values)
+			codec, err := Compress(arr, Options{})
 			if err != nil {
 				b.Fatal(err)
 			}
-			encoded := buf.Bytes()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				readBack, err := Load[uint32](encoded)
-				if err != nil {
-					b.Fatal(err)
-				}
-				_, err = Decompress(readBack)
-				if err != nil {
-					b.Fatal(err)
-				}
-			}
+			benchDecompressInto(b, codec)
 		})
 	}
 }
@@ -160,15 +110,6 @@ func FuzzFoRUint32Roundtrip(f *testing.F) {
 			return
 		}
 
-		var buf bytes.Buffer
-		_, err = codec.WriteTo(&buf)
-		require.NoError(t, err)
-
-		readBack, err := Load[uint32](buf.Bytes())
-		require.NoError(t, err)
-
-		decoded, err := Decompress(readBack)
-		require.NoError(t, err)
-		require.Equal(t, values, decoded)
+		assertRoundTrip(t, codec, values)
 	})
 }

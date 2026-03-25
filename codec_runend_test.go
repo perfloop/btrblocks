@@ -1,7 +1,6 @@
 package btrblocks
 
 import (
-	"bytes"
 	"fmt"
 	"testing"
 
@@ -9,75 +8,58 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRunEndRoundtripUint32(t *testing.T) {
-	values := []uint32{5, 5, 5, 5, 5, 7, 7, 7, 7, 7, 9, 9, 9, 9, 9}
-	codec, err := buildRunEndArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}), cmpIntegers[uint32])
-	require.NoError(t, err)
+func TestRunEndRoundTrip(t *testing.T) {
+	t.Run("uint32", func(t *testing.T) {
+		values := []uint32{5, 5, 5, 5, 5, 7, 7, 7, 7, 7, 9, 9, 9, 9, 9}
+		codec, err := buildRunEndArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}), cmpIntegers[uint32])
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
+	t.Run("float64", func(t *testing.T) {
+		values := make([]float64, 24)
+		for i := 0; i < 8; i++ {
+			values[i] = 1.5
+		}
+		for i := 8; i < 16; i++ {
+			values[i] = 2.5
+		}
+		for i := 16; i < 24; i++ {
+			values[i] = 3.5
+		}
 
-	decoded, err := Load[uint32](buf.Bytes())
-	require.NoError(t, err)
+		codec, err := buildRunEndArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}), cmpFloatBits[float64])
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 
-	got, err := Decompress(decoded)
-	require.NoError(t, err)
-	require.Equal(t, values, got)
-}
+	t.Run("string", func(t *testing.T) {
+		values := make([]string, 30)
+		for i := 0; i < 10; i++ {
+			values[i] = "aaa"
+		}
+		for i := 10; i < 20; i++ {
+			values[i] = "bbb"
+		}
+		for i := 20; i < 30; i++ {
+			values[i] = "ccc"
+		}
 
-func TestRunEndRoundtripFloat64(t *testing.T) {
-	values := make([]float64, 24)
-	for i := 0; i < 8; i++ {
-		values[i] = 1.5
-	}
-	for i := 8; i < 16; i++ {
-		values[i] = 2.5
-	}
-	for i := 16; i < 24; i++ {
-		values[i] = 3.5
-	}
+		codec, err := buildRunEndArray(array.NewStrings(values), newPlanContext(Options{MaxDepth: 3}), cmpStrings[string])
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 
-	codec, err := buildRunEndArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}), cmpFloatBits[float64])
-	require.NoError(t, err)
+	t.Run("single_run", func(t *testing.T) {
+		values := make([]uint32, 20)
+		for i := range values {
+			values[i] = 42
+		}
 
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	decoded, err := Load[float64](buf.Bytes())
-	require.NoError(t, err)
-
-	got, err := Decompress(decoded)
-	require.NoError(t, err)
-	require.Equal(t, values, got)
-}
-
-func TestRunEndRoundtripString(t *testing.T) {
-	values := make([]string, 30)
-	for i := 0; i < 10; i++ {
-		values[i] = "aaa"
-	}
-	for i := 10; i < 20; i++ {
-		values[i] = "bbb"
-	}
-	for i := 20; i < 30; i++ {
-		values[i] = "ccc"
-	}
-
-	codec, err := buildRunEndArray(array.NewStrings(values), newPlanContext(Options{MaxDepth: 3}), cmpStrings[string])
-	require.NoError(t, err)
-
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	decoded, err := Load[string](buf.Bytes())
-	require.NoError(t, err)
-
-	got, err := Decompress(decoded)
-	require.NoError(t, err)
-	require.Equal(t, values, got)
+		codec, err := buildRunEndArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}), cmpIntegers[uint32])
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 }
 
 func TestRunEndEncoding(t *testing.T) {
@@ -100,27 +82,6 @@ func TestRunEndValueAt(t *testing.T) {
 	require.Equal(t, uint32(9), codec.ValueAt(14))
 }
 
-func TestRunEndSingleRun(t *testing.T) {
-	values := make([]uint32, 20)
-	for i := range values {
-		values[i] = 42
-	}
-
-	codec, err := buildRunEndArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}), cmpIntegers[uint32])
-	require.NoError(t, err)
-
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	decoded, err := Load[uint32](buf.Bytes())
-	require.NoError(t, err)
-
-	got, err := Decompress(decoded)
-	require.NoError(t, err)
-	require.Equal(t, values, got)
-}
-
 func makeRunEndInt64(n int) EncodedArray[int64] {
 	values := make([]int64, n)
 	vals := []int64{100, 200, 300, 400, 500}
@@ -135,7 +96,7 @@ func makeRunEndInt64(n int) EncodedArray[int64] {
 }
 
 func BenchmarkRunEndCompress(b *testing.B) {
-	for _, n := range []int{1_000, 10_000, 100_000, 1_000_000} {
+	for _, n := range benchSizes {
 		values := make([]int64, n)
 		vals := []int64{100, 200, 300, 400, 500}
 		for i := range values {
@@ -143,6 +104,7 @@ func BenchmarkRunEndCompress(b *testing.B) {
 		}
 		arr := array.NewPrimitivesUnsafe(values)
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
+			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				if _, err := Compress(arr, Options{}); err != nil {
 					b.Fatal(err)
@@ -153,15 +115,13 @@ func BenchmarkRunEndCompress(b *testing.B) {
 }
 
 func BenchmarkRunEndDecompress(b *testing.B) {
-	for _, n := range []int{1_000, 10_000, 100_000, 1_000_000} {
+	for _, n := range benchSizes {
 		codec := makeRunEndInt64(n)
-		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if _, err := Decompress(codec); err != nil {
-					b.Fatal(err)
-				}
-			}
+		b.Run(fmt.Sprintf("n=%d/Decompress", n), func(b *testing.B) {
+			benchDecompress(b, codec)
+		})
+		b.Run(fmt.Sprintf("n=%d/DecompressInto", n), func(b *testing.B) {
+			benchDecompressInto(b, codec)
 		})
 	}
 }
@@ -181,31 +141,6 @@ func FuzzRunEndUint8(f *testing.F) {
 			return
 		}
 
-		var buf bytes.Buffer
-		_, err = codec.WriteTo(&buf)
-		require.NoError(t, err)
-
-		decoded, err := Load[uint8](buf.Bytes())
-		require.NoError(t, err)
-
-		got, err := Decompress(decoded)
-		require.NoError(t, err)
-		require.Equal(t, values, got)
+		assertRoundTrip(t, codec, values)
 	})
 }
-
-func makeRunEndUint32(n int) EncodedArray[uint32] {
-	values := make([]uint32, n)
-	for i := range values {
-		values[i] = uint32(i / 20)
-	}
-	codec, err := Compress(array.NewPrimitivesUnsafe(values), Options{})
-	if err != nil {
-		panic(err)
-	}
-	return codec
-}
-
-func BenchmarkRunEndDecompress_1K(b *testing.B)      { benchDecompress(b, makeRunEndUint32(1_000)) }
-func BenchmarkRunEndDecompress_10K(b *testing.B)     { benchDecompress(b, makeRunEndUint32(10_000)) }
-func BenchmarkRunEndDecompressInto_10K(b *testing.B) { benchDecompressInto(b, makeRunEndUint32(10_000)) }

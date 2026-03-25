@@ -11,142 +11,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRawRoundTripUint32(t *testing.T) {
-	values := []uint32{1, 2, 3, 100, 200, 300}
-	codec := newRawArray(buildArray(values))
-
-	var buf bytes.Buffer
-	_, err := codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[uint32](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
-}
-
-func TestRawRoundTripInt32(t *testing.T) {
-	values := []int32{-10, 0, 10, math.MinInt32, math.MaxInt32}
-	codec := newRawArray(buildArray(values))
-
-	var buf bytes.Buffer
-	_, err := codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[int32](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
-}
-
-func TestRawRoundTripFloat64(t *testing.T) {
-	values := []float64{0.0, -1.5, 3.14, math.Inf(1), math.NaN()}
-	codec := newRawArray(buildArray(values))
-
-	var buf bytes.Buffer
-	_, err := codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[float64](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.True(t, equalFloats(values, decoded))
-}
-
-func TestRawRoundTripString(t *testing.T) {
-	values := []string{"hello", "", "world", "foo bar"}
-	codec := newRawArray(buildArray(values))
-
-	var buf bytes.Buffer
-	_, err := codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[string](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
-}
-
-func TestRawRoundTripUint64(t *testing.T) {
-	values := []uint64{0, 1, math.MaxUint64, 42}
-	codec := newRawArray(buildArray(values))
-
-	var buf bytes.Buffer
-	_, err := codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[uint64](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
-}
-
-func TestRawValueAt(t *testing.T) {
-	values := []uint32{10, 20, 30, 40, 50}
-	codec := newRawArray(buildArray(values))
-
-	for i, v := range values {
-		require.Equal(t, v, codec.ValueAt(uint64(i)))
-	}
-}
-
-func TestRawValueAtAfterRead(t *testing.T) {
-	values := []int32{-5, 0, 5, 10}
-	codec := newRawArray(buildArray(values))
-
-	var buf bytes.Buffer
-	_, err := codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[int32](buf.Bytes())
-	require.NoError(t, err)
-
-	for i, v := range values {
-		require.Equal(t, v, readBack.ValueAt(uint64(i)))
-	}
-}
-
-func TestRawSlice(t *testing.T) {
-	values := []uint32{10, 20, 30, 40, 50}
-	codec := newRawArray(buildArray(values))
-
-	sliced, err := codec.Slice(1, 4)
-	require.NoError(t, err)
-	require.Equal(t, uint64(3), sliced.Length())
-	require.Equal(t, CodecTypeRaw, sliced.Encoding())
-
-	decoded, err := Decompress(sliced)
-	require.NoError(t, err)
-	require.Equal(t, []uint32{20, 30, 40}, decoded)
-}
-
-func TestRawSliceAfterRead(t *testing.T) {
-	values := []int32{-3, -2, -1, 0, 1, 2, 3}
-	codec := newRawArray(buildArray(values))
-
-	var buf bytes.Buffer
-	_, err := codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[int32](buf.Bytes())
-	require.NoError(t, err)
-
-	sliced, err := readBack.Slice(2, 5)
-	require.NoError(t, err)
-
-	decoded, err := Decompress(sliced)
-	require.NoError(t, err)
-	require.Equal(t, []int32{-1, 0, 1}, decoded)
+func TestRawRoundTrip(t *testing.T) {
+	t.Run("uint32", func(t *testing.T) {
+		values := []uint32{1, 2, 3, 100, 200, 300}
+		assertRoundTrip(t, newRawArray(buildArray(values)), values)
+	})
+	t.Run("int32", func(t *testing.T) {
+		values := []int32{-10, 0, 10, math.MinInt32, math.MaxInt32}
+		assertRoundTrip(t, newRawArray(buildArray(values)), values)
+	})
+	t.Run("float64", func(t *testing.T) {
+		values := []float64{0.0, -1.5, 3.14, math.Inf(1), math.NaN()}
+		assertRoundTrip(t, newRawArray(buildArray(values)), values)
+	})
+	t.Run("string", func(t *testing.T) {
+		values := []string{"hello", "", "world", "foo bar"}
+		assertRoundTrip(t, newRawArray(buildArray(values)), values)
+	})
+	t.Run("uint64", func(t *testing.T) {
+		values := []uint64{0, 1, math.MaxUint64, 42}
+		assertRoundTrip(t, newRawArray(buildArray(values)), values)
+	})
 }
 
 func TestRawEncoding(t *testing.T) {
@@ -154,8 +39,22 @@ func TestRawEncoding(t *testing.T) {
 	require.Equal(t, CodecTypeRaw, codec.Encoding())
 }
 
+func TestRawSlice(t *testing.T) {
+	t.Run("before serialization", func(t *testing.T) {
+		values := []uint32{10, 20, 30, 40, 50}
+		assertSliceRoundTrip(t, newRawArray(buildArray(values)), 1, 4, values)
+	})
+	t.Run("after deserialization", func(t *testing.T) {
+		values := []int32{-3, -2, -1, 0, 1, 2, 3}
+		data := mustWriteEncodedArray(t, newRawArray(buildArray(values)))
+		loaded, err := Load[int32](data)
+		require.NoError(t, err)
+		assertSliceRoundTrip(t, loaded, 2, 5, values)
+	})
+}
+
 func BenchmarkRaw(b *testing.B) {
-	for _, n := range []int{1_000, 10_000, 100_000, 1_000_000} {
+	for _, n := range benchSizes {
 		values := make([]uint32, n)
 		for i := range values {
 			values[i] = uint32(i)
@@ -163,6 +62,7 @@ func BenchmarkRaw(b *testing.B) {
 		arr := buildArray(values)
 
 		b.Run(fmt.Sprintf("compress/%d", n), func(b *testing.B) {
+			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				codec := newRawArray(arr)
 				var buf bytes.Buffer
@@ -171,11 +71,8 @@ func BenchmarkRaw(b *testing.B) {
 		})
 
 		b.Run(fmt.Sprintf("decompress/%d", n), func(b *testing.B) {
-			codec := newRawArray(arr)
-			var buf bytes.Buffer
-			_, _ = codec.WriteTo(&buf)
-			data := buf.Bytes()
-
+			data := mustWriteEncodedArray(b, newRawArray(arr))
+			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				readBack, err := Load[uint32](data)
@@ -202,22 +99,9 @@ func FuzzRaw(f *testing.F) {
 		}
 		n := len(data) / 4
 		values := unsafe.Slice((*uint32)(unsafe.Pointer(&data[0])), n)
-
 		owned := make([]uint32, n)
 		copy(owned, values)
-
-		codec := newRawArray(buildArray(owned))
-
-		var buf bytes.Buffer
-		_, err := codec.WriteTo(&buf)
-		require.NoError(t, err)
-
-		readBack, err := Load[uint32](buf.Bytes())
-		require.NoError(t, err)
-
-		decoded, err := Decompress(readBack)
-		require.NoError(t, err)
-		require.Equal(t, owned, decoded)
+		assertRoundTrip(t, newRawArray(buildArray(owned)), owned)
 	})
 }
 
@@ -234,21 +118,8 @@ func FuzzRawFloat64(f *testing.F) {
 		}
 		n := len(data) / 8
 		values := unsafe.Slice((*float64)(unsafe.Pointer(&data[0])), n)
-
 		owned := make([]float64, n)
 		copy(owned, values)
-
-		codec := newRawArray(buildArray(owned))
-
-		var buf bytes.Buffer
-		_, err := codec.WriteTo(&buf)
-		require.NoError(t, err)
-
-		readBack, err := Load[float64](buf.Bytes())
-		require.NoError(t, err)
-
-		decoded, err := Decompress(readBack)
-		require.NoError(t, err)
-		require.True(t, equalFloats(owned, decoded))
+		assertRoundTrip(t, newRawArray(buildArray(owned)), owned)
 	})
 }

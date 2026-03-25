@@ -185,12 +185,23 @@ func readFSSTWithLengthsTyped[I, J UnsignedInteger](h codecHeader, tableRaw, cod
 }
 
 func readFSSTArray(br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[string], error) {
+	// Body must hold at least two 4-byte length prefixes.
+	if h.NumBytes < 8 {
+		return nil, fmt.Errorf("codec: fsst body size %d too small", h.NumBytes)
+	}
+
 	// read table
 	data, err := br.Read(4)
 	if err != nil {
 		return nil, err
 	}
 	tableSize := binary.LittleEndian.Uint32(data)
+
+	// Validate sizes against h.NumBytes before allocating.
+	if uint64(4)+uint64(tableSize)+uint64(4) > h.NumBytes {
+		return nil, fmt.Errorf("codec: fsst table size %d exceeds body", tableSize)
+	}
+
 	tableRaw, err := br.Read(int(tableSize))
 	if err != nil {
 		return nil, err
@@ -202,13 +213,14 @@ func readFSSTArray(br *array.BufReader, h codecHeader, opts ReadOptions) (Encode
 		return nil, err
 	}
 	codesSize := binary.LittleEndian.Uint32(data)
-	codes, err := br.Read(int(codesSize))
-	if err != nil {
-		return nil, err
-	}
 
 	if expectedBody := uint64(4) + uint64(tableSize) + uint64(4) + uint64(codesSize); h.NumBytes != expectedBody {
 		return nil, fmt.Errorf("codec: fsst body size = %d, want %d", h.NumBytes, expectedBody)
+	}
+
+	codes, err := br.Read(int(codesSize))
+	if err != nil {
+		return nil, err
 	}
 
 	table := &fsst.Table{}

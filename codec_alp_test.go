@@ -1,7 +1,6 @@
 package btrblocks
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -11,100 +10,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestALPRoundTripFloat64(t *testing.T) {
-	pattern := []float64{12.34, 56.78}
-	values := make([]float64, 256)
-	for i := range values {
-		values[i] = pattern[i%len(pattern)]
-	}
-
-	codec, err := buildALPArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
-	require.NoError(t, err)
-
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[float64](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.True(t, equalFloats(values, decoded))
-}
-
-func TestALPRoundTripFloat32(t *testing.T) {
-	pattern := []float32{1.5, 2.5, 3.5}
-	values := make([]float32, 256)
-	for i := range values {
-		values[i] = pattern[i%len(pattern)]
-	}
-
-	codec, err := buildALPArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
-	require.NoError(t, err)
-
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[float32](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.True(t, equalFloats(values, decoded))
-}
-
-func TestALPRoundTripFloat64WithPatches(t *testing.T) {
-	values := make([]float64, 256)
-	for i := range values {
-		values[i] = 12.34
-	}
-	values[10] = math.Pi
-	values[50] = math.Pi
-	values[200] = math.Pi
-
-	codec, err := buildALPArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
-	require.NoError(t, err)
-
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[float64](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.True(t, equalFloats(values, decoded))
-}
-
-func TestALPEncodingType(t *testing.T) {
-	pattern := []float64{12.34, 56.78}
-	values := make([]float64, 256)
-	for i := range values {
-		values[i] = pattern[i%len(pattern)]
-	}
-
-	codec, err := buildALPArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
-	require.NoError(t, err)
-	require.Equal(t, CodecTypeALP, codec.Encoding())
-}
-
-func TestALPValueAtBitExact(t *testing.T) {
-	pattern := []float64{12.34, 56.78}
-	values := make([]float64, 256)
-	for i := range values {
-		values[i] = pattern[i%len(pattern)]
-	}
-
-	codec, err := buildALPArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
-	require.NoError(t, err)
-
-	require.Equal(t, math.Float64bits(12.34), math.Float64bits(codec.ValueAt(0)))
-	require.Equal(t, math.Float64bits(56.78), math.Float64bits(codec.ValueAt(1)))
-	require.Equal(t, math.Float64bits(12.34), math.Float64bits(codec.ValueAt(100)))
-	require.Equal(t, math.Float64bits(56.78), math.Float64bits(codec.ValueAt(255)))
+func TestALPRoundTrip(t *testing.T) {
+	t.Run("float64", func(t *testing.T) {
+		pattern := []float64{12.34, 56.78}
+		values := make([]float64, 256)
+		for i := range values {
+			values[i] = pattern[i%len(pattern)]
+		}
+		codec, err := buildALPArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
+		require.NoError(t, err)
+		require.Equal(t, CodecTypeALP, codec.Encoding())
+		assertRoundTrip(t, codec, values)
+	})
+	t.Run("float32", func(t *testing.T) {
+		pattern := []float32{1.5, 2.5, 3.5}
+		values := make([]float32, 256)
+		for i := range values {
+			values[i] = pattern[i%len(pattern)]
+		}
+		codec, err := buildALPArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
+	t.Run("float64 with patches", func(t *testing.T) {
+		values := make([]float64, 256)
+		for i := range values {
+			values[i] = 12.34
+		}
+		values[10] = math.Pi
+		values[50] = math.Pi
+		values[200] = math.Pi
+		codec, err := buildALPArray(array.NewPrimitivesUnsafe(values), newPlanContext(Options{MaxDepth: 3}))
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 }
 
 func TestALPEncodeDecode64Roundtrip(t *testing.T) {
@@ -139,11 +78,8 @@ func TestFindBestExponents64(t *testing.T) {
 }
 
 // TestALPCompressLargeArrayDoesNotPanic verifies that ALP estimation works
-// on arrays large enough to trigger sampling (>1024 elements). Before the fix,
-// buildALPArray asserted ArrayCore to Array, which panicked on sampledArray.
+// on arrays large enough to trigger sampling (>1024 elements).
 func TestALPCompressLargeArrayDoesNotPanic(t *testing.T) {
-	// 10K elements: sampleCountApproxOnePercent(10000) = 16, totalSample = 1024 < 10000.
-	// This triggers the sampling path in estimateBySample → buildALPArray.
 	values := make([]float64, 10_000)
 	for i := range values {
 		values[i] = float64(i%1000) * 0.01
@@ -153,10 +89,7 @@ func TestALPCompressLargeArrayDoesNotPanic(t *testing.T) {
 
 	decoded, err := Decompress(codec)
 	require.NoError(t, err)
-	require.Equal(t, len(values), len(decoded))
-	for i := range values {
-		require.Equal(t, values[i], decoded[i], "mismatch at index %d", i)
-	}
+	assertValuesEqual(t, values, decoded)
 }
 
 func makeALPBenchData(n int) []float64 {
@@ -167,33 +100,30 @@ func makeALPBenchData(n int) []float64 {
 	return values
 }
 
-func BenchmarkALPCompress(b *testing.B) {
-	for _, n := range []int{1_000, 10_000, 100_000, 1_000_000} {
+func BenchmarkALP(b *testing.B) {
+	for _, n := range benchSizes {
 		values := makeALPBenchData(n)
 		arr := buildArray(values)
-		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
+
+		b.Run(fmt.Sprintf("compress/%d", n), func(b *testing.B) {
+			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				if _, err := Compress(arr, Options{}); err != nil {
 					b.Fatal(err)
 				}
 			}
 		})
-	}
-}
 
-func BenchmarkALPDecompress(b *testing.B) {
-	for _, n := range []int{1_000, 10_000, 100_000, 1_000_000} {
-		values := makeALPBenchData(n)
-		codec, err := Compress(buildArray(values), Options{})
+		codec, err := Compress(arr, Options{})
 		if err != nil {
 			b.Fatal(err)
 		}
-		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				if _, err := Decompress(codec); err != nil {
-					b.Fatal(err)
-				}
-			}
+
+		b.Run(fmt.Sprintf("decompress/%d", n), func(b *testing.B) {
+			benchDecompress(b, codec)
+		})
+		b.Run(fmt.Sprintf("decompressInto/%d", n), func(b *testing.B) {
+			benchDecompressInto(b, codec)
 		})
 	}
 }
@@ -206,7 +136,7 @@ func FuzzALPRoundTrip(f *testing.F) {
 		}
 		values := make([]float64, 0, len(data)/8)
 		for i := 0; i+8 <= len(data); i += 8 {
-			v := math.Float64frombits(binary.LittleEndian.Uint64(data[i*1:]))
+			v := math.Float64frombits(binary.LittleEndian.Uint64(data[i:]))
 			if math.IsNaN(v) || math.IsInf(v, 0) {
 				continue
 			}
@@ -222,26 +152,6 @@ func FuzzALPRoundTrip(f *testing.F) {
 		}
 		decoded, err := Decompress(codec)
 		require.NoError(t, err)
-		require.Equal(t, len(values), len(decoded))
-		for i := range values {
-			require.Equal(t, math.Float64bits(values[i]), math.Float64bits(decoded[i]),
-				"mismatch at index %d", i)
-		}
+		assertValuesEqual(t, values, decoded)
 	})
 }
-
-func makeALPFloat64(n int) EncodedArray[float64] {
-	values := make([]float64, n)
-	for i := range values {
-		values[i] = 3.14 * float64(i%100)
-	}
-	codec, err := Compress(array.NewPrimitivesUnsafe(values), Options{})
-	if err != nil {
-		panic(err)
-	}
-	return codec
-}
-
-func BenchmarkALPDecompress_1K(b *testing.B)      { benchDecompress(b, makeALPFloat64(1_000)) }
-func BenchmarkALPDecompress_10K(b *testing.B)     { benchDecompress(b, makeALPFloat64(10_000)) }
-func BenchmarkALPDecompressInto_10K(b *testing.B) { benchDecompressInto(b, makeALPFloat64(10_000)) }

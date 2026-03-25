@@ -1,7 +1,6 @@
 package btrblocks
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"testing"
@@ -9,70 +8,44 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSequenceRoundTripUint32Arithmetic(t *testing.T) {
-	values := []uint32{1000, 1003, 1006, 1009, 1012, 1015}
-	codec, err := newSequenceArray(buildArray(values))
-	require.NoError(t, err)
+func TestSequenceRoundTrip(t *testing.T) {
+	t.Run("uint32_arithmetic", func(t *testing.T) {
+		values := []uint32{1000, 1003, 1006, 1009, 1012, 1015}
+		codec, err := newSequenceArray(buildArray(values))
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
+	t.Run("int64_descending", func(t *testing.T) {
+		values := []int64{100, 95, 90, 85, 80, 75}
+		codec, err := newSequenceArray(buildArray(values))
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 
-	readBack, err := Load[uint32](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
+	t.Run("int32_negative_step", func(t *testing.T) {
+		values := []int32{0, -5, -10, -15, -20}
+		codec, err := newSequenceArray(buildArray(values))
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 }
 
-func TestSequenceRoundTripInt64Descending(t *testing.T) {
-	values := []int64{100, 95, 90, 85, 80, 75}
-	codec, err := newSequenceArray(buildArray(values))
-	require.NoError(t, err)
+func TestSequenceErrors(t *testing.T) {
+	t.Run("non_sequence", func(t *testing.T) {
+		_, err := newSequenceArray(buildArray([]uint32{1, 2, 4, 8}))
+		require.ErrorIs(t, err, errNotArithmeticSequence)
+	})
 
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
+	t.Run("single_element", func(t *testing.T) {
+		_, err := newSequenceArray(buildArray([]uint32{42}))
+		require.ErrorIs(t, err, errNotArithmeticSequence)
+	})
 
-	readBack, err := Load[int64](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
-}
-
-func TestSequenceRoundTripInt32NegativeStep(t *testing.T) {
-	values := []int32{0, -5, -10, -15, -20}
-	codec, err := newSequenceArray(buildArray(values))
-	require.NoError(t, err)
-
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[int32](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
-}
-
-func TestSequenceNonSequenceReturnsError(t *testing.T) {
-	_, err := newSequenceArray(buildArray([]uint32{1, 2, 4, 8}))
-	require.ErrorIs(t, err, errNotArithmeticSequence)
-}
-
-func TestSequenceSingleElementReturnsError(t *testing.T) {
-	_, err := newSequenceArray(buildArray([]uint32{42}))
-	require.ErrorIs(t, err, errNotArithmeticSequence)
-}
-
-func TestSequenceZeroStepReturnsError(t *testing.T) {
-	_, err := newSequenceArray(buildArray([]uint32{5, 5, 5}))
-	require.ErrorIs(t, err, errNotArithmeticSequence)
+	t.Run("zero_step", func(t *testing.T) {
+		_, err := newSequenceArray(buildArray([]uint32{5, 5, 5}))
+		require.ErrorIs(t, err, errNotArithmeticSequence)
+	})
 }
 
 func TestSequenceEncoding(t *testing.T) {
@@ -81,70 +54,29 @@ func TestSequenceEncoding(t *testing.T) {
 	require.Equal(t, CodecTypeSequence, codec.Encoding())
 }
 
-func TestSequenceValueAt(t *testing.T) {
-	values := []uint32{1000, 1003, 1006, 1009, 1012, 1015}
-	codec, err := newSequenceArray(buildArray(values))
-	require.NoError(t, err)
+func TestSequenceSlice(t *testing.T) {
+	t.Run("shifts_base", func(t *testing.T) {
+		values := []uint32{10, 20, 30, 40, 50}
+		codec, err := newSequenceArray(buildArray(values))
+		require.NoError(t, err)
+		assertSliceRoundTrip(t, codec, 1, 4, values)
+	})
 
-	for i, v := range values {
-		require.Equal(t, v, codec.ValueAt(uint64(i)))
-	}
-}
+	t.Run("after_read", func(t *testing.T) {
+		values := []int32{0, -5, -10, -15, -20}
+		codec, err := newSequenceArray(buildArray(values))
+		require.NoError(t, err)
 
-func TestSequenceValueAtAfterRead(t *testing.T) {
-	values := []int64{100, 95, 90, 85, 80, 75}
-	codec, err := newSequenceArray(buildArray(values))
-	require.NoError(t, err)
+		data := mustWriteEncodedArray(t, codec)
+		readBack, err := Load[int32](data)
+		require.NoError(t, err)
 
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[int64](buf.Bytes())
-	require.NoError(t, err)
-
-	for i, v := range values {
-		require.Equal(t, v, readBack.ValueAt(uint64(i)))
-	}
-}
-
-func TestSequenceSliceShiftsBase(t *testing.T) {
-	values := []uint32{10, 20, 30, 40, 50}
-	codec, err := newSequenceArray(buildArray(values))
-	require.NoError(t, err)
-
-	sliced, err := codec.Slice(1, 4)
-	require.NoError(t, err)
-	require.Equal(t, uint64(3), sliced.Length())
-	require.Equal(t, CodecTypeSequence, sliced.Encoding())
-
-	decoded, err := Decompress(sliced)
-	require.NoError(t, err)
-	require.Equal(t, []uint32{20, 30, 40}, decoded)
-}
-
-func TestSequenceSliceAfterRead(t *testing.T) {
-	values := []int32{0, -5, -10, -15, -20}
-	codec, err := newSequenceArray(buildArray(values))
-	require.NoError(t, err)
-
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[int32](buf.Bytes())
-	require.NoError(t, err)
-
-	sliced, err := readBack.Slice(1, 4)
-	require.NoError(t, err)
-
-	decoded, err := Decompress(sliced)
-	require.NoError(t, err)
-	require.Equal(t, []int32{-5, -10, -15}, decoded)
+		assertSliceRoundTrip(t, readBack, 1, 4, values)
+	})
 }
 
 func BenchmarkSequence(b *testing.B) {
-	for _, n := range []int{1_000, 10_000, 100_000, 1_000_000} {
+	for _, n := range benchSizes {
 		values := make([]uint32, n)
 		for i := range values {
 			values[i] = 1_000_000 + uint32(i)*3
@@ -152,10 +84,10 @@ func BenchmarkSequence(b *testing.B) {
 
 		b.Run(fmt.Sprintf("compress/%d", n), func(b *testing.B) {
 			arr := buildArray(values)
+			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, err := Compress(arr, Options{})
-				if err != nil {
+				if _, err := Compress(arr, Options{}); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -163,36 +95,29 @@ func BenchmarkSequence(b *testing.B) {
 
 		b.Run(fmt.Sprintf("decompress/%d", n), func(b *testing.B) {
 			arr := buildArray(values)
-			encoded, err := Compress(arr, Options{})
+			codec, err := Compress(arr, Options{})
 			if err != nil {
 				b.Fatal(err)
 			}
-			var buf bytes.Buffer
-			_, err = encoded.WriteTo(&buf)
+			benchDecompress(b, codec)
+		})
+
+		b.Run(fmt.Sprintf("decompressInto/%d", n), func(b *testing.B) {
+			arr := buildArray(values)
+			codec, err := Compress(arr, Options{})
 			if err != nil {
 				b.Fatal(err)
 			}
-			data := buf.Bytes()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				readBack, err := Load[uint32](data)
-				if err != nil {
-					b.Fatal(err)
-				}
-				_, err = Decompress(readBack)
-				if err != nil {
-					b.Fatal(err)
-				}
-			}
+			benchDecompressInto(b, codec)
 		})
 	}
 }
 
 func FuzzSequence(f *testing.F) {
-	var seed bytes.Buffer
-	_ = binary.Write(&seed, binary.LittleEndian, int64(100))
-	_ = binary.Write(&seed, binary.LittleEndian, int64(3))
-	f.Add(seed.Bytes())
+	var seed [16]byte
+	binary.LittleEndian.PutUint64(seed[:8], uint64(100))
+	binary.LittleEndian.PutUint64(seed[8:], uint64(3))
+	f.Add(seed[:])
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) < 16 {
@@ -213,15 +138,6 @@ func FuzzSequence(f *testing.F) {
 		codec, err := newSequenceArray(buildArray(values))
 		require.NoError(t, err)
 
-		var buf bytes.Buffer
-		_, err = codec.WriteTo(&buf)
-		require.NoError(t, err)
-
-		readBack, err := Load[int64](buf.Bytes())
-		require.NoError(t, err)
-
-		decoded, err := Decompress(readBack)
-		require.NoError(t, err)
-		require.Equal(t, values, decoded)
+		assertRoundTrip(t, codec, values)
 	})
 }

@@ -1,7 +1,6 @@
 package btrblocks
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"testing"
@@ -9,79 +8,51 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestZigZagRoundTripInt32Negatives(t *testing.T) {
-	values := make([]int32, 256)
-	for i := range values {
-		if i%2 == 0 {
-			values[i] = -7
-		} else {
-			values[i] = -3
+func TestZigZagRoundTrip(t *testing.T) {
+	t.Run("int32_negatives", func(t *testing.T) {
+		values := make([]int32, 256)
+		for i := range values {
+			if i%2 == 0 {
+				values[i] = -7
+			} else {
+				values[i] = -3
+			}
 		}
-	}
 
-	codec, err := buildZigZagArray(buildArray(values), newPlanContext(Options{MaxDepth: 3}))
-	require.NoError(t, err)
+		codec, err := buildZigZagArray(buildArray(values), newPlanContext(Options{MaxDepth: 3}))
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[int32](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
-}
-
-func TestZigZagRoundTripInt64Mixed(t *testing.T) {
-	values := make([]int64, 256)
-	for i := range values {
-		if i%2 == 0 {
-			values[i] = -100
-		} else {
-			values[i] = 50
+	t.Run("int64_mixed", func(t *testing.T) {
+		values := make([]int64, 256)
+		for i := range values {
+			if i%2 == 0 {
+				values[i] = -100
+			} else {
+				values[i] = 50
+			}
 		}
-	}
 
-	codec, err := buildZigZagArray(buildArray(values), newPlanContext(Options{MaxDepth: 3}))
-	require.NoError(t, err)
+		codec, err := buildZigZagArray(buildArray(values), newPlanContext(Options{MaxDepth: 3}))
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[int64](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
-}
-
-func TestZigZagRoundTripInt8SmallNegatives(t *testing.T) {
-	values := make([]int8, 256)
-	for i := range values {
-		if i%2 == 0 {
-			values[i] = -1
-		} else {
-			values[i] = -2
+	t.Run("int8_small_negatives", func(t *testing.T) {
+		values := make([]int8, 256)
+		for i := range values {
+			if i%2 == 0 {
+				values[i] = -1
+			} else {
+				values[i] = -2
+			}
 		}
-	}
 
-	codec, err := buildZigZagArray(buildArray(values), newPlanContext(Options{MaxDepth: 3}))
-	require.NoError(t, err)
-
-	var buf bytes.Buffer
-	_, err = codec.WriteTo(&buf)
-	require.NoError(t, err)
-
-	readBack, err := Load[int8](buf.Bytes())
-	require.NoError(t, err)
-
-	decoded, err := Decompress(readBack)
-	require.NoError(t, err)
-	require.Equal(t, values, decoded)
+		codec, err := buildZigZagArray(buildArray(values), newPlanContext(Options{MaxDepth: 3}))
+		require.NoError(t, err)
+		assertRoundTrip(t, codec, values)
+	})
 }
 
 func TestZigZagEncodingType(t *testing.T) {
@@ -138,66 +109,31 @@ func makeZigZagInt32(n int) EncodedArray[int32] {
 	return codec
 }
 
-func BenchmarkZigZagCompress_1K(b *testing.B) {
-	values := make([]int32, 1_000)
-	for i := range values {
-		values[i] = int32((i % 7) - 3)
-	}
-	arr := buildArray(values)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := Compress(arr, Options{}); err != nil {
-			b.Fatal(err)
+func BenchmarkZigZag(b *testing.B) {
+	for _, n := range benchSizes {
+		values := make([]int32, n)
+		for i := range values {
+			values[i] = int32((i % 7) - 3)
 		}
+		arr := buildArray(values)
+		codec := makeZigZagInt32(n)
+
+		b.Run(fmt.Sprintf("n=%d/Compress", n), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if _, err := Compress(arr, Options{}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		b.Run(fmt.Sprintf("n=%d/Decompress", n), func(b *testing.B) {
+			benchDecompress(b, codec)
+		})
+		b.Run(fmt.Sprintf("n=%d/DecompressInto", n), func(b *testing.B) {
+			benchDecompressInto(b, codec)
+		})
 	}
 }
-
-func BenchmarkZigZagCompress_10K(b *testing.B) {
-	values := make([]int32, 10_000)
-	for i := range values {
-		values[i] = int32((i % 7) - 3)
-	}
-	arr := buildArray(values)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := Compress(arr, Options{}); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkZigZagCompress_100K(b *testing.B) {
-	values := make([]int32, 100_000)
-	for i := range values {
-		values[i] = int32((i % 7) - 3)
-	}
-	arr := buildArray(values)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := Compress(arr, Options{}); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkZigZagCompress_1M(b *testing.B) {
-	values := make([]int32, 1_000_000)
-	for i := range values {
-		values[i] = int32((i % 7) - 3)
-	}
-	arr := buildArray(values)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := Compress(arr, Options{}); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkZigZagDecompress_1K(b *testing.B)   { benchDecompress(b, makeZigZagInt32(1_000)) }
-func BenchmarkZigZagDecompress_10K(b *testing.B)  { benchDecompress(b, makeZigZagInt32(10_000)) }
-func BenchmarkZigZagDecompress_100K(b *testing.B) { benchDecompress(b, makeZigZagInt32(100_000)) }
-func BenchmarkZigZagDecompress_1M(b *testing.B)   { benchDecompress(b, makeZigZagInt32(1_000_000)) }
 
 func FuzzZigZagRoundTrip(f *testing.F) {
 	f.Add([]byte{0, 0, 0, 0, 1, 0, 0, 0})
@@ -214,26 +150,8 @@ func FuzzZigZagRoundTrip(f *testing.F) {
 		}
 
 		codec, err := Compress(buildArray(values), Options{})
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 
-		var buf bytes.Buffer
-		_, err = codec.WriteTo(&buf)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		readBack, err := Load[int32](buf.Bytes())
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		decoded, err := Decompress(readBack)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		require.Equal(t, values, decoded, fmt.Sprintf("roundtrip mismatch for %d elements", n))
+		assertRoundTrip(t, codec, values)
 	})
 }
