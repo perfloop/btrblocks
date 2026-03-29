@@ -24,6 +24,10 @@ func computeStringStats(arr array.Array[string]) stringStats {
 		return stringStats{base: baseStats[string]{src: arr, cached: arr}}
 	}
 
+	// Materialize once to avoid per-element interface dispatch.
+	vals := make([]string, n)
+	arr.CopyTo(vals)
+
 	type key struct {
 		length uint64
 		prefix [8]byte
@@ -32,7 +36,7 @@ func computeStringStats(arr array.Array[string]) stringStats {
 	distinct := make(map[key]struct{}, 256)
 	runs := uint64(1)
 	isConst := true
-	first := arr.ValueAt(0)
+	first := vals[0]
 	prev := first
 
 	var k0 key
@@ -42,8 +46,7 @@ func computeStringStats(arr array.Array[string]) stringStats {
 	}
 	distinct[k0] = struct{}{}
 
-	for i := uint64(1); i < n; i++ {
-		v := arr.ValueAt(i)
+	for _, v := range vals[1:] {
 		var k key
 		k.length = uint64(len(v))
 		for j := 0; j < len(k.prefix) && j < len(v); j++ {

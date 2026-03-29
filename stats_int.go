@@ -30,16 +30,19 @@ func computeSignedStats[T SignedInteger](arr array.Array[T]) signedStats[T] {
 		}
 	}
 
+	// Materialize once to avoid per-element interface dispatch.
+	vals := make([]T, n)
+	arr.CopyTo(vals)
+
 	distinct := make(map[T]uint64, 256)
 	runs := uint64(1)
-	prev := arr.ValueAt(0)
+	prev := vals[0]
 	hasNegative := prev < 0
 	minValue := prev
 	maxValue := prev
 	distinct[prev] = 0
 
-	for i := uint64(1); i < n; i++ {
-		v := arr.ValueAt(i)
+	for _, v := range vals[1:] {
 		if distinct != nil {
 			if _, exists := distinct[v]; !exists {
 				if uint64(len(distinct)) >= n/2 {

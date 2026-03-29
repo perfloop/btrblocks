@@ -54,18 +54,7 @@ func zigzagDecode64(z uint64) int64 {
 }
 
 func zigzagEncodeValue[T SignedInteger](value T) uint64 {
-	switch v := any(value).(type) {
-	case int8:
-		return zigzagEncode64(int64(v))
-	case int16:
-		return zigzagEncode64(int64(v))
-	case int32:
-		return zigzagEncode64(int64(v))
-	case int64:
-		return zigzagEncode64(v)
-	default:
-		return 0
-	}
+	return zigzagEncode64(int64(value))
 }
 
 func zigzagMaxEncoded[T SignedInteger](length uint64, valueAt func(uint64) T) uint64 {
@@ -85,19 +74,7 @@ func (z *zigzagArray[T, U]) BinarySize() uint64 { return uint64(headerSize) + z.
 
 func (z *zigzagArray[T, U]) ValueAt(offset uint64) T {
 	value := uint64(z.child.ValueAt(offset))
-	var zero T
-	switch any(zero).(type) {
-	case int8:
-		return any(int8(zigzagDecode64(value))).(T)
-	case int16:
-		return any(int16(zigzagDecode64(value))).(T)
-	case int32:
-		return any(int32(zigzagDecode64(value))).(T)
-	case int64:
-		return any(zigzagDecode64(value)).(T)
-	default:
-		panic(fmt.Errorf("codec: zigzag not supported for %T", zero))
-	}
+	return T(zigzagDecode64(value))
 }
 
 func (z *zigzagArray[T, U]) DecompressInto(dst []T) error {

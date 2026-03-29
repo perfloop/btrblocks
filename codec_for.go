@@ -64,7 +64,7 @@ func (f *forArray[T]) DecompressInto(dst []T) error {
 	if err := f.child.DecompressInto(dst); err != nil {
 		return err
 	}
-	for i := uint64(0); i < f.child.Length(); i++ {
+	for i := range dst[:f.child.Length()] {
 		dst[i] += f.min
 	}
 	return nil
