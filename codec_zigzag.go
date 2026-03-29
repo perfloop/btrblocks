@@ -51,7 +51,7 @@ func zigzagEncodeValue[T SignedInteger](value T) uint64 { return zigzagEncode64(
 
 func zigzagMaxEncoded[T SignedInteger](length uint64, valueAt func(uint64) T) uint64 {
 	var max uint64
-	for i := uint64(0); i < length; i++ {
+	for i := range length {
 		if encoded := zigzagEncodeValue(valueAt(i)); encoded > max {
 			max = encoded
 		}
