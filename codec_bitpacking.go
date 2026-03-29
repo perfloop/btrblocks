@@ -27,8 +27,9 @@ func unsignedBitWidthHistogram[T UnsignedInteger](arr interface {
 	Length() uint64
 	ValueAt(uint64) T
 }) []uint64 {
+	n := arr.Length()
 	histogram := make([]uint64, array.PTypeForType[T]().ByteWidth()*8+1)
-	for i := uint64(0); i < arr.Length(); i++ {
+	for i := range n {
 		histogram[bitWidthForUnsigned(uint64(arr.ValueAt(i)))]++
 	}
 	return histogram

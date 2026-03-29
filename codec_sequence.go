@@ -22,7 +22,8 @@ func newSequenceArray[T Integer](arr array.ArrayCore[T]) (*sequenceArray[T], err
 	if arr.Length() == 0 {
 		return nil, errDataEmpty
 	}
-	if arr.Length() < 2 {
+	n := arr.Length()
+	if n < 2 {
 		return nil, errNotArithmeticSequence
 	}
 	base := arr.ValueAt(0)
@@ -30,12 +31,12 @@ func newSequenceArray[T Integer](arr array.ArrayCore[T]) (*sequenceArray[T], err
 	if step == 0 {
 		return nil, errNotArithmeticSequence
 	}
-	for i := uint64(2); i < arr.Length(); i++ {
+	for i := uint64(2); i < n; i++ {
 		if arr.ValueAt(i)-arr.ValueAt(i-1) != step {
 			return nil, errNotArithmeticSequence
 		}
 	}
-	return &sequenceArray[T]{length: arr.Length(), base: base, step: step}, nil
+	return &sequenceArray[T]{length: n, base: base, step: step}, nil
 }
 
 func (s *sequenceArray[T]) Encoding() CodeType { return CodecTypeSequence }

@@ -123,9 +123,10 @@ func buildIntegerDictFromDistinct[T Integer](arr array.ArrayCore[T], distinct ma
 		return nil, errDepthExhausted
 	}
 
+	n := arr.Length()
 	if len(distinct) == 0 {
 		distinct = make(map[T]uint64)
-		for i := uint64(0); i < arr.Length(); i++ {
+		for i := range n {
 			v := arr.ValueAt(i)
 			if _, ok := distinct[v]; !ok {
 				distinct[v] = uint64(len(distinct))
@@ -158,8 +159,9 @@ func buildIntegerDictFromDistinct[T Integer](arr array.ArrayCore[T], distinct ma
 
 // buildDictWithCodes builds the codes array as []I directly from the distinct map.
 func buildDictWithCodes[T Integer, I UnsignedInteger](arr array.ArrayCore[T], distinct map[T]uint64, valuesCodec EncodedArray[T], ctx planContext) (EncodedArray[T], error) {
-	codes := make([]I, arr.Length())
-	for i := uint64(0); i < arr.Length(); i++ {
+	n := arr.Length()
+	codes := make([]I, n)
+	for i := range n {
 		codes[i] = I(distinct[arr.ValueAt(i)])
 	}
 	childCtx := ctx.descend().withIntegerExcludes(CodecTypeDict, CodecTypeSequence)
@@ -179,9 +181,10 @@ func buildFloatDictFromDistinct[T Float](arr array.ArrayCore[T], distinct map[ui
 		return nil, errDepthExhausted
 	}
 
+	n := arr.Length()
 	if len(distinct) == 0 {
 		distinct = make(map[uint64]uint64)
-		for i := uint64(0); i < arr.Length(); i++ {
+		for i := range n {
 			key := floatBits(arr.ValueAt(i))
 			if _, ok := distinct[key]; !ok {
 				distinct[key] = uint64(len(distinct))
@@ -211,8 +214,9 @@ func buildFloatDictFromDistinct[T Float](arr array.ArrayCore[T], distinct map[ui
 }
 
 func buildFloatDictWithCodes[T Float, I UnsignedInteger](arr array.ArrayCore[T], distinct map[uint64]uint64, valuesCodec EncodedArray[T], ctx planContext) (EncodedArray[T], error) {
-	codes := make([]I, arr.Length())
-	for i := uint64(0); i < arr.Length(); i++ {
+	n := arr.Length()
+	codes := make([]I, n)
+	for i := range n {
 		codes[i] = I(distinct[floatBits(arr.ValueAt(i))])
 	}
 	childCtx := ctx.descend().withIntegerExcludes(CodecTypeDict, CodecTypeSequence)
@@ -227,9 +231,10 @@ func buildStringDictArray[T String](arr array.ArrayCore[T], ctx planContext) (En
 	if ctx.depth <= 0 {
 		return nil, errDepthExhausted
 	}
+	n := arr.Length()
 	dict := make(map[T]uint64)
-	values := make([]T, 0, arr.Length())
-	for i := uint64(0); i < arr.Length(); i++ {
+	values := make([]T, 0, n)
+	for i := range n {
 		value := arr.ValueAt(i)
 		if _, ok := dict[value]; !ok {
 			dict[value] = uint64(len(values))
@@ -254,8 +259,9 @@ func buildStringDictArray[T String](arr array.ArrayCore[T], ctx planContext) (En
 }
 
 func buildStringDictWithCodes[T String, I UnsignedInteger](arr array.ArrayCore[T], dict map[T]uint64, valuesCodec EncodedArray[T], ctx planContext) (EncodedArray[T], error) {
-	codes := make([]I, arr.Length())
-	for i := uint64(0); i < arr.Length(); i++ {
+	n := arr.Length()
+	codes := make([]I, n)
+	for i := range n {
 		codes[i] = I(dict[arr.ValueAt(i)])
 	}
 	childCtx := ctx.descend().withIntegerExcludes(CodecTypeDict, CodecTypeSequence)

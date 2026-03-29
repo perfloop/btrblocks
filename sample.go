@@ -72,8 +72,9 @@ func rawBinarySize[T Integer | Float | String](arr array.ArrayCore[T]) uint64 {
 	var zero T
 	switch any(zero).(type) {
 	case string:
+		n := arr.Length()
 		totalBytes := uint64(0)
-		for i := uint64(0); i < arr.Length(); i++ {
+		for i := range n {
 			totalBytes += uint64(len(any(arr.ValueAt(i)).(string)))
 		}
 		offsetWidth := uint64(4)
@@ -83,7 +84,7 @@ func rawBinarySize[T Integer | Float | String](arr array.ArrayCore[T]) uint64 {
 		case totalBytes <= uint64(^uint16(0)):
 			offsetWidth = 2
 		}
-		return array.HeaderSize + 4 + (arr.Length()+1)*offsetWidth + totalBytes
+		return array.HeaderSize + 4 + (n+1)*offsetWidth + totalBytes
 	default:
 		return array.HeaderSize + arr.Length()*uint64(array.PTypeForType[T]().ByteWidth())
 	}

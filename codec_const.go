@@ -62,16 +62,17 @@ func (c *constArray[T]) WriteTo(w io.Writer) (int64, error) {
 }
 
 func newConstArray[T Integer | Float | String](arr array.ArrayCore[T], cmp cmpFn[T]) (*constArray[T], error) {
-	if arr.Length() == 0 {
+	n := arr.Length()
+	if n == 0 {
 		return nil, errDataEmpty
 	}
 	value := arr.ValueAt(0)
-	for i := uint64(1); i < arr.Length(); i++ {
+	for i := uint64(1); i < n; i++ {
 		if !cmp(value, arr.ValueAt(i)) {
 			return nil, errValueNotConstant
 		}
 	}
-	return &constArray[T]{length: arr.Length(), value: value}, nil
+	return &constArray[T]{length: n, value: value}, nil
 }
 
 func newConstIntegerArray[T Integer](arr array.ArrayCore[T]) (*constArray[T], error) {
