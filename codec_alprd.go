@@ -55,6 +55,13 @@ func alprdFindBestDict[T Float](arr array.ArrayCore[T], funcs alprdFuncs[T]) alp
 		step = n / 1024
 	}
 
+	// Materialize sampled bit-patterns once to avoid repeated interface
+	// dispatch across ~alprdMaxCutBits passes.
+	sampleBits := make([]uint64, 0, (n+step-1)/step)
+	for i := uint64(0); i < n; i += step {
+		sampleBits = append(sampleBits, funcs.floatBits(arr.ValueAt(i)))
+	}
+
 	var best alprdDict
 	bestCost := math.MaxFloat64
 	freq := make(map[uint16]uint64)
@@ -64,8 +71,8 @@ func alprdFindBestDict[T Float](arr array.ArrayCore[T], funcs alprdFuncs[T]) alp
 
 		clear(freq)
 		sampleN := uint64(0)
-		for i := uint64(0); i < n; i += step {
-			left := uint16(funcs.floatBits(arr.ValueAt(i)) >> rightBW)
+		for _, bits := range sampleBits {
+			left := uint16(bits >> rightBW)
 			freq[left]++
 			sampleN++
 		}
@@ -317,8 +324,16 @@ func buildALPRDArray[T Float](arr array.ArrayCore[T], ctx planContext) (EncodedA
 }
 
 func buildALPRDArrayTyped[T Float](arr array.ArrayCore[T], ctx planContext, funcs alprdFuncs[T]) (EncodedArray[T], error) {
-	dict := alprdFindBestDict(arr, funcs)
 	n := arr.Length()
+
+	// Materialize once to avoid per-element interface dispatch across
+	// dict search and encoding.
+	vals := make([]T, n)
+	for i := range n {
+		vals[i] = arr.ValueAt(i)
+	}
+
+	dict := alprdFindBestDict(array.NewPrimitivesUnsafe(vals), funcs)
 
 	leftBuf := make([]byte, packedByteSize(n, uint(dict.leftBitWidth)))
 	rightBuf := make([]byte, packedByteSize(n, uint(dict.rightBitWidth)))
@@ -326,8 +341,8 @@ func buildALPRDArrayTyped[T Float](arr array.ArrayCore[T], ctx planContext, func
 	patchIdx := make([]uint64, 0)
 	patchVals := make([]uint16, 0)
 
-	for i := uint64(0); i < n; i++ {
-		b := funcs.floatBits(arr.ValueAt(i))
+	for i := range n {
+		b := funcs.floatBits(vals[i])
 		right := b & ((1 << dict.rightBitWidth) - 1)
 		left := uint16(b >> dict.rightBitWidth)
 

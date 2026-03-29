@@ -60,13 +60,20 @@ func findBestExponents[T Float](arr array.ArrayCore[T], maxE uint8, isException 
 		step = n / 64
 	}
 
+	// Materialize sampled values once to avoid repeated interface dispatch
+	// across ~maxE² (e,f) passes.
+	samples := make([]T, 0, (n+step-1)/step)
+	for i := uint64(0); i < n; i += step {
+		samples = append(samples, arr.ValueAt(i))
+	}
+
 	var bestE, bestF uint8
 	bestExceptions := uint64(math.MaxUint64)
 	for e := uint8(0); e < maxE; e++ {
 		for f := uint8(0); f < e; f++ {
 			exceptions := uint64(0)
-			for i := uint64(0); i < n; i += step {
-				if isException(arr.ValueAt(i), e, f) {
+			for _, v := range samples {
+				if isException(v, e, f) {
 					exceptions++
 				}
 			}
@@ -398,15 +405,22 @@ func buildALPArray[T Float](arr array.ArrayCore[T], ctx planContext) (EncodedArr
 
 func buildALPArrayTyped[T Float, I SignedInteger](arr array.ArrayCore[T], ctx planContext, funcs alpFuncs[T, I]) (EncodedArray[T], error) {
 	childCtx := alpChildContext(ctx)
-	e, f := findBestExponents(arr, funcs.maxE, funcs.isException)
 	n := arr.Length()
+
+	// Materialize once to avoid per-element interface dispatch across
+	// exponent search, exception detection, and downstream encoding.
+	vals := make([]T, n)
+	for i := range n {
+		vals[i] = arr.ValueAt(i)
+	}
+
+	e, f := findBestExponents(array.NewPrimitivesUnsafe(vals), funcs.maxE, funcs.isException)
 
 	patchIdx := make([]uint64, 0)
 	patchVals := make([]T, 0)
-	for i := uint64(0); i < n; i++ {
-		value := arr.ValueAt(i)
+	for i, value := range vals {
 		if funcs.isException(value, e, f) {
-			patchIdx = append(patchIdx, i)
+			patchIdx = append(patchIdx, uint64(i))
 			patchVals = append(patchVals, value)
 		}
 	}
@@ -418,7 +432,7 @@ func buildALPArrayTyped[T Float, I SignedInteger](arr array.ArrayCore[T], ctx pl
 		length:  n,
 		expE:    e,
 		expF:    f,
-		valueAt: arr.ValueAt,
+		valueAt: func(i uint64) T { return vals[i] },
 		encode:  funcs.encode,
 	}, childCtx)
 	if err != nil {
