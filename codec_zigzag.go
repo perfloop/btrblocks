@@ -45,17 +45,9 @@ func (a zigzagEncodedArray[T, U]) WriteTo(w io.Writer) (int64, error) {
 	})
 }
 
-func zigzagEncode64(n int64) uint64 {
-	return uint64((n << 1) ^ (n >> 63))
-}
-
-func zigzagDecode64(z uint64) int64 {
-	return int64(z>>1) ^ -int64(z&1)
-}
-
-func zigzagEncodeValue[T SignedInteger](value T) uint64 {
-	return zigzagEncode64(int64(value))
-}
+func zigzagEncode64(n int64) uint64                     { return uint64((n << 1) ^ (n >> 63)) }
+func zigzagDecode64(z uint64) int64                     { return int64(z>>1) ^ -int64(z&1) }
+func zigzagEncodeValue[T SignedInteger](value T) uint64 { return zigzagEncode64(int64(value)) }
 
 func zigzagMaxEncoded[T SignedInteger](length uint64, valueAt func(uint64) T) uint64 {
 	var max uint64
