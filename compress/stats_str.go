@@ -41,12 +41,17 @@ func computeStringStatsForPlanner(arr array.Array[string], collectFrequencies bo
 		v := arr.ValueAt(i)
 		totalBytes += uint64(len(v))
 		if collectFrequencies && !distinctOverflow {
-			count := distinct[v] + 1
-			distinct[v] = count
-			mostFrequent = max(mostFrequent, count)
-			if len(distinct) > maxRetainedStringDistinctValues {
+			if count, exists := distinct[v]; exists {
+				count++
+				distinct[v] = count
+				mostFrequent = max(mostFrequent, count)
+			} else if len(distinct) >= maxRetainedStringDistinctValues || uint64(len(distinct)) >= n/2 {
+				// A new key would make Dict ineligible and preclude Sparse dominance.
+				// Keep the overflow sentinel while continuing the other full-row stats.
 				distinct = nil
 				distinctOverflow = true
+			} else {
+				distinct[v] = 1
 			}
 		}
 
