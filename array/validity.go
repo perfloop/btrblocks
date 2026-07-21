@@ -19,6 +19,21 @@ type Validity struct {
 	nullCount uint64
 }
 
+// ErrValidityBitmapLimit reports that ValidityBitmap would exceed its
+// configured allocation limit.
+var ErrValidityBitmapLimit = errors.New("array: validity bitmap allocation limit exceeded")
+
+// DefaultMaxValidityBitmapBytes is the default allocation limit used by
+// ValidityBitmap.
+const DefaultMaxValidityBitmapBytes uint64 = 64 << 20
+
+// ValidityBitmapOptions bounds allocation performed by ValidityBitmap.
+// MaxBytes limits a newly materialized bitmap. Zero selects
+// DefaultMaxValidityBitmapBytes.
+type ValidityBitmapOptions struct {
+	MaxBytes uint64
+}
+
 // AllValid returns validity metadata for an array without null values.
 func AllValid(length uint64) Validity {
 	return Validity{length: length}
@@ -80,10 +95,10 @@ func NewValidityUnsafe(length uint64, bitmap []byte) (Validity, error) {
 	}, nil
 }
 
-// ValidityFromNulls converts a bool mask using true=null semantics. A nil mask
-// represents an all-valid array of length.
+// ValidityFromNulls converts a bool mask using true=null semantics. An empty
+// mask represents an all-valid array of length.
 func ValidityFromNulls(length uint64, nulls []bool) (Validity, error) {
-	if nulls == nil {
+	if len(nulls) == 0 {
 		return AllValid(length), nil
 	}
 	if uint64(len(nulls)) != length {
@@ -96,6 +111,51 @@ func ValidityFromNulls(length uint64, nulls []bool) (Validity, error) {
 		}
 	}
 	return NewValidityUnsafe(length, bitmap)
+}
+
+// ValidityBitmap returns the wire bitmap and null count for a source range.
+// The returned bytes are always read-only and may alias source-owned storage;
+// callers must not modify them. A whole-array request may borrow an available
+// bitmap, while other requests materialize a rebased bitmap.
+func ValidityBitmap(source interface {
+	Length() uint64
+	IsValid(uint64) bool
+}, start, length uint64, opts ...ValidityBitmapOptions) ([]byte, uint64, error) {
+	if source == nil {
+		return nil, 0, errors.New("array: nil validity source")
+	}
+	sourceLength := source.Length()
+	if start > sourceLength || length > sourceLength-start {
+		return nil, 0, fmt.Errorf("array: validity range start=%d length=%d outside source length %d", start, length, sourceLength)
+	}
+	byteLength := validityByteLength(length)
+	if byteLength > platformSliceLimit() {
+		return nil, 0, errors.New("array: validity bitmap exceeds platform limit")
+	}
+	if start == 0 && length == sourceLength {
+		if provider, ok := source.(interface{ Validity() Validity }); ok {
+			validity := provider.Validity()
+			if validity.Length() == length && validity.NullCount() <= length && uint64(len(validity.Bytes())) == byteLength && validity.Bytes() != nil {
+				return validity.Bytes(), validity.NullCount(), nil
+			}
+		}
+	}
+	maxBytes := DefaultMaxValidityBitmapBytes
+	if len(opts) != 0 && opts[0].MaxBytes != 0 {
+		maxBytes = opts[0].MaxBytes
+	}
+	if byteLength > maxBytes {
+		return nil, 0, fmt.Errorf("%w: requires %d bytes, limit %d", ErrValidityBitmapLimit, byteLength, maxBytes)
+	}
+	bitmap := make([]byte, byteLength)
+	validCount := uint64(0)
+	for i := range length {
+		if source.IsValid(start + i) {
+			bitmap[i>>3] |= 1 << (i & 7)
+			validCount++
+		}
+	}
+	return bitmap, length - validCount, nil
 }
 
 // Length returns the number of rows described by v.

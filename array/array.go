@@ -36,6 +36,7 @@ type Array[T Integer | Float | String] interface {
 	PType() PType
 }
 
+// ValidateSliceBounds validates the half-open range [start, end) against length.
 func ValidateSliceBounds(length, start, end uint64) error {
 	if start > end {
 		return fmt.Errorf("array: slice start = %d, want <= %d", start, end)
@@ -76,49 +77,6 @@ func MaterializeStringSlice(src ArrayCore[string], start, end uint64) (Array[str
 		return nil, err
 	}
 	return NewStringsWithValidity(values, validity)
-}
-
-// NewArrayWithValidity builds the family-appropriate array for values —
-// Primitives for numeric element types, Strings for string — pairing them
-// with validity. It takes ownership of values; callers must not modify values
-// after the call.
-func NewArrayWithValidity[T Integer | Float | String](values []T, validity Validity) (Array[T], error) {
-	switch values := any(values).(type) {
-	case []int8:
-		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
-	case []int16:
-		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
-	case []int32:
-		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
-	case []int64:
-		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
-	case []uint8:
-		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
-	case []uint16:
-		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
-	case []uint32:
-		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
-	case []uint64:
-		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
-	case []float32:
-		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
-	case []float64:
-		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
-	case []string:
-		return asArray[T](NewStringsWithValidity(values, validity))
-	default:
-		return nil, fmt.Errorf("array: unsupported element type %T", values)
-	}
-}
-
-// asArray adapts a concretely-typed constructor result to the generic return
-// type. Each NewArrayWithValidity arm matches values to the concrete []U
-// first, so the assertion back to Array[T] cannot fail.
-func asArray[T, U Integer | Float | String](arr Array[U], err error) (Array[T], error) {
-	if err != nil {
-		return nil, err
-	}
-	return any(arr).(Array[T]), nil
 }
 
 func materializeValiditySlice(src interface {

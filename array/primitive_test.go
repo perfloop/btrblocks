@@ -18,6 +18,33 @@ func TestNewPrimitivesCopiesInput(t *testing.T) {
 	require.Equal(t, uint32(1), arr.ValueAt(0))
 }
 
+func TestNewPrimitivesWithNulls(t *testing.T) {
+	values := []int64{7, 0, 9}
+	arr, err := NewPrimitivesWithNulls(values, []bool{false, true, false})
+	if err != nil {
+		t.Fatalf("NewPrimitivesWithNulls: %v", err)
+	}
+	if got := arr.NullCount(); got != 1 {
+		t.Fatalf("NullCount = %d, want 1", got)
+	}
+	if !arr.IsValid(0) {
+		t.Fatal("IsValid(0) = false, want true")
+	}
+	if arr.IsValid(1) {
+		t.Fatal("IsValid(1) = true, want false")
+	}
+
+	values[0] = 99
+	if got := arr.ValueAt(0); got != 7 {
+		t.Fatalf("ValueAt(0) = %d, want 7; constructor must copy its input", got)
+	}
+
+	_, err = NewPrimitivesWithNulls([]int64{1, 2}, []bool{false})
+	if err == nil {
+		t.Fatal("NewPrimitivesWithNulls accepted a mismatched null mask")
+	}
+}
+
 func TestNewPrimitivesUnsafeSharesInput(t *testing.T) {
 	values := []uint32{1, 2, 3}
 
@@ -246,7 +273,7 @@ func FuzzReadPrimitives(f *testing.F) {
 	var buf bytes.Buffer
 	_, _ = arr.WriteTo(&buf)
 	f.Add(buf.Bytes())
-	f.Fuzz(func(t *testing.T, data []byte) {
+	f.Fuzz(func(_ *testing.T, data []byte) {
 		opts := ReadOptions{MaxLength: 1 << 20, MaxBytes: 1 << 24}
 		_, _ = readPrimitiveFromBytes[int32](data, opts)
 		// Must not panic; error is acceptable for invalid/corrupt input.

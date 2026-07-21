@@ -3,9 +3,8 @@ package array
 import "unsafe"
 
 // PType identifies the physical element type of an array (int8, uint32, string, etc.).
-// PType values are persisted to disk (array headers, logical value tags,
-// Dynamic shared-overflow entries); the enum is append-only: never reorder,
-// insert, or remove entries.
+// PType values are persisted in array headers. They may change with the draft
+// format before v1.0.0; the first release makes the enum append-only.
 type PType uint8
 
 const (

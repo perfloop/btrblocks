@@ -37,6 +37,18 @@ func NewPrimitives[T PrimitiveType](values []T) *Primitives[T] {
 	return NewPrimitivesUnsafe(data)
 }
 
+// NewPrimitivesWithNulls builds a primitive array from a copy of values. A
+// true entry in nulls marks the corresponding value as null. An empty nulls
+// slice means all values are valid; otherwise its length must equal
+// len(values).
+func NewPrimitivesWithNulls[T PrimitiveType](values []T, nulls []bool) (*Primitives[T], error) {
+	validity, err := ValidityFromNulls(uint64(len(values)), nulls)
+	if err != nil {
+		return nil, fmt.Errorf("array: primitive nulls: %w", err)
+	}
+	return NewPrimitivesWithValidity(values, validity)
+}
+
 // NewPrimitivesUnsafe builds a Primitives array that uses the given slice as its backing storage. The caller must not modify the slice after construction.
 func NewPrimitivesUnsafe[T PrimitiveType](data []T) *Primitives[T] {
 	pType := PTypeOfPrimitive[T]()

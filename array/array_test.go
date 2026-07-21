@@ -296,7 +296,7 @@ func FuzzArrayEncodedBytesAllTypes(f *testing.F) {
 	f.Add([]byte(nil))
 	f.Add(make([]byte, HeaderSize))
 
-	f.Fuzz(func(t *testing.T, data []byte) {
+	f.Fuzz(func(_ *testing.T, data []byte) {
 		opts := ReadOptions{MaxLength: 1 << 10, MaxBytes: 1 << 20}
 		_, _ = ReadPrimitiveFromBuf[int8](&BufReader{Buf: data}, opts)
 		_, _ = ReadPrimitiveFromBuf[int16](&BufReader{Buf: data}, opts)
@@ -319,7 +319,7 @@ func FuzzArrayMalformedHeaders(f *testing.F) {
 	f.Add(encoded.Bytes())
 	f.Add(make([]byte, HeaderSize+8))
 
-	f.Fuzz(func(t *testing.T, data []byte) {
+	f.Fuzz(func(_ *testing.T, data []byte) {
 		if len(data) < HeaderSize {
 			return
 		}
@@ -335,7 +335,7 @@ func FuzzArrayMalformedHeaders(f *testing.F) {
 func FuzzArrayReadLimits(f *testing.F) {
 	f.Add([]byte(nil), uint64(0), uint64(0))
 	f.Add(make([]byte, HeaderSize), uint64(3), uint64(16))
-	f.Fuzz(func(t *testing.T, data []byte, maxLength, maxBytes uint64) {
+	f.Fuzz(func(_ *testing.T, data []byte, maxLength, maxBytes uint64) {
 		opts := ReadOptions{
 			MaxLength: maxLength % 1025,
 			MaxBytes:  maxBytes % (1 << 20),
@@ -428,7 +428,7 @@ func equalFuzzValues[T Integer | Float | String](want, got []T) bool {
 		return false
 	}
 	for i := range want {
-		if want[i] != got[i] && !(want[i] != want[i] && got[i] != got[i]) {
+		if want[i] != got[i] && (want[i] == want[i] || got[i] == got[i]) {
 			return false
 		}
 	}

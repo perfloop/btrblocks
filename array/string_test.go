@@ -33,6 +33,38 @@ func TestNewStringsChoosesOffsetWidth(t *testing.T) {
 	})
 }
 
+func TestNewStringsWithNulls(t *testing.T) {
+	arr, err := NewStringsWithNulls([]string{"go", "", "lang"}, []bool{false, true, false})
+	if err != nil {
+		t.Fatalf("NewStringsWithNulls: %v", err)
+	}
+	if got := arr.NullCount(); got != 1 {
+		t.Fatalf("NullCount = %d, want 1", got)
+	}
+	if !arr.IsValid(0) {
+		t.Fatal("IsValid(0) = false, want true")
+	}
+	if arr.IsValid(1) {
+		t.Fatal("IsValid(1) = true, want false")
+	}
+
+	allValid, err := NewStringsWithNulls([]string{"go", "lang"}, []bool{})
+	if err != nil {
+		t.Fatalf("NewStringsWithNulls with empty mask: %v", err)
+	}
+	if got := allValid.NullCount(); got != 0 {
+		t.Fatalf("empty-mask NullCount = %d, want 0", got)
+	}
+	if !allValid.IsValid(0) || !allValid.IsValid(1) {
+		t.Fatal("empty null mask produced an invalid row")
+	}
+
+	_, err = NewStringsWithNulls([]string{"go", "lang"}, []bool{false})
+	if err == nil {
+		t.Fatal("NewStringsWithNulls accepted a mismatched null mask")
+	}
+}
+
 func TestTotalStringBytesRejectsFormatLimit(t *testing.T) {
 	require.NoError(t, validateStringDataSize(math.MaxUint32))
 
@@ -271,7 +303,7 @@ func FuzzReadStrings(f *testing.F) {
 	var buf bytes.Buffer
 	_, _ = arr.WriteTo(&buf)
 	f.Add(buf.Bytes())
-	f.Fuzz(func(t *testing.T, data []byte) {
+	f.Fuzz(func(_ *testing.T, data []byte) {
 		opts := ReadOptions{MaxLength: 1 << 20, MaxBytes: 1 << 24}
 		_, _ = readStringsFromBytes(data, opts)
 		// Must not panic; error is acceptable for invalid/corrupt input.

@@ -52,7 +52,7 @@ func FuzzPTypeString(f *testing.F) {
 	for _, p := range []PType{PTypeUnknown, PTypeInt8, PTypeUint64, PTypeFloat32, PTypeString, 255} {
 		f.Add(uint8(p))
 	}
-	f.Fuzz(func(t *testing.T, raw uint8) {
+	f.Fuzz(func(_ *testing.T, raw uint8) {
 		p := PType(raw)
 		_ = p.String()
 		_ = p.IsInteger()

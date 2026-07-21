@@ -31,6 +31,17 @@ func NewStrings(values []string) (Array[string], error) {
 	return NewStringsWithValidity(values, AllValid(uint64(len(values))))
 }
 
+// NewStringsWithNulls builds a string array from values. A true entry in
+// nulls marks the corresponding value as null. An empty nulls slice means all
+// values are valid; otherwise its length must equal len(values).
+func NewStringsWithNulls(values []string, nulls []bool) (Array[string], error) {
+	validity, err := ValidityFromNulls(uint64(len(values)), nulls)
+	if err != nil {
+		return nil, fmt.Errorf("array: string nulls: %w", err)
+	}
+	return NewStringsWithValidity(values, validity)
+}
+
 // NewStringsWithValidity copies values into a string array with native,
 // immutable validity metadata.
 func NewStringsWithValidity(values []string, validity Validity) (Array[string], error) {

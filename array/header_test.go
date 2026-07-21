@@ -3,6 +3,7 @@ package array
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"io"
 	"testing"
 
@@ -48,6 +49,27 @@ func TestHeaderWriteTo(t *testing.T) {
 	require.Equal(t, header.Flags, binary.LittleEndian.Uint16(got[2:4]))
 	require.Equal(t, header.Length, binary.LittleEndian.Uint64(got[4:12]))
 	require.Equal(t, header.NumBytes, binary.LittleEndian.Uint64(got[12:20]))
+}
+
+func TestV1HeaderGoldenBytes(t *testing.T) {
+	header := Header{
+		Version:  FormatVersion,
+		PType:    PTypeUint32,
+		Flags:    FlagValidity,
+		Length:   0x0102030405060708,
+		NumBytes: 0x1112131415161718,
+	}
+	want, err := hex.DecodeString("0107010008070605040302011817161514131211")
+	if err != nil {
+		t.Fatalf("decode golden header: %v", err)
+	}
+	var got bytes.Buffer
+	if _, err := header.WriteTo(&got); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	if !bytes.Equal(got.Bytes(), want) {
+		t.Fatalf("v1 header = %x, want %x", got.Bytes(), want)
+	}
 }
 
 func BenchmarkHeaderWriteTo(b *testing.B) {
@@ -101,7 +123,7 @@ func FuzzReadHeader(f *testing.F) {
 	binary.LittleEndian.PutUint64(valid[4:12], 100)
 	binary.LittleEndian.PutUint64(valid[12:20], 400)
 	f.Add(valid)
-	f.Fuzz(func(t *testing.T, data []byte) {
+	f.Fuzz(func(_ *testing.T, data []byte) {
 		_, _ = readHeaderFromBuf(&BufReader{Buf: data})
 		// Must not panic; error is acceptable for invalid/corrupt input.
 	})

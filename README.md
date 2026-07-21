@@ -11,9 +11,13 @@ arrays pay zero bytes for it.
 
 ## Packages
 
-- `github.com/axiomhq/btrblocks` — the planner and encodings: FoR+bitpacking,
-  delta, zigzag, dictionary, run-end, sparse, sequence, constant, ALP and
-  ALP-RD for floats, FSST for strings, nullable, and raw fallback.
+- `github.com/axiomhq/btrblocks` — the convenience API for selecting,
+  loading, and decompressing encodings.
+- `github.com/axiomhq/btrblocks/compress` — sampling, statistics, estimates,
+  exclusions, and recursive codec selection.
+- `github.com/axiomhq/btrblocks/codec` — typed wire-format nodes and low-level
+  builders: FoR+bitpacking, delta, zigzag, dictionary, run-end, sparse,
+  sequence, constant, ALP/ALP-RD, FSST, nullable, and raw.
 - `github.com/axiomhq/btrblocks/array` — the physical layer: fixed-width
   primitive arrays, string arrays, validity bitmaps, and their wire format.
 
@@ -44,11 +48,14 @@ out := make([]int64, decoded.Length())
 err = decoded.DecompressInto(out)
 ```
 
-Nullable input pairs values with a validity bitmap:
+Nulls are passed alongside values; `true` marks a null row and an empty mask
+means that every row is valid:
 
 ```go
-validity, err := array.ValidityFromNulls(4, []bool{false, true, false, false})
-arr, err := array.NewPrimitivesWithValidity([]int64{7, 0, 9, 11}, validity)
+arr, err := array.NewPrimitivesWithNulls(
+    []int64{7, 0, 9, 11},
+    []bool{false, true, false, false},
+)
 encoded, err := btrblocks.SignedArray(arr, btrblocks.Options{})
 // encoded.IsValid(1) == false
 ```
@@ -57,13 +64,25 @@ encoded, err := btrblocks.SignedArray(arr, btrblocks.Options{})
 `SignedArray`; `LoadUnsigned`, `LoadFloat32`, `LoadFloat64`, and
 `LoadStrings` mirror `LoadSigned`. Loading is validating: untrusted bytes are
 rejected with errors, never panics, and `ReadOptions` bounds decode-time
-allocations.
+allocations. Compression similarly limits individual temporary
+materializations to 64 MiB by default; raise that limit explicitly with
+`Options{}.WithMaxBuildBytes(n)` for larger columns.
+
+## Production support
+
+The production targets are Linux on amd64 and arm64. Both run the full test
+suite in CI; amd64 additionally runs the race detector and scheduled fuzzing.
+The zero-copy physical-array implementation requires a little-endian target,
+which is enforced by its build constraints. Persisted or network-provided data
+should always be loaded with explicit `ReadOptions` chosen for the workload.
 
 ## Wire format
 
-All headers carry format version 1. The format is not yet frozen — treat it
-as unstable until a v1.0.0 tag exists. Do not store bytes you cannot afford
-to rewrite.
+Wire format version 1 is a pre-release draft. Until the first `v1.0.0` tag,
+layouts and enum values may change and stored bytes may need to be rewritten.
+The first release freezes its exact version 1 format; later incompatible
+writers must use a new version. See [FORMAT.md](FORMAT.md) for the byte-level
+draft and [RELEASING.md](RELEASING.md) for the release gates.
 
 ## Related projects
 

@@ -10,7 +10,9 @@ import (
 const HeaderSize = 20
 
 const (
-	FormatVersion        = 1 // Current raw-array wire version.
+	// FormatVersion is the current raw-array wire version emitted by writers.
+	// Version 1 remains a pre-release draft until the first v1.0.0 tag.
+	FormatVersion        = 1
 	FlagValidity  uint16 = 1 // Marks an array body prefixed by a validity bitmap.
 )
 
@@ -27,7 +29,8 @@ const (
 //
 // This format intentionally omits magic bytes. Array streams are only entered
 // through array/encoded-array read paths that already know they are at an array
-// boundary, so version and flags carry the format-evolution contract.
+// boundary, so version and flags carry the format-evolution contract. See
+// FORMAT.md for the versioning and compatibility policy.
 type Header struct {
 	Version  uint8  // Format version; currently 1.
 	PType    PType  // Element type (int8, uint32, string, etc.).

@@ -2,9 +2,19 @@ package array
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 )
+
+type mismatchedValidityProvider struct {
+	length   uint64
+	validity Validity
+}
+
+func (s mismatchedValidityProvider) Length() uint64      { return s.length }
+func (s mismatchedValidityProvider) IsValid(uint64) bool { return true }
+func (s mismatchedValidityProvider) Validity() Validity  { return s.validity }
 
 func TestValidityFromNullsAndSlice(t *testing.T) {
 	validity, err := ValidityFromNulls(10, []bool{false, true, false, false, true, false, false, true, false, false})
@@ -31,6 +41,62 @@ func TestValidityFromNullsAndSlice(t *testing.T) {
 		if got := sliced.IsValid(uint64(i)); got != want {
 			t.Fatalf("sliced IsValid(%d) = %t, want %t", i, got, want)
 		}
+	}
+}
+
+func TestValidityFromEmptyNullsMeansAllValid(t *testing.T) {
+	validity, err := ValidityFromNulls(3, []bool{})
+	if err != nil {
+		t.Fatalf("ValidityFromNulls: %v", err)
+	}
+	if got := validity.NullCount(); got != 0 {
+		t.Fatalf("NullCount = %d, want 0", got)
+	}
+	for i := range validity.Length() {
+		if !validity.IsValid(i) {
+			t.Fatalf("IsValid(%d) = false, want true", i)
+		}
+	}
+}
+
+func TestValidityBitmapRejectsInvalidRange(t *testing.T) {
+	validity := AllValid(4)
+	if _, _, err := ValidityBitmap(validity, 3, 2); err == nil {
+		t.Fatal("ValidityBitmap accepted an out-of-range request")
+	}
+}
+
+func TestValidityBitmapHonorsAllocationBudget(t *testing.T) {
+	source := AllValid(16)
+	if _, _, err := ValidityBitmap(source, 0, 16, ValidityBitmapOptions{MaxBytes: 1}); !errors.Is(err, ErrValidityBitmapLimit) {
+		t.Fatalf("small-budget error = %v, want %v", err, ErrValidityBitmapLimit)
+	}
+	bitmap, nullCount, err := ValidityBitmap(source, 0, 16, ValidityBitmapOptions{MaxBytes: 2})
+	if err != nil {
+		t.Fatalf("sufficient-budget error = %v", err)
+	}
+	if len(bitmap) != 2 || nullCount != 0 {
+		t.Fatalf("bitmap length = %d, null count = %d; want 2, 0", len(bitmap), nullCount)
+	}
+
+	hostile := AllValid((DefaultMaxValidityBitmapBytes + 1) * 8)
+	if _, _, err := ValidityBitmap(hostile, 0, hostile.Length()); !errors.Is(err, ErrValidityBitmapLimit) {
+		t.Fatalf("default-budget error = %v, want %v", err, ErrValidityBitmapLimit)
+	}
+}
+
+func TestValidityBitmapRejectsMismatchedBorrowedBitmap(t *testing.T) {
+	validity, err := NewValidityUnsafe(8, []byte{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := mismatchedValidityProvider{length: 16, validity: validity}
+	bitmap, nullCount, err := ValidityBitmap(source, 0, source.Length())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bitmap) != 2 || bitmap[0] != 0xff || bitmap[1] != 0xff || nullCount != 0 {
+		t.Fatalf("bitmap = %x, null count = %d; want ffff, 0", bitmap, nullCount)
 	}
 }
 
