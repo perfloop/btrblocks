@@ -1,6 +1,11 @@
 package array
 
+import "unsafe"
+
 // PType identifies the physical element type of an array (int8, uint32, string, etc.).
+// PType values are persisted to disk (array headers, logical value tags,
+// Dynamic shared-overflow entries); the enum is append-only: never reorder,
+// insert, or remove entries.
 type PType uint8
 
 const (
@@ -110,33 +115,63 @@ type String interface {
 	~string
 }
 
-// PTypeForType returns the PType for the given type parameter.
-func PTypeForType[T Integer | Float | String]() PType {
-	var t T
-	switch any(t).(type) {
-	case int8:
-		return PTypeInt8
-	case int16:
-		return PTypeInt16
-	case int32:
-		return PTypeInt32
-	case int64:
-		return PTypeInt64
-	case uint8:
-		return PTypeUint8
-	case uint16:
-		return PTypeUint16
-	case uint32:
-		return PTypeUint32
-	case uint64:
-		return PTypeUint64
-	case float32:
-		return PTypeFloat32
-	case float64:
-		return PTypeFloat64
-	case string:
-		return PTypeString
-	default:
-		return PTypeUnknown
+// CmpIntegers reports whether a and b are equal integer values.
+func CmpIntegers[T Integer](a, b T) bool { return a == b }
+
+// CmpStrings reports whether a and b are equal string values.
+func CmpStrings[T String](a, b T) bool { return a == b }
+
+// CmpFloatBits reports whether a and b have identical IEEE-754 bit patterns,
+// so NaN and signed-zero distinctions survive bit-exact planning decisions.
+func CmpFloatBits[T Float](a, b T) bool { return FloatBits(a) == FloatBits(b) }
+
+// FloatBits returns the IEEE-754 bit pattern of value, for bit-exact float
+// hashing and comparison.
+func FloatBits[T Float](value T) uint64 {
+	switch unsafe.Sizeof(value) {
+	case 4:
+		return uint64(*(*uint32)(unsafe.Pointer(&value)))
+	case 8:
+		return *(*uint64)(unsafe.Pointer(&value))
 	}
+	panic("array: unsupported float width")
+}
+
+// PTypeOfPrimitive returns the physical type of a numeric T without erasing T
+// into an interface. Generic arithmetic distinguishes float, signed integer,
+// and unsigned integer families; unsafe.Sizeof selects the width.
+func PTypeOfPrimitive[T PrimitiveType]() PType {
+	var minusOne T
+	minusOne--
+	isFloat := T(1)/T(2) != T(0)
+	isSigned := minusOne < T(0)
+	switch unsafe.Sizeof(T(0)) {
+	case 1:
+		if isSigned {
+			return PTypeInt8
+		}
+		return PTypeUint8
+	case 2:
+		if isSigned {
+			return PTypeInt16
+		}
+		return PTypeUint16
+	case 4:
+		if isFloat {
+			return PTypeFloat32
+		}
+		if isSigned {
+			return PTypeInt32
+		}
+		return PTypeUint32
+	case 8:
+		if isFloat {
+			return PTypeFloat64
+		}
+		if isSigned {
+			return PTypeInt64
+		}
+		return PTypeUint64
+	}
+	return PTypeUnknown
 }

@@ -7,34 +7,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSampleArrayBuildsChunkedSlices(t *testing.T) {
+func TestSampleArrayBuildsRangedView(t *testing.T) {
 	values := make([]uint32, 4096)
 	for i := range values {
 		values[i] = uint32(i)
 	}
 
 	sampled := sampleArray(array.NewPrimitivesUnsafe(values))
-	chunked, ok := sampled.(*sampledArray[uint32])
+	ranged, ok := sampled.(*sampledArray[uint32])
 	require.True(t, ok)
-	require.Equal(t, uint64(sampleWindow)*sampleCountApproxOnePercent(uint64(len(values))), chunked.Length())
-	require.Greater(t, len(chunked.chunks), 1)
+	require.Equal(t, uint64(sampleWindow)*sampleCountApproxOnePercent(uint64(len(values))), ranged.Length())
+	require.True(t, len(ranged.ranges) > 1)
 
-	// Each chunk is a contiguous slice of the source array.
-	for _, chunk := range chunked.chunks {
-		for i := uint64(1); i < chunk.Length(); i++ {
-			require.Equal(t, chunk.ValueAt(i-1)+1, chunk.ValueAt(i))
+	// Each selected range is contiguous in the source array.
+	for _, selected := range ranged.ranges {
+		for i := selected.start; i+1 < selected.end; i++ {
+			require.Equal(t, ranged.source.ValueAt(i)+1, ranged.source.ValueAt(i+1))
 		}
 	}
 
-	// ValueAt works across chunk boundaries.
-	for i := uint64(0); i < chunked.Length(); i++ {
-		_ = chunked.ValueAt(i) // must not panic
+	// ValueAt works across range boundaries.
+	for i := range ranged.Length() {
+		_ = ranged.ValueAt(i) // must not panic
 	}
 
 	// rawBinarySize matches a materialized array's BinarySize.
-	materialized, err := materializeSlice[uint32](chunked, 0, chunked.Length())
+	materialized, err := array.MaterializePrimitiveSlice[uint32](ranged, 0, ranged.Length())
 	require.NoError(t, err)
-	require.Equal(t, materialized.BinarySize(), rawBinarySize[uint32](chunked))
+	require.Equal(t, materialized.BinarySize(), primitiveRawBinarySize(ranged))
 }
 
 func TestSampleArrayBinarySizeMatchesMaterializedStrings(t *testing.T) {
@@ -51,11 +51,11 @@ func TestSampleArrayBinarySizeMatchesMaterializedStrings(t *testing.T) {
 		values[i] = "charlie-charlie-charlie"
 	}
 
-	sampled := sampleArray(array.NewStrings(values))
-	chunked, ok := sampled.(*sampledArray[string])
+	sampled := sampleArray(mustStrings(t, values))
+	ranged, ok := sampled.(*sampledArray[string])
 	require.True(t, ok)
 
-	materialized, err := materializeSlice[string](chunked, 0, chunked.Length())
+	materialized, err := array.MaterializeStringSlice(ranged, 0, ranged.Length())
 	require.NoError(t, err)
-	require.Equal(t, materialized.BinarySize(), rawBinarySize[string](chunked))
+	require.Equal(t, materialized.BinarySize(), stringRawBinarySize(ranged))
 }

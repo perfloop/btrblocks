@@ -1,53 +1,69 @@
 package btrblocks
 
-import "github.com/axiomhq/btrblocks/array"
+import (
+	"github.com/axiomhq/btrblocks/array"
+)
 
-// stringCompressor registers the dense string schemes and stats policy.
+// stringCompressor owns the string schemes and stats policy.
 type stringCompressor struct{}
 
-func (stringCompressor) ComputeStats(arr array.Array[string]) stringStats {
-	return computeStringStats(arr)
+func (c stringCompressor) ComputeStats(arr array.Array[string], ctx planContext) stringStats {
+	return computeStringStatsForPlanner(arr, shouldCollectFrequencies(arr, ctx, c))
 }
 
-func (stringCompressor) DefaultScheme() scheme[string, stringStats] {
-	return rawScheme[string, stringStats]()
+func (stringCompressor) Schemes(stringStats) schemeSet[string, stringStats] {
+	return stringSchemes()
 }
 
-func (stringCompressor) Schemes(stats stringStats) []scheme[string, stringStats] {
-	return []scheme[string, stringStats]{
-		registeredScheme[string, stringStats]{
-			kind: CodecTypeConst,
-			estimate: func(stats stringStats, ctx planContext) (float64, bool) {
-				return estimateConst(stats.Source(), ctx, stats.base.isConst)
+func stringSchemes() schemeSet[string, stringStats] {
+	return schemeSet[string, stringStats]{
+		count: 5,
+		values: [maxSchemeCount]scheme[string, stringStats]{
+			{
+				kind:  CodecTypeConst,
+				build: buildStringConst,
+				estimate: func(stats stringStats, ctx planContext) schemeEstimate {
+					return estimateConst(stats.Source(), ctx, stats.isConst)
+				},
 			},
-			build: func(arr array.ArrayCore[string], _ planContext) (EncodedArray[string], error) {
-				return newConstStringArray(arr)
+			{
+				kind:  CodecTypeDict,
+				build: buildStringDict,
+				estimate: func(stats stringStats, ctx planContext) schemeEstimate {
+					return estimateStringDict(stats, ctx, stats.estimatedDistinctCount)
+				},
 			},
-		},
-		registeredScheme[string, stringStats]{
-			kind: CodecTypeDict,
-			estimate: func(stats stringStats, ctx planContext) (float64, bool) {
-				return estimateStringDict(stats, ctx, stats.estimatedDistinctCount)
+			{
+				kind: CodecTypeRunEnd,
+				build: func(arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
+					return buildStringRunEnd(arr, ctx)
+				},
+				estimate: func(stats stringStats, ctx planContext) schemeEstimate {
+					return estimateRunEnd[string, stringStats](stats, ctx, stats.avgRunLength, stringCanSample(stats.Source(), ctx))
+				},
 			},
-			build: buildStringDictArray[string],
-		},
-		registeredScheme[string, stringStats]{
-			kind: CodecTypeRunEnd,
-			estimate: func(stats stringStats, ctx planContext) (float64, bool) {
-				return estimateRunEnd[string, stringStats](stats, ctx, stats.base.avgRunLength, cmpStrings[string])
+			{
+				kind:     CodecTypeFSST,
+				build:    buildFSST,
+				estimate: estimateFSST,
 			},
-			build: func(arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
-				return buildRunEndArray(arr, ctx, cmpStrings[string])
+			{
+				kind: CodecTypeSparse,
+				build: func(arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
+					return buildStringSparse(arr, ctx)
+				},
+				estimate: func(stats stringStats, ctx planContext) schemeEstimate {
+					return estimateSparseGeneric[string](stats, ctx, stringCanSample(stats.Source(), ctx))
+				},
 			},
-		},
-		registeredScheme[string, stringStats]{
-			kind:     CodecTypeFSST,
-			estimate: estimateFSST,
-			build:    buildFSSTArray,
 		},
 	}
 }
 
-func (stringCompressor) IsExcluded(ctx planContext, kind CodeType) bool {
+func (stringCompressor) IsExcluded(ctx planContext, kind CodecType) bool {
 	return ctx.excludesString(kind)
+}
+
+func (stringCompressor) RawEncodedSize(arr array.ArrayCore[string]) uint64 {
+	return stringRawEncodedSize(arr)
 }

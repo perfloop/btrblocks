@@ -47,14 +47,14 @@ func TestPrimitiveWriteToIncludesHeaderAndBody(t *testing.T) {
 	var buf bytes.Buffer
 	n, err := arr.WriteTo(&buf)
 	require.NoError(t, err)
-	require.EqualValues(t, headerSize+len(wantBody), n)
+	require.Equal(t, int64(headerSize+len(wantBody)), n)
 
 	got := buf.Bytes()
 	assertHeaderBytes(t, got[:headerSize], Header{
-		Version: 1,
-		PType:   PTypeUint16,
-		Length:  uint64(len(values)),
-		NumBytes:  uint64(len(wantBody)),
+		Version:  FormatVersion,
+		PType:    PTypeUint16,
+		Length:   uint64(len(values)),
+		NumBytes: uint64(len(wantBody)),
 	})
 	require.Equal(t, wantBody, got[headerSize:])
 }
@@ -80,8 +80,8 @@ func TestPrimitivesLargeCorpus(t *testing.T) {
 	}
 
 	arr := NewPrimitives(values)
-	require.EqualValues(t, largeCorpusSize, arr.Length())
-	require.EqualValues(t, headerSize+largeCorpusSize*4, arr.BinarySize())
+	require.Equal(t, uint64(largeCorpusSize), arr.Length())
+	require.Equal(t, uint64(headerSize+largeCorpusSize*4), arr.BinarySize())
 
 	for _, idx := range []uint64{0, 1, largeCorpusSize / 2, largeCorpusSize - 1} {
 		require.Equal(t, values[idx], arr.ValueAt(idx), "ValueAt(%d)", idx)
@@ -89,7 +89,7 @@ func TestPrimitivesLargeCorpus(t *testing.T) {
 
 	n, err := arr.WriteTo(io.Discard)
 	require.NoError(t, err)
-	require.EqualValues(t, arr.BinarySize(), n)
+	require.Equal(t, int64(arr.BinarySize()), n)
 }
 
 func TestReadPrimitives(t *testing.T) {
@@ -99,10 +99,10 @@ func TestReadPrimitives(t *testing.T) {
 		var buf bytes.Buffer
 		_, err := arr.WriteTo(&buf)
 		require.NoError(t, err)
-		got, err := ReadPrimitives[int32](&buf)
+		got, err := readPrimitiveFromBytes[int32](buf.Bytes())
 		require.NoError(t, err)
 		require.Equal(t, arr.Length(), got.Length())
-		for i := uint64(0); i < got.Length(); i++ {
+		for i := range got.Length() {
 			require.Equal(t, values[i], got.ValueAt(i), "ValueAt(%d)", i)
 		}
 	})
@@ -111,7 +111,7 @@ func TestReadPrimitives(t *testing.T) {
 		var buf bytes.Buffer
 		_, err := arr.WriteTo(&buf)
 		require.NoError(t, err)
-		got, err := ReadPrimitives[float64](&buf)
+		got, err := readPrimitiveFromBytes[float64](buf.Bytes())
 		require.NoError(t, err)
 		require.Equal(t, uint64(0), got.Length())
 	})
@@ -125,12 +125,12 @@ func TestReadPrimitivesRejectsUnsupportedHeader(t *testing.T) {
 	}{
 		{
 			name:   "version",
-			header: Header{Version: 2, PType: PTypeInt32, Length: 0, NumBytes: 0},
+			header: Header{Version: 3, PType: PTypeInt32, Length: 0, NumBytes: 0},
 			want:   "version",
 		},
 		{
 			name:   "flags",
-			header: Header{Version: 1, PType: PTypeInt32, Flags: 1, Length: 0, NumBytes: 0},
+			header: Header{Version: FormatVersion, PType: PTypeInt32, Flags: 2, Length: 0, NumBytes: 0},
 			want:   "flags",
 		},
 	}
@@ -141,7 +141,7 @@ func TestReadPrimitivesRejectsUnsupportedHeader(t *testing.T) {
 			_, err := tt.header.WriteTo(&buf)
 			require.NoError(t, err)
 
-			_, err = ReadPrimitives[int32](bytes.NewReader(buf.Bytes()))
+			_, err = readPrimitiveFromBytes[int32](buf.Bytes())
 			require.ErrorContains(t, err, tt.want)
 		})
 	}
@@ -150,14 +150,14 @@ func TestReadPrimitivesRejectsUnsupportedHeader(t *testing.T) {
 func TestReadPrimitivesRejectsZeroLengthWithBody(t *testing.T) {
 	var buf bytes.Buffer
 	_, err := Header{
-		Version: 1,
-		PType:   PTypeUint32,
-		Length:  0,
-		NumBytes:  4,
+		Version:  FormatVersion,
+		PType:    PTypeUint32,
+		Length:   0,
+		NumBytes: 4,
 	}.WriteTo(&buf)
 	require.NoError(t, err)
 
-	_, err = ReadPrimitives[uint32](bytes.NewReader(buf.Bytes()))
+	_, err = readPrimitiveFromBytes[uint32](buf.Bytes())
 	require.ErrorContains(t, err, "body size")
 }
 
@@ -167,7 +167,7 @@ func TestPrimitivesWriteToShortWrite(t *testing.T) {
 
 	n, err := arr.WriteTo(writer)
 	require.ErrorIs(t, err, io.ErrShortWrite)
-	require.EqualValues(t, arr.BinarySize()-1, n)
+	require.Equal(t, int64(arr.BinarySize()-1), n)
 }
 
 func assertPrimitiveMetadata[T PrimitiveType](t *testing.T, values []T, wantPType PType, wantBinarySize uint64) {
@@ -193,7 +193,7 @@ func encodePrimitiveBody[T PrimitiveType](t *testing.T, values []T) []byte {
 func assertHeaderBytes(t *testing.T, got []byte, want Header) {
 	t.Helper()
 
-	require.Len(t, got, headerSize)
+	require.Equal(t, headerSize, len(got))
 	require.Equal(t, want.Version, got[0])
 	require.Equal(t, want.PType, PType(got[1]))
 	require.Equal(t, want.Flags, binary.LittleEndian.Uint16(got[2:4]))
@@ -208,7 +208,7 @@ func BenchmarkWritePrimitives(b *testing.B) {
 	}
 	arr := NewPrimitives(values)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _ = arr.WriteTo(io.Discard)
 	}
 }
@@ -223,8 +223,8 @@ func BenchmarkReadPrimitives(b *testing.B) {
 	_, _ = arr.WriteTo(&buf)
 	data := buf.Bytes()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = ReadPrimitives[int32](bytes.NewReader(data))
+	for range b.N {
+		_, _ = readPrimitiveFromBytes[int32](data)
 	}
 }
 
@@ -235,7 +235,7 @@ func BenchmarkValueAtPrimitives(b *testing.B) {
 	}
 	arr := NewPrimitives(values)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		_ = arr.ValueAt(uint64(i % 10000))
 	}
 }
@@ -248,7 +248,7 @@ func FuzzReadPrimitives(f *testing.F) {
 	f.Add(buf.Bytes())
 	f.Fuzz(func(t *testing.T, data []byte) {
 		opts := ReadOptions{MaxLength: 1 << 20, MaxBytes: 1 << 24}
-		_, _ = ReadPrimitives[int32](bytes.NewReader(data), opts)
+		_, _ = readPrimitiveFromBytes[int32](data, opts)
 		// Must not panic; error is acceptable for invalid/corrupt input.
 	})
 }

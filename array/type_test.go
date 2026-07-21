@@ -32,30 +32,10 @@ func TestPTypeStringAndClassifiers(t *testing.T) {
 	}
 }
 
-func TestPTypeForType(t *testing.T) {
-	assertPTypeForType[int8](t, PTypeInt8)
-	assertPTypeForType[int16](t, PTypeInt16)
-	assertPTypeForType[int32](t, PTypeInt32)
-	assertPTypeForType[int64](t, PTypeInt64)
-	assertPTypeForType[uint8](t, PTypeUint8)
-	assertPTypeForType[uint16](t, PTypeUint16)
-	assertPTypeForType[uint32](t, PTypeUint32)
-	assertPTypeForType[uint64](t, PTypeUint64)
-	assertPTypeForType[float32](t, PTypeFloat32)
-	assertPTypeForType[float64](t, PTypeFloat64)
-	assertPTypeForType[string](t, PTypeString)
-}
-
-func assertPTypeForType[T Integer | Float | String](t *testing.T, want PType) {
-	t.Helper()
-
-	require.Equal(t, want, PTypeForType[T]())
-}
-
 func BenchmarkPTypeString(b *testing.B) {
 	p := PTypeInt32
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_ = p.String()
 	}
 }
@@ -63,7 +43,7 @@ func BenchmarkPTypeString(b *testing.B) {
 func BenchmarkPTypeByteWidth(b *testing.B) {
 	p := PTypeUint64
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_ = p.ByteWidth()
 	}
 }

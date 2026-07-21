@@ -3,9 +3,17 @@ package btrblocks
 import "github.com/axiomhq/btrblocks/array"
 
 const (
-	sampleWindow  = 64
+	// sampleWindow is the number of contiguous elements per sampling window.
+	// Large enough to capture local patterns (runs, small dicts) while
+	// keeping total sample overhead well below 1% of the source array.
+	sampleWindow = 64
+	// minSampleRuns is the minimum number of windows to draw, guaranteeing
+	// at least minSampleRuns * sampleWindow = 1024 elements are examined.
+	// Provides enough coverage for stable scheme estimation on small arrays.
 	minSampleRuns = 16
 
+	// LCG parameters from Knuth's MMIX (used by numpy, glibc). Fixed seed
+	// ensures deterministic, reproducible sampling across runs.
 	sampleSeed   = 1234567890
 	sampleLCGMul = 6364136223846793005
 	sampleLCGInc = 1442695040888963407
@@ -17,31 +25,31 @@ type indexRange struct {
 	end   uint64
 }
 
-// sampledArray is a small chunked array used for stratified planner samples.
+// sampledArray is a small ranged view used for stratified planner samples.
 // It implements only array.ArrayCore[T] — it is not serializable or sliceable.
-type sampledArray[T Integer | Float | String] struct {
-	pType   PType
+type sampledArray[T array.Integer | array.Float | array.String] struct {
+	source  array.Array[T]
 	length  uint64
 	offsets []uint64
-	chunks  []array.Array[T]
+	ranges  []indexRange
 }
 
-func newSampledArray[T Integer | Float | String](chunks []array.Array[T]) array.ArrayCore[T] {
-	if len(chunks) == 1 {
-		return chunks[0]
+func newSampledArray[T array.Integer | array.Float | array.String](source array.Array[T], ranges []indexRange) array.ArrayCore[T] {
+	if len(ranges) == 1 && ranges[0].start == 0 && ranges[0].end == source.Length() {
+		return source
 	}
-	offsets := make([]uint64, len(chunks)+1)
+	offsets := make([]uint64, len(ranges)+1)
 	var length uint64
-	for i, chunk := range chunks {
+	for i, selected := range ranges {
 		offsets[i] = length
-		length += chunk.Length()
+		length += selected.end - selected.start
 	}
-	offsets[len(chunks)] = length
+	offsets[len(ranges)] = length
 	return &sampledArray[T]{
-		pType:   chunks[0].PType(),
+		source:  source,
 		length:  length,
 		offsets: offsets,
-		chunks:  chunks,
+		ranges:  ranges,
 	}
 }
 
@@ -49,9 +57,13 @@ func (a *sampledArray[T]) ValueAt(offset uint64) T {
 	if offset >= a.length {
 		panic(errOffsetOutOfRange)
 	}
+	return a.source.ValueAt(a.sourceOffset(offset))
+}
+
+func (a *sampledArray[T]) sourceOffset(offset uint64) uint64 {
 	// Binary search on sorted offsets to find the chunk containing offset.
 	// offsets has len(chunks)+1 entries; we want the largest i where offsets[i] <= offset.
-	lo, hi := 0, len(a.chunks)
+	lo, hi := 0, len(a.ranges)
 	for lo < hi {
 		mid := lo + (hi-lo)/2
 		if a.offsets[mid+1] <= offset {
@@ -60,34 +72,53 @@ func (a *sampledArray[T]) ValueAt(offset uint64) T {
 			hi = mid
 		}
 	}
-	return a.chunks[lo].ValueAt(offset - a.offsets[lo])
+	return a.ranges[lo].start + offset - a.offsets[lo]
+}
+
+func (a *sampledArray[T]) IsValid(offset uint64) bool {
+	if offset >= a.length {
+		panic(errOffsetOutOfRange)
+	}
+	return a.source.IsValid(a.sourceOffset(offset))
+}
+
+func (a *sampledArray[T]) NullCount() uint64 {
+	var count uint64
+	for i := range a.length {
+		if !a.IsValid(i) {
+			count++
+		}
+	}
+	return count
 }
 
 func (a *sampledArray[T]) Length() uint64 { return a.length }
 
-// rawBinarySize estimates the uncompressed serialized size of an ArrayCore.
-// For primitives: header + length * element width.
-// For strings: computed by scanning string lengths.
-func rawBinarySize[T Integer | Float | String](arr array.ArrayCore[T]) uint64 {
-	var zero T
-	switch any(zero).(type) {
-	case string:
-		n := arr.Length()
-		totalBytes := uint64(0)
-		for i := range n {
-			totalBytes += uint64(len(any(arr.ValueAt(i)).(string)))
-		}
-		offsetWidth := uint64(4)
-		switch {
-		case totalBytes <= uint64(^uint8(0)):
-			offsetWidth = 1
-		case totalBytes <= uint64(^uint16(0)):
-			offsetWidth = 2
-		}
-		return array.HeaderSize + 4 + (n+1)*offsetWidth + totalBytes
-	default:
-		return array.HeaderSize + arr.Length()*uint64(array.PTypeForType[T]().ByteWidth())
+func primitiveRawBinarySize[T array.Integer | array.Float](arr array.ArrayCore[T]) uint64 {
+	return array.HeaderSize + arr.Length()*uint64(array.PTypeOfPrimitive[T]().ByteWidth())
+}
+
+func stringRawBinarySize(arr array.ArrayCore[string]) uint64 {
+	if full, ok := arr.(array.Array[string]); ok {
+		return full.BinarySize()
 	}
+	return computeStringRawBinarySize(arr)
+}
+
+func computeStringRawBinarySize(arr array.ArrayCore[string]) uint64 {
+	n := arr.Length()
+	totalBytes := uint64(0)
+	for i := range n {
+		totalBytes += uint64(len(arr.ValueAt(i)))
+	}
+	offsetWidth := uint64(4)
+	switch {
+	case totalBytes <= uint64(^uint8(0)):
+		offsetWidth = 1
+	case totalBytes <= uint64(^uint16(0)):
+		offsetWidth = 2
+	}
+	return array.HeaderSize + 4 + (n+1)*offsetWidth + totalBytes
 }
 
 func sampleCountApproxOnePercent(length uint64) uint64 {
@@ -98,8 +129,9 @@ func sampleCountApproxOnePercent(length uint64) uint64 {
 	if approx == 0 {
 		approx = minSampleRuns
 	}
-	if approx%16 != 0 {
-		approx += 16 - (approx % 16)
+	// Align to multiples of minSampleRuns for consistent stride patterns.
+	if approx%minSampleRuns != 0 {
+		approx += minSampleRuns - (approx % minSampleRuns)
 	}
 	if approx < minSampleRuns {
 		return minSampleRuns
@@ -129,7 +161,7 @@ func partitionIndices(length, partitions uint64) []indexRange {
 	return ranges
 }
 
-func sampleArray[T Integer | Float | String](arr array.Array[T]) array.ArrayCore[T] {
+func sampleArray[T array.Integer | array.Float | array.String](arr array.Array[T]) array.ArrayCore[T] {
 	length := arr.Length()
 	sampleRuns := sampleCountApproxOnePercent(length)
 	totalSample := uint64(sampleWindow) * sampleRuns
@@ -138,7 +170,7 @@ func sampleArray[T Integer | Float | String](arr array.Array[T]) array.ArrayCore
 	}
 
 	partitions := partitionIndices(length, sampleRuns)
-	chunks := make([]array.Array[T], 0, len(partitions))
+	selected := make([]indexRange, 0, len(partitions))
 	rng := uint64(sampleSeed)
 
 	for _, part := range partitions {
@@ -146,59 +178,17 @@ func sampleArray[T Integer | Float | String](arr array.Array[T]) array.ArrayCore
 		if partLen == 0 {
 			continue
 		}
-		take := uint64(sampleWindow)
-		if partLen < take {
-			take = partLen
-		}
+		take := min(partLen, uint64(sampleWindow))
 		rng = rng*sampleLCGMul + sampleLCGInc
 		offset := uint64(0)
 		if partLen > take {
 			offset = (rng >> 33) % (partLen - take + 1)
 		}
 		start := part.start + offset
-		chunk, err := arr.Slice(start, start+take)
-		if err != nil {
-			continue
-		}
-		chunks = append(chunks, chunk)
+		selected = append(selected, indexRange{start: start, end: start + take})
 	}
-	if len(chunks) == 0 {
+	if len(selected) == 0 {
 		return arr
 	}
-	return newSampledArray(chunks)
-}
-
-// arrayCast converts a concrete array.Array to the generic array.Array[T].
-func arrayCast[T Integer | Float | String](result any) array.Array[T] {
-	return result.(array.Array[T])
-}
-
-func buildArray[T Integer | Float | String](data []T) array.Array[T] {
-	var zero T
-	switch any(zero).(type) {
-	case int8:
-		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]int8)))
-	case int16:
-		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]int16)))
-	case int32:
-		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]int32)))
-	case int64:
-		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]int64)))
-	case uint8:
-		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]uint8)))
-	case uint16:
-		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]uint16)))
-	case uint32:
-		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]uint32)))
-	case uint64:
-		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]uint64)))
-	case float32:
-		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]float32)))
-	case float64:
-		return arrayCast[T](array.NewPrimitivesUnsafe(any(data).([]float64)))
-	case string:
-		return arrayCast[T](array.NewStrings(any(data).([]string)))
-	default:
-		return nil
-	}
+	return newSampledArray(arr, selected)
 }

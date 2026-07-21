@@ -9,7 +9,17 @@ import (
 // HeaderSize is the fixed size of the binary array header (20 bytes).
 const HeaderSize = 20
 
-const headerSize = HeaderSize
+const (
+	FormatVersion        = 1 // Current raw-array wire version.
+	FlagValidity  uint16 = 1 // Marks an array body prefixed by a validity bitmap.
+)
+
+const (
+	headerSize             = HeaderSize
+	defaultMaxReadLength   = 1 << 26  // 67 million values.
+	defaultMaxReadBytes    = 1 << 30  // 1 GiB body.
+	defaultMaxDecodedBytes = 64 << 20 // 64 MiB materialized payload.
+)
 
 // Header is the fixed 20-byte prefix written before every array body.
 // Layout: Version(1) + PType(1) + Flags(2) + Length(8) + BodySize(8), all
@@ -19,26 +29,11 @@ const headerSize = HeaderSize
 // through array/encoded-array read paths that already know they are at an array
 // boundary, so version and flags carry the format-evolution contract.
 type Header struct {
-	Version uint8  // Format version; currently 1.
-	PType   PType  // Element type (int8, uint32, string, etc.).
-	Flags   uint16 // Reserved for future use.
-	Length  uint64 // Number of elements in the array.
-	NumBytes  uint64 // Number of bytes in the body following this header.
-}
-
-// readHeader reads a 20-byte header from r.
-func readHeader(r io.Reader) (Header, error) {
-	var buf [headerSize]byte
-	if _, err := io.ReadFull(r, buf[:]); err != nil {
-		return Header{}, err
-	}
-	return Header{
-		Version: buf[0],
-		PType:   PType(buf[1]),
-		Flags:   binary.LittleEndian.Uint16(buf[2:4]),
-		Length:  binary.LittleEndian.Uint64(buf[4:12]),
-		NumBytes:  binary.LittleEndian.Uint64(buf[12:20]),
-	}, nil
+	Version  uint8  // Format version; currently 1.
+	PType    PType  // Element type (int8, uint32, string, etc.).
+	Flags    uint16 // Array framing flags.
+	Length   uint64 // Number of elements in the array.
+	NumBytes uint64 // Number of bytes in the body following this header.
 }
 
 // readHeaderFromBuf reads a 20-byte header from br (zero-copy).
@@ -48,38 +43,66 @@ func readHeaderFromBuf(br *BufReader) (Header, error) {
 		return Header{}, err
 	}
 	return Header{
-		Version: buf[0],
-		PType:   PType(buf[1]),
-		Flags:   binary.LittleEndian.Uint16(buf[2:4]),
-		Length:  binary.LittleEndian.Uint64(buf[4:12]),
-		NumBytes:  binary.LittleEndian.Uint64(buf[12:20]),
+		Version:  buf[0],
+		PType:    PType(buf[1]),
+		Flags:    binary.LittleEndian.Uint16(buf[2:4]),
+		Length:   binary.LittleEndian.Uint64(buf[4:12]),
+		NumBytes: binary.LittleEndian.Uint64(buf[12:20]),
 	}, nil
 }
 
-// ReadOptions constrains resource usage when decoding from untrusted streams.
-// The zero value applies no limits (suitable for trusted internal streams).
+// ReadOptions constrains resource usage when decoding. Its zero value applies
+// conservative defaults suitable for untrusted data.
 type ReadOptions struct {
 	// MaxLength is the maximum number of elements allowed in a single array.
-	// Zero means no limit.
+	// Zero uses the default limit of 1<<26. Use math.MaxUint64 explicitly for
+	// trusted data that must not have a practical length limit.
 	MaxLength uint64
 
 	// MaxBytes is the maximum body size in bytes allowed after a header.
-	// Zero means no limit.
+	// Zero uses the default limit of 1<<30. Use math.MaxUint64 explicitly for
+	// trusted data that must not have a practical byte limit.
 	MaxBytes uint64
+
+	// MaxDecodedBytes is the maximum decoded variable-width payload. Zero uses
+	// the default limit of 64 MiB. Use math.MaxUint64 explicitly only when a
+	// higher-level memory budget governs trusted data.
+	MaxDecodedBytes uint64
+
+	// MaxDepth is the maximum codec-tree nesting depth when decoding encoded
+	// arrays. Zero means the decoder's default limit. The codec layer
+	// decrements it on every recursive child read; negative means exhausted.
+	MaxDepth int
+}
+
+// DecodedByteLimit returns the effective variable-width decode budget.
+func (o ReadOptions) DecodedByteLimit() uint64 {
+	if o.MaxDecodedBytes == 0 {
+		return defaultMaxDecodedBytes
+	}
+	return o.MaxDecodedBytes
 }
 
 func validateHeader(h Header, opts ReadOptions) error {
-	if h.Version != 1 {
+	if h.Version != FormatVersion {
 		return fmt.Errorf("array: unsupported version = %d", h.Version)
 	}
-	if h.Flags != 0 {
+	if h.Flags&^FlagValidity != 0 {
 		return fmt.Errorf("array: unsupported flags = 0x%x", h.Flags)
 	}
-	if opts.MaxLength > 0 && h.Length > opts.MaxLength {
-		return fmt.Errorf("array: length %d exceeds limit %d", h.Length, opts.MaxLength)
+	maxLength := opts.MaxLength
+	if maxLength == 0 {
+		maxLength = defaultMaxReadLength
 	}
-	if opts.MaxBytes > 0 && h.NumBytes > opts.MaxBytes {
-		return fmt.Errorf("array: body size %d exceeds limit %d", h.NumBytes, opts.MaxBytes)
+	if h.Length > maxLength {
+		return fmt.Errorf("array: length %d exceeds limit %d", h.Length, maxLength)
+	}
+	maxBytes := opts.MaxBytes
+	if maxBytes == 0 {
+		maxBytes = defaultMaxReadBytes
+	}
+	if h.NumBytes > maxBytes {
+		return fmt.Errorf("array: body size %d exceeds limit %d", h.NumBytes, maxBytes)
 	}
 	return nil
 }

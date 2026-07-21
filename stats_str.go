@@ -2,57 +2,53 @@ package btrblocks
 
 import "github.com/axiomhq/btrblocks/array"
 
+// String dictionaries above this cardinality are expensive to retain during
+// planning and are rarely competitive with direct FSST encoding on a page.
+const maxRetainedStringDistinctValues = 4096
+
 type stringStats struct {
-	base                   baseStats[string]
+	baseStats[string]
 	estimatedDistinctCount uint64
+	totalBytes             uint64
 }
 
-func (s stringStats) Source() array.Array[string] {
-	return s.base.Source()
-}
-
-func (s stringStats) Sample(ctx planContext) array.ArrayCore[string] {
-	return s.base.Sample(ctx)
-}
-
-// computeStringStats estimates string cardinality using byte length + first 8
-// bytes as a cheap distinct key (mirrors the Rust reference). Also computes
-// isConst and avgRunLength so these don't need to be re-scanned in Schemes().
-func computeStringStats(arr array.Array[string]) stringStats {
+// computeStringStatsForPlanner counts distinct strings without copying their
+// payloads. It also computes isConst and avgRunLength so Schemes does not
+// re-scan.
+func computeStringStatsForPlanner(arr array.Array[string], collectFrequencies bool) stringStats {
 	n := arr.Length()
 	if n == 0 {
-		return stringStats{base: baseStats[string]{src: arr, cached: arr}}
+		return stringStats{baseStats: baseStats[string]{src: arr}}
 	}
 
-	// Materialize once to avoid per-element interface dispatch.
-	vals := make([]string, n)
-	arr.CopyTo(vals)
-
-	type key struct {
-		length uint64
-		prefix [8]byte
+	var distinct map[string]uint64
+	if collectFrequencies {
+		distinct = make(map[string]uint64, distinctInitialCapacity(n))
 	}
-
-	distinct := make(map[key]struct{}, 256)
+	distinctOverflow := false
 	runs := uint64(1)
 	isConst := true
-	first := vals[0]
+	first := arr.ValueAt(0)
+	totalBytes := uint64(len(first))
 	prev := first
 
-	var k0 key
-	k0.length = uint64(len(first))
-	for j := 0; j < len(k0.prefix) && j < len(first); j++ {
-		k0.prefix[j] = first[j]
+	if collectFrequencies {
+		distinct[first] = 1
 	}
-	distinct[k0] = struct{}{}
+	mostFrequent := uint64(1)
 
-	for _, v := range vals[1:] {
-		var k key
-		k.length = uint64(len(v))
-		for j := 0; j < len(k.prefix) && j < len(v); j++ {
-			k.prefix[j] = v[j]
+	for i := uint64(1); i < n; i++ {
+		v := arr.ValueAt(i)
+		totalBytes += uint64(len(v))
+		if collectFrequencies && !distinctOverflow {
+			count := distinct[v] + 1
+			distinct[v] = count
+			mostFrequent = max(mostFrequent, count)
+			if len(distinct) > maxRetainedStringDistinctValues {
+				distinct = nil
+				distinctOverflow = true
+			}
 		}
-		distinct[k] = struct{}{}
 
 		if v != prev {
 			runs++
@@ -63,14 +59,23 @@ func computeStringStats(arr array.Array[string]) stringStats {
 		}
 	}
 
+	distinctCount := uint64(len(distinct))
+	if !collectFrequencies {
+		distinctCount = n
+		mostFrequent = 0
+	} else if distinctOverflow {
+		distinctCount = n
+		mostFrequent = 0
+	}
 	return stringStats{
-		base: baseStats[string]{
+		baseStats: baseStats[string]{
 			src:           arr,
-			cached:        sampleArray(arr),
 			isConst:       isConst,
-			distinctCount: uint64(len(distinct)),
+			distinctCount: distinctCount,
 			avgRunLength:  float64(n) / float64(runs),
+			mostFrequent:  mostFrequent,
 		},
-		estimatedDistinctCount: uint64(len(distinct)),
+		estimatedDistinctCount: distinctCount,
+		totalBytes:             totalBytes,
 	}
 }

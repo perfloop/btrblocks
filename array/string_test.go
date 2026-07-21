@@ -14,16 +14,22 @@ import (
 
 func TestNewStringsChoosesOffsetWidth(t *testing.T) {
 	t.Run("uint8", func(t *testing.T) {
-		arr := NewStrings([]string{strings.Repeat("a", math.MaxUint8)})
-		require.IsType(t, &Strings[uint8]{}, arr)
+		arr := mustStrings(t, []string{strings.Repeat("a", math.MaxUint8)})
+		if _, ok := arr.(*Strings[uint8]); !ok {
+			t.Fatalf("arr = %T, want *Strings[uint8]", arr)
+		}
 	})
 	t.Run("uint16", func(t *testing.T) {
-		arr := NewStrings([]string{strings.Repeat("a", math.MaxUint8+1)})
-		require.IsType(t, &Strings[uint16]{}, arr)
+		arr := mustStrings(t, []string{strings.Repeat("a", math.MaxUint8+1)})
+		if _, ok := arr.(*Strings[uint16]); !ok {
+			t.Fatalf("arr = %T, want *Strings[uint16]", arr)
+		}
 	})
 	t.Run("uint32", func(t *testing.T) {
-		arr := NewStrings([]string{strings.Repeat("a", math.MaxUint16+1)})
-		require.IsType(t, &Strings[uint32]{}, arr)
+		arr := mustStrings(t, []string{strings.Repeat("a", math.MaxUint16+1)})
+		if _, ok := arr.(*Strings[uint32]); !ok {
+			t.Fatalf("arr = %T, want *Strings[uint32]", arr)
+		}
 	})
 }
 
@@ -35,18 +41,18 @@ func TestTotalStringBytesRejectsFormatLimit(t *testing.T) {
 }
 
 func TestStringsMetadataAndHeader(t *testing.T) {
-	arr := newStringsWithOffsets[uint16]([]string{"go", "", "lang"}, 6)
+	arr := newStringsWithOffsets[uint16]([]string{"go", "", "lang"}, 6, AllValid(3))
 
-	require.EqualValues(t, 3, arr.Length())
+	require.Equal(t, uint64(3), arr.Length())
 	require.Equal(t, PTypeString, arr.PType())
-	require.EqualValues(t, 38, arr.BinarySize())
+	require.Equal(t, uint64(38), arr.BinarySize())
 	require.Equal(t, "", arr.ValueAt(1))
 	require.Equal(t, "lang", arr.ValueAt(2))
-	require.Equal(t, Header{Version: 1, PType: PTypeString, Length: 3, NumBytes: 18}, arr.header())
+	require.Equal(t, Header{Version: FormatVersion, PType: PTypeString, Length: 3, NumBytes: 18}, arr.header())
 }
 
 func TestStringsValueAtUsesBackingBuffer(t *testing.T) {
-	arr := newStringsWithOffsets[uint16]([]string{"go", "", "lang"}, 6)
+	arr := newStringsWithOffsets[uint16]([]string{"go", "", "lang"}, 6, AllValid(3))
 	got := arr.ValueAt(2)
 
 	require.Equal(t, "lang", got)
@@ -54,7 +60,7 @@ func TestStringsValueAtUsesBackingBuffer(t *testing.T) {
 }
 
 func TestStringsWriteToIncludesHeaderOffsetsAndBuffer(t *testing.T) {
-	arr := newStringsWithOffsets[uint16]([]string{"go", "lang"}, 6)
+	arr := newStringsWithOffsets[uint16]([]string{"go", "lang"}, 6, AllValid(2))
 
 	var buf bytes.Buffer
 	n, err := arr.WriteTo(&buf)
@@ -69,20 +75,20 @@ func TestStringsWriteToIncludesHeaderOffsetsAndBuffer(t *testing.T) {
 	wantBody = binary.LittleEndian.AppendUint16(wantBody, 6)
 	wantBody = append(wantBody, []byte("golang")...)
 
-	require.EqualValues(t, headerSize+len(wantBody), n)
+	require.Equal(t, int64(headerSize+len(wantBody)), n)
 
 	got := buf.Bytes()
 	assertHeaderBytes(t, got[:headerSize], Header{
-		Version: 1,
-		PType:   PTypeString,
-		Length:  2,
-		NumBytes:  uint64(len(wantBody)),
+		Version:  FormatVersion,
+		PType:    PTypeString,
+		Length:   2,
+		NumBytes: uint64(len(wantBody)),
 	})
 	require.Equal(t, wantBody, got[headerSize:])
 }
 
 func TestStringsSlice(t *testing.T) {
-	arr := newStringsWithOffsets[uint16]([]string{"go", "", "lang"}, 6)
+	arr := newStringsWithOffsets[uint16]([]string{"go", "", "lang"}, 6, AllValid(3))
 
 	slicedAny, err := arr.Slice(1, 3)
 	require.NoError(t, err)
@@ -103,11 +109,11 @@ func TestStringsLargeCorpus(t *testing.T) {
 		total += len(values[i])
 	}
 
-	arr := NewStrings(values)
+	arr := mustStrings(t, values)
 	stringsArr, ok := arr.(*Strings[uint32])
-	require.True(t, ok, "NewStrings() type = %T, want *Strings[uint32]", arr)
+	require.True(t, ok, "mustStrings(t, ) type = %T, want *Strings[uint32]", arr)
 
-	require.EqualValues(t, largeCorpusSize, arr.Length())
+	require.Equal(t, uint64(largeCorpusSize), arr.Length())
 	wantBinarySize := uint64(headerSize) + 4 + uint64(total) + uint64(largeCorpusSize+1)*4
 	require.Equal(t, wantBinarySize, arr.BinarySize())
 
@@ -115,29 +121,29 @@ func TestStringsLargeCorpus(t *testing.T) {
 		require.Equal(t, values[idx], arr.ValueAt(idx), "ValueAt(%d)", idx)
 	}
 
-	require.Equal(t, Header{Version: 1, PType: PTypeString, Length: largeCorpusSize, NumBytes: 4 + uint64(total) + uint64(largeCorpusSize+1)*4}, stringsArr.header())
+	require.Equal(t, Header{Version: FormatVersion, PType: PTypeString, Length: largeCorpusSize, NumBytes: 4 + uint64(total) + uint64(largeCorpusSize+1)*4}, stringsArr.header())
 
 	n, err := arr.WriteTo(io.Discard)
 	require.NoError(t, err)
-	require.EqualValues(t, wantBinarySize, n)
+	require.Equal(t, int64(wantBinarySize), n)
 }
 
 func TestReadStrings(t *testing.T) {
 	values := []string{"go", "", "lang"}
-	arr := NewStrings(values)
+	arr := mustStrings(t, values)
 	var buf bytes.Buffer
 	_, err := arr.WriteTo(&buf)
 	require.NoError(t, err)
-	got, err := ReadStrings(&buf)
+	got, err := readStringsFromBytes(buf.Bytes())
 	require.NoError(t, err)
 	require.Equal(t, arr.Length(), got.Length())
-	for i := uint64(0); i < got.Length(); i++ {
+	for i := range got.Length() {
 		require.Equal(t, values[i], got.ValueAt(i), "ValueAt(%d)", i)
 	}
 }
 
 func TestReadStringsRejectsInvalidOffsets(t *testing.T) {
-	arr := NewStrings([]string{"go", "lang"})
+	arr := mustStrings(t, []string{"go", "lang"})
 
 	var buf bytes.Buffer
 	_, err := arr.WriteTo(&buf)
@@ -146,7 +152,7 @@ func TestReadStringsRejectsInvalidOffsets(t *testing.T) {
 	data := buf.Bytes()
 	data[headerSize+4+2] = 1
 
-	_, err = ReadStrings(bytes.NewReader(data))
+	_, err = readStringsFromBytes(data)
 	require.ErrorContains(t, err, "offsets")
 }
 
@@ -158,12 +164,12 @@ func TestReadStringsRejectsUnsupportedHeader(t *testing.T) {
 	}{
 		{
 			name:   "version",
-			header: Header{Version: 2, PType: PTypeString, Length: 0, NumBytes: 4},
+			header: Header{Version: 3, PType: PTypeString, Length: 0, NumBytes: 4},
 			want:   "version",
 		},
 		{
 			name:   "flags",
-			header: Header{Version: 1, PType: PTypeString, Flags: 1, Length: 0, NumBytes: 4},
+			header: Header{Version: FormatVersion, PType: PTypeString, Flags: 2, Length: 0, NumBytes: 4},
 			want:   "flags",
 		},
 	}
@@ -174,7 +180,7 @@ func TestReadStringsRejectsUnsupportedHeader(t *testing.T) {
 			_, err := tt.header.WriteTo(&buf)
 			require.NoError(t, err)
 
-			_, err = ReadStrings(bytes.NewReader(buf.Bytes()))
+			_, err = readStringsFromBytes(buf.Bytes())
 			require.ErrorContains(t, err, tt.want)
 		})
 	}
@@ -184,40 +190,40 @@ func TestReadStringsRejectsInvalidBodySize(t *testing.T) {
 	t.Run("too small for offsets", func(t *testing.T) {
 		var buf bytes.Buffer
 		_, err := Header{
-			Version: 1,
-			PType:   PTypeString,
-			Length:  1,
-			NumBytes:  4,
+			Version:  FormatVersion,
+			PType:    PTypeString,
+			Length:   1,
+			NumBytes: 4,
 		}.WriteTo(&buf)
 		require.NoError(t, err)
 
-		_, err = ReadStrings(bytes.NewReader(buf.Bytes()))
+		_, err = readStringsFromBytes(buf.Bytes())
 		require.ErrorContains(t, err, "string body")
 	})
 
 	t.Run("buffer exceeds declared body", func(t *testing.T) {
 		var buf bytes.Buffer
 		_, err := Header{
-			Version: 1,
-			PType:   PTypeString,
-			Length:  0,
-			NumBytes:  5,
+			Version:  FormatVersion,
+			PType:    PTypeString,
+			Length:   0,
+			NumBytes: 5,
 		}.WriteTo(&buf)
 		require.NoError(t, err)
 		require.NoError(t, binary.Write(&buf, binary.LittleEndian, uint32(2)))
 
-		_, err = ReadStrings(bytes.NewReader(buf.Bytes()))
+		_, err = readStringsFromBytes(buf.Bytes())
 		require.ErrorContains(t, err, "string body")
 	})
 }
 
 func TestStringsWriteToShortWrite(t *testing.T) {
-	arr := NewStrings([]string{"go", "lang"})
+	arr := mustStrings(t, []string{"go", "lang"})
 	writer := &shortWriter{remaining: int(arr.BinarySize()) - 1}
 
 	n, err := arr.WriteTo(writer)
 	require.ErrorIs(t, err, io.ErrShortWrite)
-	require.EqualValues(t, arr.BinarySize()-1, n)
+	require.Equal(t, int64(arr.BinarySize()-1), n)
 }
 
 func BenchmarkWriteStrings(b *testing.B) {
@@ -225,9 +231,9 @@ func BenchmarkWriteStrings(b *testing.B) {
 	for i := range values {
 		values[i] = "hello"
 	}
-	arr := NewStrings(values)
+	arr := mustStrings(b, values)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _ = arr.WriteTo(io.Discard)
 	}
 }
@@ -237,13 +243,13 @@ func BenchmarkReadStrings(b *testing.B) {
 	for i := range values {
 		values[i] = "hello"
 	}
-	arr := NewStrings(values)
+	arr := mustStrings(b, values)
 	var buf bytes.Buffer
 	_, _ = arr.WriteTo(&buf)
 	data := buf.Bytes()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = ReadStrings(bytes.NewReader(data))
+	for range b.N {
+		_, _ = readStringsFromBytes(data)
 	}
 }
 
@@ -252,22 +258,22 @@ func BenchmarkValueAtStrings(b *testing.B) {
 	for i := range values {
 		values[i] = "hello"
 	}
-	arr := NewStrings(values)
+	arr := mustStrings(b, values)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		_ = arr.ValueAt(uint64(i % 1000))
 	}
 }
 
 func FuzzReadStrings(f *testing.F) {
 	// Seed with valid encoded string array so corpus has at least one valid input.
-	arr := NewStrings([]string{"a", "bb", "ccc"})
+	arr := mustStrings(f, []string{"a", "bb", "ccc"})
 	var buf bytes.Buffer
 	_, _ = arr.WriteTo(&buf)
 	f.Add(buf.Bytes())
 	f.Fuzz(func(t *testing.T, data []byte) {
 		opts := ReadOptions{MaxLength: 1 << 20, MaxBytes: 1 << 24}
-		_, _ = ReadStrings(bytes.NewReader(data), opts)
+		_, _ = readStringsFromBytes(data, opts)
 		// Must not panic; error is acceptable for invalid/corrupt input.
 	})
 }

@@ -3,8 +3,9 @@ module github.com/axiomhq/btrblocks
 go 1.25.0
 
 require (
-	github.com/axiomhq/fsst v0.0.1
-	github.com/stretchr/testify v1.9.0
+	github.com/axiomhq/fsst v0.0.2-0.20260720063556-54a2eb9eb3f9
+	github.com/kamstrup/intmap v0.5.2
+	github.com/stretchr/testify v1.11.1
 )
 
 require (

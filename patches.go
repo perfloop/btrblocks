@@ -66,29 +66,24 @@ func (p *patches[V, I]) Validate() error {
 	if p.indices.Length() == 0 {
 		return fmt.Errorf("codec: patches length = 0")
 	}
+	if p.indices.Length() > p.length {
+		return fmt.Errorf("codec: patch count %d exceeds logical length %d", p.indices.Length(), p.length)
+	}
 	if p.offset > ^uint64(0)-p.length {
 		return fmt.Errorf("codec: patch offset %d overflows length %d", p.offset, p.length)
 	}
-	// Bounds-check first and last index only. This avoids O(N) per-element
-	// ValueAt calls through the codec tree during deserialization of untrusted
-	// data. The full sorted invariant is guaranteed by construction during
-	// compression; adversarial payloads that violate sortedness may produce
-	// wrong results in Find/ValueAt point queries but cannot cause out-of-bounds
-	// access in Apply (which scatters without order dependency).
+	// Validate all indices without materializing attacker-sized child arrays.
 	limit := p.offset + p.length
-	n := p.indices.Length()
-	first := uint64(p.indices.ValueAt(0))
-	if first < p.offset || first >= limit {
-		return fmt.Errorf("codec: patch index = %d, want [%d, %d)", first, p.offset, limit)
-	}
-	if n > 1 {
-		last := uint64(p.indices.ValueAt(n - 1))
-		if last < p.offset || last >= limit {
-			return fmt.Errorf("codec: patch index = %d, want [%d, %d)", last, p.offset, limit)
+	prev := uint64(0)
+	for i := range p.indices.Length() {
+		idx := uint64(p.indices.ValueAt(i))
+		if idx < p.offset || idx >= limit {
+			return fmt.Errorf("codec: patch index = %d, want [%d, %d)", idx, p.offset, limit)
 		}
-		if last <= first {
-			return fmt.Errorf("codec: patch last index %d must be > first index %d", last, first)
+		if i > 0 && idx <= prev {
+			return fmt.Errorf("codec: patch indices not strictly increasing at position %d: %d <= %d", i, idx, prev)
 		}
+		prev = idx
 	}
 	return nil
 }
@@ -191,7 +186,7 @@ func (p *patches[V, I]) Slice(start, end uint64) (*patches[V, I], error) {
 		first = lo
 	}
 	// Binary search for the first index >= absEnd.
-	last := first
+	var last uint64
 	{
 		lo, hi := first, n
 		for lo < hi {
@@ -223,9 +218,16 @@ func prefixPatchError(err error, prefix string) error {
 	if err == nil {
 		return nil
 	}
-	msg := err.Error()
-	if strings.HasPrefix(msg, "codec: ") {
-		return fmt.Errorf("codec: %s %s", prefix, strings.TrimPrefix(msg, "codec: "))
-	}
-	return fmt.Errorf("codec: %s %v", prefix, err)
+	return prefixedPatchError{prefix: prefix, err: err}
 }
+
+type prefixedPatchError struct {
+	prefix string
+	err    error
+}
+
+func (e prefixedPatchError) Error() string {
+	return "codec: " + e.prefix + " " + strings.TrimPrefix(e.err.Error(), "codec: ")
+}
+
+func (e prefixedPatchError) Unwrap() error { return e.err }

@@ -29,20 +29,20 @@ func (w *shortWriter) Write(p []byte) (int, error) {
 
 func TestHeaderWriteTo(t *testing.T) {
 	header := Header{
-		Version: 2,
-		PType:   PTypeUint32,
-		Flags:   0x1122,
-		Length:  0x0102030405060708,
-		NumBytes:  0x1112131415161718,
+		Version:  2,
+		PType:    PTypeUint32,
+		Flags:    0x1122,
+		Length:   0x0102030405060708,
+		NumBytes: 0x1112131415161718,
 	}
 
 	var buf bytes.Buffer
 	n, err := header.WriteTo(&buf)
 	require.NoError(t, err)
-	require.EqualValues(t, headerSize, n)
+	require.Equal(t, int64(headerSize), n)
 
 	got := buf.Bytes()
-	require.Len(t, got, headerSize)
+	require.Equal(t, headerSize, len(got))
 	require.Equal(t, header.Version, got[0])
 	require.Equal(t, header.PType, PType(got[1]))
 	require.Equal(t, header.Flags, binary.LittleEndian.Uint16(got[2:4]))
@@ -51,26 +51,26 @@ func TestHeaderWriteTo(t *testing.T) {
 }
 
 func BenchmarkHeaderWriteTo(b *testing.B) {
-	h := Header{Version: 1, PType: PTypeUint32, Length: 1000, NumBytes: 4000}
+	h := Header{Version: FormatVersion, PType: PTypeUint32, Length: 1000, NumBytes: 4000}
 	var buf bytes.Buffer
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		buf.Reset()
 		_, _ = h.WriteTo(&buf)
 	}
 }
 
 func TestHeaderWriteToShortWrite(t *testing.T) {
-	header := Header{Version: 1, PType: PTypeUint32, Length: 9, NumBytes: 32}
+	header := Header{Version: FormatVersion, PType: PTypeUint32, Length: 9, NumBytes: 32}
 	writer := &shortWriter{remaining: headerSize - 1}
 
 	n, err := header.WriteTo(writer)
 	require.ErrorIs(t, err, io.ErrShortWrite)
-	require.EqualValues(t, headerSize-1, n)
+	require.Equal(t, int64(headerSize-1), n)
 }
 
 func TestReadOptionsRejectsOversizedHeader(t *testing.T) {
-	h := Header{Version: 1, PType: PTypeInt32, Length: 1_000_000, NumBytes: 4_000_000}
+	h := Header{Version: FormatVersion, PType: PTypeInt32, Length: 1_000_000, NumBytes: 4_000_000}
 	require.NoError(t, validateHeader(h, ReadOptions{}))
 	require.Error(t, validateHeader(h, ReadOptions{MaxLength: 100_000}))
 	require.Error(t, validateHeader(h, ReadOptions{MaxBytes: 1_000_000}))
@@ -84,25 +84,25 @@ func TestReadPrimitivesWithMaxLength(t *testing.T) {
 	require.NoError(t, err)
 
 	// Without limits: succeeds.
-	_, err = ReadPrimitives[int32](bytes.NewReader(buf.Bytes()))
+	_, err = readPrimitiveFromBytes[int32](buf.Bytes())
 	require.NoError(t, err)
 
 	// With tight limit: rejected before allocation.
-	_, err = ReadPrimitives[int32](bytes.NewReader(buf.Bytes()), ReadOptions{MaxLength: 3})
+	_, err = readPrimitiveFromBytes[int32](buf.Bytes(), ReadOptions{MaxLength: 3})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "exceeds limit")
+	require.ErrorContains(t, err, "exceeds limit")
 }
 
 func FuzzReadHeader(f *testing.F) {
 	// Seed with valid header bytes so the fuzz corpus has at least one valid input.
 	valid := make([]byte, headerSize)
-	valid[0] = 1
+	valid[0] = FormatVersion
 	valid[1] = byte(PTypeInt32)
 	binary.LittleEndian.PutUint64(valid[4:12], 100)
 	binary.LittleEndian.PutUint64(valid[12:20], 400)
 	f.Add(valid)
 	f.Fuzz(func(t *testing.T, data []byte) {
-		_, _ = readHeader(bytes.NewReader(data))
+		_, _ = readHeaderFromBuf(&BufReader{Buf: data})
 		// Must not panic; error is acceptable for invalid/corrupt input.
 	})
 }

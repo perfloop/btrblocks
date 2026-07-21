@@ -2,57 +2,81 @@ package btrblocks
 
 import "github.com/axiomhq/btrblocks/array"
 
-// signedStats extends baseStats with negative-value tracking for signed arrays.
-type signedStats[T SignedInteger] struct {
-	base        baseStats[T]
-	distinct    map[T]uint64 // value → ordinal index, used by dict build
-	hasNegative bool
-	min         T
-	max         T
+// intStats extends baseStats with min/max bounds, sequence detection, and
+// negative-value tracking for integer arrays. hasNegative is constant-false
+// for unsigned instantiations.
+type intStats[T array.Integer] struct {
+	baseStats[T]
+	distinct     map[T]uint64 // value → frequency, used to bound dictionary planning
+	hasNegative  bool
+	isSequence   bool
+	min          T
+	max          T
+	sequenceBase T
+	sequenceStep T
 }
 
-func (s signedStats[T]) Source() array.Array[T] {
-	return s.base.Source()
-}
-
-func (s signedStats[T]) Sample(ctx planContext) array.ArrayCore[T] {
-	return s.base.Sample(ctx)
-}
-
-// computeSignedStats matches the unsigned path but also tracks whether any
-// negative value was observed so zigzag can be gated without a second pass.
-// The full distinct map is retained for dict construction (see stats_uint.go).
-func computeSignedStats[T SignedInteger](arr array.Array[T]) signedStats[T] {
+// computeIntStatsForPlanner scans the full column once and keeps min/max,
+// sequence, run-length, and negative-value statistics. It retains bounded
+// frequencies only when an eligible scheme needs them.
+func computeIntStatsForPlanner[T array.Integer](arr array.Array[T], collectFrequencies bool) intStats[T] {
 	n := arr.Length()
 	if n == 0 {
-		return signedStats[T]{
-			base: baseStats[T]{src: arr, cached: arr},
+		return intStats[T]{
+			baseStats: baseStats[T]{src: arr},
 		}
 	}
-
-	// Materialize once to avoid per-element interface dispatch.
-	vals := make([]T, n)
-	arr.CopyTo(vals)
-
-	distinct := make(map[T]uint64, 256)
 	runs := uint64(1)
-	prev := vals[0]
+	prev := arr.ValueAt(0)
+	sequenceBase := prev
+	var sequenceStep T
+	isSequence := n >= 2
+	if isSequence {
+		sequenceStep = arr.ValueAt(1) - prev
+		isSequence = sequenceStep != 0
+	}
 	hasNegative := prev < 0
 	minValue := prev
 	maxValue := prev
-	distinct[prev] = 0
+	mostFrequent := uint64(1)
 
-	for _, v := range vals[1:] {
-		if distinct != nil {
-			if _, exists := distinct[v]; !exists {
-				if uint64(len(distinct)) >= n/2 {
-					// Dict encoding is not viable — more than n/2 distinct values.
-					// Nil the map to bound stats memory for high-cardinality columns.
-					// Safe because the dict estimator rejects at this threshold, so
-					// the dict build function is never called with a nil map.
+	// Discriminators, bools, and other uint8 metadata have a fixed domain.
+	// Count them by value and materialize the usually tiny distinct map once,
+	// avoiding a hash lookup for every row. Wider integers retain the bounded
+	// map policy below.
+	useByteCounts := collectFrequencies && array.PTypeOfPrimitive[T]() == array.PTypeUint8
+	var byteCounts [256]uint64
+	var distinct map[T]uint64
+	if useByteCounts {
+		byteCounts[uint8(prev)] = 1
+	} else if collectFrequencies {
+		// Avoid reserving a full page-sized dictionary for small metadata arrays.
+		distinct = make(map[T]uint64, distinctInitialCapacity(n))
+		distinct[prev] = 1
+	}
+
+	for i := uint64(1); i < n; i++ {
+		v := arr.ValueAt(i)
+		if isSequence && v-prev != sequenceStep {
+			isSequence = false
+		}
+		if useByteCounts {
+			idx := uint8(v)
+			byteCounts[idx]++
+			mostFrequent = max(mostFrequent, byteCounts[idx])
+		} else if distinct != nil {
+			if count, exists := distinct[v]; exists {
+				count++
+				distinct[v] = count
+				mostFrequent = max(mostFrequent, count)
+			} else {
+				if len(distinct) >= maxRetainedDistinctValues || uint64(len(distinct)) >= n/2 {
+					// Stop paying hash-table costs during generic stats collection.
+					// The planner samples larger dictionaries and rebuilds the exact
+					// map only when dictionary encoding wins.
 					distinct = nil
 				} else {
-					distinct[v] = uint64(len(distinct))
+					distinct[v] = 1
 				}
 			}
 		}
@@ -71,24 +95,46 @@ func computeSignedStats[T SignedInteger](arr array.Array[T]) signedStats[T] {
 		}
 	}
 
-	// When distinct is nil, the true count exceeded n/2. Report n so downstream
-	// estimators (dict, const) see a value that triggers their rejection guards.
-	dc := uint64(len(distinct))
-	if distinct == nil {
+	var dc uint64
+	if !collectFrequencies {
 		dc = n
+		mostFrequent = 0
+	} else if useByteCounts {
+		for _, count := range byteCounts {
+			if count > 0 {
+				dc++
+			}
+		}
+		distinct = make(map[T]uint64, dc)
+		for value, count := range byteCounts {
+			if count > 0 {
+				distinct[T(value)] = count
+			}
+		}
+	} else {
+		// When distinct is nil, cardinality exceeded the retained-map budget.
+		// Report n so analytical users reject it; dictionary planning follows
+		// the nil map into the bounded sample estimator instead.
+		dc = uint64(len(distinct))
+		if distinct == nil {
+			dc = n
+			mostFrequent = 0
+		}
 	}
-
-	return signedStats[T]{
-		base: baseStats[T]{
+	return intStats[T]{
+		baseStats: baseStats[T]{
 			src:           arr,
-			cached:        sampleArray(arr),
 			isConst:       runs == 1,
 			distinctCount: dc,
 			avgRunLength:  float64(n) / float64(runs),
+			mostFrequent:  mostFrequent,
 		},
-		distinct:    distinct,
-		hasNegative: hasNegative,
-		min:         minValue,
-		max:         maxValue,
+		distinct:     distinct,
+		hasNegative:  hasNegative,
+		isSequence:   isSequence,
+		min:          minValue,
+		max:          maxValue,
+		sequenceBase: sequenceBase,
+		sequenceStep: sequenceStep,
 	}
 }

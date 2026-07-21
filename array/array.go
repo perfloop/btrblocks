@@ -1,25 +1,25 @@
 package array
 
 import (
+	"errors"
 	"fmt"
 	"io"
-	"unsafe"
 )
 
-func init() {
-	var x uint32 = 0x01020304
-	if *(*byte)(unsafe.Pointer(&x)) != 0x04 {
-		panic("array: unsafe I/O requires a little-endian platform")
-	}
-}
-
-// ArrayCore is the minimal read interface for columnar data: element access and length.
-// Used by planner estimation and codec build paths that only need to scan values.
+// ArrayCore is the minimal read interface for columnar data: values, validity,
+// and length. Used by planner estimation and codec build paths that only need
+// to scan an array.
 type ArrayCore[T Integer | Float | String] interface {
-	// ValueAt returns the value at the given index. Panics if offset >= Length().
+	// ValueAt returns the physical value at the given index. Callers must consult
+	// IsValid before interpreting it. Panics if offset >= Length().
 	ValueAt(offset uint64) T
 	// Length is the number of elements in the array.
 	Length() uint64
+	// IsValid reports whether the value at offset is non-null. Panics if
+	// offset >= Length().
+	IsValid(offset uint64) bool
+	// NullCount returns the number of null values.
+	NullCount() uint64
 }
 
 // Array is a fully materialized columnar array that can be serialized and sliced.
@@ -46,12 +46,97 @@ func ValidateSliceBounds(length, start, end uint64) error {
 	return nil
 }
 
-func ReadArray[T Integer | Float | String](r io.Reader, opts ...ReadOptions) (Array[T], error) {
-	header, err := readHeader(r)
+// MaterializePrimitiveSlice copies [start, end) into owned primitive storage.
+func MaterializePrimitiveSlice[T PrimitiveType](src ArrayCore[T], start, end uint64) (*Primitives[T], error) {
+	if err := ValidateSliceBounds(src.Length(), start, end); err != nil {
+		return nil, err
+	}
+	values := make([]T, end-start)
+	for i := range values {
+		values[i] = src.ValueAt(start + uint64(i))
+	}
+	validity, err := materializeValiditySlice(src, start, end)
 	if err != nil {
 		return nil, err
 	}
-	return readArrayWithHeader[T](r, header, readOpts(opts))
+	return NewPrimitivesWithValidityUnsafe(values, validity)
+}
+
+// MaterializeStringSlice copies [start, end) into owned string storage.
+func MaterializeStringSlice(src ArrayCore[string], start, end uint64) (Array[string], error) {
+	if err := ValidateSliceBounds(src.Length(), start, end); err != nil {
+		return nil, err
+	}
+	values := make([]string, end-start)
+	for i := range values {
+		values[i] = src.ValueAt(start + uint64(i))
+	}
+	validity, err := materializeValiditySlice(src, start, end)
+	if err != nil {
+		return nil, err
+	}
+	return NewStringsWithValidity(values, validity)
+}
+
+// NewArrayWithValidity builds the family-appropriate array for values —
+// Primitives for numeric element types, Strings for string — pairing them
+// with validity. It takes ownership of values; callers must not modify values
+// after the call.
+func NewArrayWithValidity[T Integer | Float | String](values []T, validity Validity) (Array[T], error) {
+	switch values := any(values).(type) {
+	case []int8:
+		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
+	case []int16:
+		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
+	case []int32:
+		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
+	case []int64:
+		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
+	case []uint8:
+		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
+	case []uint16:
+		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
+	case []uint32:
+		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
+	case []uint64:
+		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
+	case []float32:
+		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
+	case []float64:
+		return asArray[T](NewPrimitivesWithValidityUnsafe(values, validity))
+	case []string:
+		return asArray[T](NewStringsWithValidity(values, validity))
+	default:
+		return nil, fmt.Errorf("array: unsupported element type %T", values)
+	}
+}
+
+// asArray adapts a concretely-typed constructor result to the generic return
+// type. Each NewArrayWithValidity arm matches values to the concrete []U
+// first, so the assertion back to Array[T] cannot fail.
+func asArray[T, U Integer | Float | String](arr Array[U], err error) (Array[T], error) {
+	if err != nil {
+		return nil, err
+	}
+	return any(arr).(Array[T]), nil
+}
+
+func materializeValiditySlice(src interface {
+	Length() uint64
+	IsValid(uint64) bool
+	NullCount() uint64
+}, start, end uint64) (Validity, error) {
+	length := end - start
+	if src.NullCount() == 0 {
+		return AllValid(length), nil
+	}
+	bitmap := make([]byte, validityByteLength(length))
+	for i := range length {
+		if src.IsValid(start + i) {
+			bitmap[i>>3] |= byte(1 << (i & 7))
+		}
+	}
+	return NewValidityUnsafe(length, bitmap)
 }
 
 func readOpts(opts []ReadOptions) ReadOptions {
@@ -61,174 +146,44 @@ func readOpts(opts []ReadOptions) ReadOptions {
 	return ReadOptions{}
 }
 
-func ReadArrayFromBuf[T Integer | Float | String](br *BufReader, opts ...ReadOptions) (Array[T], error) {
+func readArrayHeader(br *BufReader, opts []ReadOptions) (Header, error) {
+	if br == nil {
+		return Header{}, errors.New("array: nil buffer reader")
+	}
 	header, err := readHeaderFromBuf(br)
+	if err != nil {
+		return Header{}, fmt.Errorf("array: reading header: %w", err)
+	}
+	if err := validateHeader(header, readOpts(opts)); err != nil {
+		return Header{}, err
+	}
+	return header, nil
+}
+
+// ReadPrimitiveFromBuf decodes one zero-copy numeric array and advances br.
+// Keep br.Buf alive and unchanged for the lifetime of the result.
+func ReadPrimitiveFromBuf[T PrimitiveType](br *BufReader, opts ...ReadOptions) (*Primitives[T], error) {
+	header, err := readArrayHeader(br, opts)
 	if err != nil {
 		return nil, err
 	}
-	return readArrayFromBufWithHeader[T](br, header, readOpts(opts))
+	primitive, err := readPrimitivesFromBuf[T](br, header)
+	if err != nil {
+		return nil, fmt.Errorf("array: reading primitive body: %w", err)
+	}
+	return primitive, nil
 }
 
-func readArrayFromBufWithHeader[T Integer | Float | String](br *BufReader, header Header, opts ReadOptions) (Array[T], error) {
-	if err := validateHeader(header, opts); err != nil {
+// ReadStringsFromBuf decodes one zero-copy string array and advances br. Keep
+// br.Buf alive and unchanged for the lifetime of the result.
+func ReadStringsFromBuf(br *BufReader, opts ...ReadOptions) (Array[string], error) {
+	header, err := readArrayHeader(br, opts)
+	if err != nil {
 		return nil, err
 	}
-	expected := PTypeForType[T]()
-	if header.PType != expected {
-		return nil, fmt.Errorf("array: PType %v does not match %T", header.PType, *new(T))
+	strings, err := readStringsFromBuf(br, header)
+	if err != nil {
+		return nil, fmt.Errorf("array: reading string body: %w", err)
 	}
-
-	var zero T
-	switch any(zero).(type) {
-	case int8:
-		arr, err := readPrimitivesFromBuf[int8](br, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case int16:
-		arr, err := readPrimitivesFromBuf[int16](br, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case int32:
-		arr, err := readPrimitivesFromBuf[int32](br, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case int64:
-		arr, err := readPrimitivesFromBuf[int64](br, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case uint8:
-		arr, err := readPrimitivesFromBuf[uint8](br, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case uint16:
-		arr, err := readPrimitivesFromBuf[uint16](br, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case uint32:
-		arr, err := readPrimitivesFromBuf[uint32](br, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case uint64:
-		arr, err := readPrimitivesFromBuf[uint64](br, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case float32:
-		arr, err := readPrimitivesFromBuf[float32](br, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case float64:
-		arr, err := readPrimitivesFromBuf[float64](br, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case string:
-		arr, err := readStringsFromBuf(br, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	default:
-		return nil, fmt.Errorf("array: unsupported element type %T", zero)
-	}
-}
-
-func readArrayWithHeader[T Integer | Float | String](r io.Reader, header Header, opts ReadOptions) (Array[T], error) {
-	if err := validateHeader(header, opts); err != nil {
-		return nil, err
-	}
-	expected := PTypeForType[T]()
-	if header.PType != expected {
-		return nil, fmt.Errorf("array: PType %v does not match %T", header.PType, *new(T))
-	}
-
-	var zero T
-	switch any(zero).(type) {
-	case int8:
-		arr, err := readPrimitivesWithHeader[int8](r, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case int16:
-		arr, err := readPrimitivesWithHeader[int16](r, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case int32:
-		arr, err := readPrimitivesWithHeader[int32](r, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case int64:
-		arr, err := readPrimitivesWithHeader[int64](r, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case uint8:
-		arr, err := readPrimitivesWithHeader[uint8](r, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case uint16:
-		arr, err := readPrimitivesWithHeader[uint16](r, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case uint32:
-		arr, err := readPrimitivesWithHeader[uint32](r, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case uint64:
-		arr, err := readPrimitivesWithHeader[uint64](r, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case float32:
-		arr, err := readPrimitivesWithHeader[float32](r, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case float64:
-		arr, err := readPrimitivesWithHeader[float64](r, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	case string:
-		arr, err := readStringsWithHeader(r, header)
-		if err != nil {
-			return nil, err
-		}
-		return any(arr).(Array[T]), nil
-	default:
-		return nil, fmt.Errorf("array: unsupported element type %T", zero)
-	}
+	return strings, nil
 }
