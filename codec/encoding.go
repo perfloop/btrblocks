@@ -31,6 +31,8 @@ var (
 	// ErrMaterializationLimit means a build or decode allocation would exceed
 	// its configured byte budget.
 	ErrMaterializationLimit = errors.New("codec: materialization limit exceeded")
+	// ErrWorkLimit means a decode's validation work exceeded ReadOptions.MaxWork.
+	ErrWorkLimit = errors.New("codec: decode work limit exceeded")
 )
 
 const defaultMaxMaterializedBytes = 64 << 20
@@ -43,6 +45,9 @@ type (
 	String          = array.String
 	PType           = array.PType
 	ReadOptions     = array.ReadOptions
+	// BuildOptions bounds temporary memory used by low-level builders. It is
+	// array.BuildOptions: one byte-budget knob for the whole build path.
+	BuildOptions = array.BuildOptions
 )
 
 type cmpFn[T Integer | Float | String] func(T, T) bool
@@ -83,6 +88,23 @@ type denseRows uint64
 func (d denseRows) Length() uint64             { return uint64(d) }
 func (d denseRows) IsValid(offset uint64) bool { return allValidAt(uint64(d), offset) }
 func (d denseRows) NullCount() uint64          { return 0 }
+
+// decodeLimit is the materialization budget a node applies to every decode it
+// initiates on its own: the whole-node decode Slice needs when a codec cannot
+// slice structurally, and the child decodes DecompressInto performs. A node read
+// from a stream carries the limit that stream was loaded with, so tightening
+// ReadOptions.MaxDecodedBytes bounds the decodes the resulting arrays perform
+// later and not merely the one Load did. The zero value — what an in-process
+// builder leaves — is the same default Decompress applies, so a locally built
+// node is never more permissive than a loaded one.
+type decodeLimit uint64
+
+func (d decodeLimit) maxDecodedBytes() uint64 {
+	if d == 0 {
+		return defaultMaxMaterializedBytes
+	}
+	return uint64(d)
+}
 
 const (
 	PTypeUnknown = array.PTypeUnknown
@@ -157,23 +179,20 @@ func (k CodecType) String() string {
 	}
 }
 
-// childBuilder compresses one typed structural child for a parent scheme.
-// The caller owns child selection policy; codec builders only produce the
-// transformed child input and assemble the resulting encoding node.
-type childBuilder[T Integer | Float | String] func(array.ArrayCore[T]) (EncodedArray[T], error)
+// encodedNode seals EncodedArray. Every codec node embeds it, and only this
+// package can, so EncodedArray may gain a method without silently breaking an
+// out-of-tree implementation. It is zero-sized; embed it first so it never
+// forces trailing padding.
+type encodedNode struct{}
 
-// unsignedChildBuilder handles a structural child whose physical width is
-// selected from its maximum value.
-type unsignedChildBuilder interface {
-	BuildUint8(array.ArrayCore[uint8]) (EncodedArray[uint8], error)
-	BuildUint16(array.ArrayCore[uint16]) (EncodedArray[uint16], error)
-	BuildUint32(array.ArrayCore[uint32]) (EncodedArray[uint32], error)
-	BuildUint64(array.ArrayCore[uint64]) (EncodedArray[uint64], error)
-}
+func (encodedNode) sealedEncodedArray() {}
 
 // EncodedArray is a typed node in the primitive/string compression tree.
+// Implementations live in this package: the interface is sealed, so it is safe
+// to type-switch on it and safe for it to grow.
 type EncodedArray[T Integer | Float | String] interface {
 	io.WriterTo
+	sealedEncodedArray()
 	CodecType() CodecType
 	ValueAt(offset uint64) T
 	Slice(start, end uint64) (EncodedArray[T], error)
@@ -183,7 +202,41 @@ type EncodedArray[T Integer | Float | String] interface {
 	NullCount() uint64
 	PType() PType
 	DecompressInto(dst []T) error
+	// DecodedBytes reports the memory one full DecompressInto holds live: the
+	// destination buffer plus every intermediate buffer this node and its
+	// descendants allocate while filling it. It is a whole-subtree number by
+	// contract, because Decompress checks it once before the root allocation:
+	// a node that counted only its own destination would let each nested
+	// decode claim the limit again, and depth would multiply peak memory.
 	DecodedBytes() (uint64, error)
+}
+
+// decodeFootprint sums the buffers one DecompressInto holds live at once. Each
+// DecodedBytes implementation states its own destination and adds the children
+// it materializes; the overflow check lives here rather than in fourteen
+// implementations.
+type decodeFootprint struct {
+	bytes uint64
+	err   error
+}
+
+func (f *decodeFootprint) add(bytes uint64, err error) {
+	switch {
+	case f.err != nil: // keep the first failure
+	case err != nil:
+		f.err = err
+	case bytes > ^uint64(0)-f.bytes:
+		f.err = errors.New("codec: decoded size overflows")
+	default:
+		f.bytes += bytes
+	}
+}
+
+func (f *decodeFootprint) result() (uint64, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.bytes, nil
 }
 
 type dictionaryView[T Integer | Float | String] interface {
@@ -198,9 +251,11 @@ func asDictionary[T Integer | Float | String](encoded EncodedArray[T]) (dictiona
 	return view, ok
 }
 
-// Decompress materializes e, rejecting outputs larger than 64 MiB before
-// allocating. Call DecompressTrusted only for locally produced data whose
-// decoded size is already governed by a higher-level memory budget.
+// Decompress materializes e, rejecting it before allocating anything when the
+// decode's footprint exceeds 64 MiB. DecodedBytes covers the whole subtree, so
+// this single check also bounds every nested Decompress the decode performs.
+// Call DecompressTrusted only for locally produced data whose decoded size is
+// already governed by a higher-level memory budget.
 func Decompress[T Integer | Float | String](e EncodedArray[T]) ([]T, error) {
 	return decompress(e, defaultMaxMaterializedBytes)
 }

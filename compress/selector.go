@@ -24,7 +24,10 @@ type planContext struct {
 	// payloads (codes, patches, validity bytes), not the masked view.
 	nullCount uint64
 	excludes  plannerExcludes
-	maxBytes  uint64
+	// build is the byte budget for one temporary materialization, carried in the
+	// type both codec builders and array.ValidityBitmap already accept so no
+	// layer has to restate it.
+	build codec.BuildOptions
 }
 
 // Building several recursive candidates costs more than it can save on tiny
@@ -33,15 +36,7 @@ const minSampledPlanningBytes = 256
 
 func newPlanContext(opts Options) planContext {
 	opts = normalizeOptions(opts)
-	return planContext{depth: opts.MaxDepth, excludes: opts.excludes, maxBytes: opts.MaxBuildBytes}
-}
-
-func (c planContext) buildOptions() codec.BuildOptions {
-	return codec.BuildOptions{MaxBytes: c.maxBytes}
-}
-
-func (c planContext) validityBitmapOptions() array.ValidityBitmapOptions {
-	return array.ValidityBitmapOptions{MaxBytes: c.maxBytes}
+	return planContext{depth: opts.MaxDepth, excludes: opts.excludes, build: codec.BuildOptions{MaxBytes: opts.MaxBytes}}
 }
 
 func (c planContext) sampled() planContext { c.isSample = true; return c }
@@ -51,7 +46,7 @@ func (c planContext) withNullCount(nullCount uint64) planContext {
 	return c
 }
 
-func (c planContext) child(parent CodecType, childIndex uint8) planContext {
+func (c planContext) child(parent codec.CodecType, childIndex uint8) planContext {
 	if c.depth > 0 {
 		c.depth--
 	}
@@ -63,9 +58,9 @@ func (c planContext) child(parent CodecType, childIndex uint8) planContext {
 	return c
 }
 
-func (c planContext) excludesInteger(kind CodecType) bool { return c.excludes.integers.Has(kind) }
-func (c planContext) excludesFloat(kind CodecType) bool   { return c.excludes.floats.Has(kind) }
-func (c planContext) excludesString(kind CodecType) bool  { return c.excludes.strings.Has(kind) }
+func (c planContext) excludesInteger(kind codec.CodecType) bool { return c.excludes.integers.Has(kind) }
+func (c planContext) excludesFloat(kind codec.CodecType) bool   { return c.excludes.floats.Has(kind) }
+func (c planContext) excludesString(kind codec.CodecType) bool  { return c.excludes.strings.Has(kind) }
 
 func primitiveArray[T array.PrimitiveType](arr array.ArrayCore[T]) (array.Array[T], error) {
 	if full, ok := arr.(array.Array[T]); ok {
@@ -88,8 +83,8 @@ func compressChildCore[T array.Integer | array.Float | array.String](
 	ctx planContext,
 	family string,
 	toFull func(array.ArrayCore[T]) (array.Array[T], error),
-	compressFull func(array.Array[T], planContext) (EncodedArray[T], error),
-) (EncodedArray[T], error) {
+	compressFull func(array.Array[T], planContext) (codec.EncodedArray[T], error),
+) (codec.EncodedArray[T], error) {
 	materialized, err := toFull(arr)
 	if err != nil {
 		return nil, fmt.Errorf("compress: materialize %s child: %w", family, err)
@@ -97,27 +92,27 @@ func compressChildCore[T array.Integer | array.Float | array.String](
 	return compressFull(materialized, ctx)
 }
 
-func compressSignedCore[T array.SignedInteger](arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
+func compressSignedCore[T array.SignedInteger](arr array.ArrayCore[T], ctx planContext) (codec.EncodedArray[T], error) {
 	return compressChildCore(arr, ctx, "signed", primitiveArray[T], compressSigned[T])
 }
 
-func compressUnsignedCore[T array.UnsignedInteger](arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
+func compressUnsignedCore[T array.UnsignedInteger](arr array.ArrayCore[T], ctx planContext) (codec.EncodedArray[T], error) {
 	return compressChildCore(arr, ctx, "unsigned", primitiveArray[T], compressUnsigned[T])
 }
 
-func compressFloat32Core(arr array.ArrayCore[float32], ctx planContext) (EncodedArray[float32], error) {
+func compressFloat32Core(arr array.ArrayCore[float32], ctx planContext) (codec.EncodedArray[float32], error) {
 	return compressChildCore(arr, ctx, "float32", primitiveArray[float32], compressFloat32)
 }
 
-func compressFloat64Core(arr array.ArrayCore[float64], ctx planContext) (EncodedArray[float64], error) {
+func compressFloat64Core(arr array.ArrayCore[float64], ctx planContext) (codec.EncodedArray[float64], error) {
 	return compressChildCore(arr, ctx, "float64", primitiveArray[float64], compressFloat64)
 }
 
-func compressStringCore(arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
+func compressStringCore(arr array.ArrayCore[string], ctx planContext) (codec.EncodedArray[string], error) {
 	return compressChildCore(arr, ctx, "string", stringArray, compressString)
 }
 
-func rawEncoded[T array.Integer | array.Float | array.String](arr array.Array[T]) (EncodedArray[T], error) {
+func rawEncoded[T array.Integer | array.Float | array.String](arr array.Array[T]) (codec.EncodedArray[T], error) {
 	return codec.EncodeRaw(arr)
 }
 
@@ -125,12 +120,12 @@ func rawEncoded[T array.Integer | array.Float | array.String](arr array.Array[T]
 // sentinel. These are safe to swallow with a raw fallback. Any other error
 // indicates a bug in the codec and must propagate.
 func isExpectedBuildError(err error) bool {
-	return errors.Is(err, ErrDepthExhausted) ||
-		errors.Is(err, ErrDataEmpty) ||
-		errors.Is(err, ErrValueNotConstant) ||
-		errors.Is(err, ErrNotArithmeticSequence) ||
-		errors.Is(err, ErrALPHighPatchRatio) ||
-		errors.Is(err, ErrALPRDHighPatchRatio)
+	return errors.Is(err, codec.ErrDepthExhausted) ||
+		errors.Is(err, codec.ErrDataEmpty) ||
+		errors.Is(err, codec.ErrValueNotConstant) ||
+		errors.Is(err, codec.ErrNotArithmeticSequence) ||
+		errors.Is(err, codec.ErrALPHighPatchRatio) ||
+		errors.Is(err, codec.ErrALPRDHighPatchRatio)
 }
 
 // statsSource exposes the complete source array to the planner.
@@ -199,7 +194,7 @@ func deferredEstimate(ctx planContext, ratio float64) schemeEstimate {
 	return schemeEstimate{kind: estimateDeferred, ratio: ratio}
 }
 
-type schemeBuild[T array.Integer | array.Float | array.String] func(array.ArrayCore[T], planContext) (EncodedArray[T], error)
+type schemeBuild[T array.Integer | array.Float | array.String] func(array.ArrayCore[T], planContext) (codec.EncodedArray[T], error)
 
 type schemeResolve[T array.Integer | array.Float | array.String, S statsSource[T]] func(array.Array[T], S, planContext, schemeEstimate, float64) (resolvedEstimate[T], error)
 
@@ -208,7 +203,7 @@ type schemeResolve[T array.Integer | array.Float | array.String, S statsSource[T
 // scheme sets are initialized once per concrete primitive type so their
 // generic function values do not escape once per column.
 type scheme[T array.Integer | array.Float | array.String, S statsSource[T]] struct {
-	kind     CodecType
+	kind     codec.CodecType
 	estimate func(stats S, ctx planContext) schemeEstimate
 	resolve  schemeResolve[T, S]
 	build    schemeBuild[T]
@@ -229,7 +224,7 @@ type schemeSet[T array.Integer | array.Float | array.String, S statsSource[T]] s
 type compressor[T array.Integer | array.Float | array.String, S statsSource[T]] interface {
 	ComputeStats(arr array.Array[T], ctx planContext) S
 	Schemes(stats S) schemeSet[T, S]
-	IsExcluded(ctx planContext, kind CodecType) bool
+	IsExcluded(ctx planContext, kind codec.CodecType) bool
 	RawEncodedSize(array.ArrayCore[T]) uint64
 }
 
@@ -237,28 +232,28 @@ type compressor[T array.Integer | array.Float | array.String, S statsSource[T]] 
 // value-frequency collection: skipped when nulls dominate the array or when
 // both frequency consumers, Dict and Sparse, are excluded for c's family.
 func shouldCollectFrequencies[T array.Integer | array.Float | array.String, S statsSource[T]](arr array.Array[T], ctx planContext, c compressor[T, S]) bool {
-	allConsumersExcluded := c.IsExcluded(ctx, CodecTypeDict) && c.IsExcluded(ctx, CodecTypeSparse)
+	allConsumersExcluded := c.IsExcluded(ctx, codec.CodecTypeDict) && c.IsExcluded(ctx, codec.CodecTypeSparse)
 	return !countDominates(arr.Length(), ctx.nullCount) && !allConsumersExcluded
 }
 
-func compressWith[T array.Integer | array.Float | array.String, S statsSource[T]](arr array.Array[T], ctx planContext, c compressor[T, S]) (EncodedArray[T], error) {
+func compressWith[T array.Integer | array.Float | array.String, S statsSource[T]](arr array.Array[T], ctx planContext, c compressor[T, S]) (codec.EncodedArray[T], error) {
 	return compressWithDiagnostics(arr, ctx, c, nil)
 }
 
 type resolvedEstimate[T array.Integer | array.Float | array.String] struct {
-	encoded EncodedArray[T]
+	encoded codec.EncodedArray[T]
 	ratio   float64
 	ok      bool
 }
 
 type schemeSelection[T array.Integer | array.Float | array.String, S statsSource[T]] struct {
 	candidate scheme[T, S]
-	encoded   EncodedArray[T]
+	encoded   codec.EncodedArray[T]
 	ratio     float64
 }
 
 type selectorCandidateDiagnostic struct {
-	kind     CodecType
+	kind     codec.CodecType
 	estimate estimateType
 	ratio    float64
 	selected bool
@@ -270,8 +265,8 @@ type selectorCandidateDiagnostic struct {
 type selectorDiagnostics struct {
 	candidates    [maxSchemeCount]selectorCandidateDiagnostic
 	count         int
-	selectedKind  CodecType
-	resultKind    CodecType
+	selectedKind  codec.CodecType
+	resultKind    codec.CodecType
 	rawBytes      uint64
 	resultBytes   uint64
 	sampleCreated bool
@@ -289,7 +284,7 @@ func (d selectorDiagnostics) String() string {
 	return result.String()
 }
 
-func compressWithDiagnostics[T array.Integer | array.Float | array.String, S statsSource[T]](arr array.Array[T], ctx planContext, c compressor[T, S], diagnostics *selectorDiagnostics) (EncodedArray[T], error) {
+func compressWithDiagnostics[T array.Integer | array.Float | array.String, S statsSource[T]](arr array.Array[T], ctx planContext, c compressor[T, S], diagnostics *selectorDiagnostics) (codec.EncodedArray[T], error) {
 	stats := c.ComputeStats(arr, ctx)
 	selection, err := chooseScheme(arr, stats, ctx, c, diagnostics)
 	if err != nil {
@@ -315,8 +310,8 @@ func compressWithDiagnostics[T array.Integer | array.Float | array.String, S sta
 
 // buildScheme builds s, falling back to a raw array on an expected "scheme
 // doesn't apply" build error and propagating any other error.
-func buildScheme[T array.Integer | array.Float | array.String, S statsSource[T]](arr array.Array[T], ctx planContext, s scheme[T, S]) (EncodedArray[T], error) {
-	if s.kind == CodecTypeRaw {
+func buildScheme[T array.Integer | array.Float | array.String, S statsSource[T]](arr array.Array[T], ctx planContext, s scheme[T, S]) (codec.EncodedArray[T], error) {
+	if s.kind == codec.CodecTypeRaw {
 		return rawEncoded(arr)
 	}
 	encoded, err := buildCandidate(arr, ctx, s)
@@ -330,7 +325,7 @@ func buildScheme[T array.Integer | array.Float | array.String, S statsSource[T]]
 }
 
 // rawFallback returns a raw encoding of arr when encoded does not beat it.
-func rawFallback[T array.Integer | array.Float | array.String](arr array.Array[T], encoded EncodedArray[T], rawBytes uint64) EncodedArray[T] {
+func rawFallback[T array.Integer | array.Float | array.String](arr array.Array[T], encoded codec.EncodedArray[T], rawBytes uint64) codec.EncodedArray[T] {
 	if encoded.BinarySize() >= rawBytes {
 		raw, err := rawEncoded(arr)
 		if err != nil {
@@ -342,11 +337,11 @@ func rawFallback[T array.Integer | array.Float | array.String](arr array.Array[T
 }
 
 func primitiveRawEncodedSize[T array.Integer | array.Float](arr array.ArrayCore[T]) uint64 {
-	return uint64(headerSize) + primitiveRawBinarySize(arr)
+	return uint64(codec.HeaderSize) + primitiveRawBinarySize(arr)
 }
 
 func stringRawEncodedSize(arr array.ArrayCore[string]) uint64 {
-	return uint64(headerSize) + stringRawBinarySize(arr)
+	return uint64(codec.HeaderSize) + stringRawBinarySize(arr)
 }
 
 func chooseScheme[T array.Integer | array.Float | array.String, S statsSource[T]](arr array.Array[T], stats S, ctx planContext, c compressor[T, S], diagnostics *selectorDiagnostics) (schemeSelection[T, S], error) {
@@ -362,9 +357,9 @@ func chooseScheme[T array.Integer | array.Float | array.String, S statsSource[T]
 	// designated winner for that case. Short-circuit before sample-based
 	// candidates recursively build codec trees. A constant sampled window is
 	// not proof that the complete source is constant, hence the isSample guard.
-	if !ctx.isSample && stats.IsConstant() && !c.IsExcluded(ctx, CodecTypeConst) {
+	if !ctx.isSample && stats.IsConstant() && !c.IsExcluded(ctx, codec.CodecTypeConst) {
 		for i, candidate := range candidates {
-			if candidate.kind == CodecTypeConst {
+			if candidate.kind == codec.CodecTypeConst {
 				if diagnostics != nil {
 					diagnostics.candidates[i] = selectorCandidateDiagnostic{kind: candidate.kind, estimate: estimateAlways, selected: true}
 				}
@@ -459,7 +454,7 @@ func validEstimateRatio(ratio float64) bool {
 }
 
 func rawScheme[T array.Integer | array.Float | array.String, S statsSource[T]]() scheme[T, S] {
-	return scheme[T, S]{kind: CodecTypeRaw}
+	return scheme[T, S]{kind: codec.CodecTypeRaw}
 }
 
 func estimateSampleCandidate[T array.Integer | array.Float | array.String, S statsSource[T]](sample array.ArrayCore[T], candidate scheme[T, S], ctx planContext, rawSize func(array.ArrayCore[T]) uint64) (resolvedEstimate[T], error) {
@@ -483,70 +478,70 @@ func estimateSampleCandidate[T array.Integer | array.Float | array.String, S sta
 	return resolvedEstimate[T]{ratio: float64(before) / float64(after), ok: true}, nil
 }
 
-func buildCandidate[T array.Integer | array.Float | array.String, S statsSource[T]](arr array.ArrayCore[T], ctx planContext, candidate scheme[T, S]) (EncodedArray[T], error) {
+func buildCandidate[T array.Integer | array.Float | array.String, S statsSource[T]](arr array.ArrayCore[T], ctx planContext, candidate scheme[T, S]) (codec.EncodedArray[T], error) {
 	if candidate.build != nil {
 		return candidate.build(arr, ctx)
 	}
 	return nil, fmt.Errorf("compress: %s has no build hook", candidate.kind)
 }
 
-func buildIntegerConst[T array.Integer](arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
-	return codec.EncodeConstInteger(arr, ctx.buildOptions())
+func buildIntegerConst[T array.Integer](arr array.ArrayCore[T], ctx planContext) (codec.EncodedArray[T], error) {
+	return codec.EncodeConstInteger(arr, ctx.build)
 }
 
-func buildFloatConst[T array.Float](arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
-	return codec.EncodeConstFloat(arr, ctx.buildOptions())
+func buildFloatConst[T array.Float](arr array.ArrayCore[T], ctx planContext) (codec.EncodedArray[T], error) {
+	return codec.EncodeConstFloat(arr, ctx.build)
 }
 
-func buildStringConst(arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
-	return codec.EncodeConstString(arr, ctx.buildOptions())
+func buildStringConst(arr array.ArrayCore[string], ctx planContext) (codec.EncodedArray[string], error) {
+	return codec.EncodeConstString(arr, ctx.build)
 }
 
-func buildSequence[T array.Integer](arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
-	return codec.EncodeSequence(arr, ctx.buildOptions())
+func buildSequence[T array.Integer](arr array.ArrayCore[T], ctx planContext) (codec.EncodedArray[T], error) {
+	return codec.EncodeSequence(arr, ctx.build)
 }
 
-func buildFoR[T array.Integer](arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
-	return codec.EncodeFoR(arr, ctx.buildOptions())
+func buildFoR[T array.Integer](arr array.ArrayCore[T], ctx planContext) (codec.EncodedArray[T], error) {
+	return codec.EncodeFoR(arr, ctx.build)
 }
 
-type childCompressor[T array.Integer | array.Float | array.String] func(array.ArrayCore[T], planContext) (EncodedArray[T], error)
+type childCompressor[T array.Integer | array.Float | array.String] func(array.ArrayCore[T], planContext) (codec.EncodedArray[T], error)
 
-func buildDelta[T array.Integer](arr array.ArrayCore[T], ctx planContext, compressValues childCompressor[T]) (EncodedArray[T], error) {
+func buildDelta[T array.Integer](arr array.ArrayCore[T], ctx planContext, compressValues childCompressor[T]) (codec.EncodedArray[T], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
-	return codec.EncodeDelta(arr, func(child array.ArrayCore[T]) (EncodedArray[T], error) {
-		return compressValues(child, ctx.child(CodecTypeDelta, 0))
-	}, ctx.buildOptions())
+	return codec.EncodeDelta(arr, func(child array.ArrayCore[T]) (codec.EncodedArray[T], error) {
+		return compressValues(child, ctx.child(codec.CodecTypeDelta, 0))
+	}, ctx.build)
 }
 
-func buildIntegerDict[T array.Integer](arr array.ArrayCore[T], ctx planContext, compressValues childCompressor[T]) (EncodedArray[T], error) {
+func buildIntegerDict[T array.Integer](arr array.ArrayCore[T], ctx planContext, compressValues childCompressor[T]) (codec.EncodedArray[T], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
-	return codec.EncodeIntegerDict(arr, dictionaryChildren[T]{ctx: ctx, compressValues: compressValues}, ctx.buildOptions())
+	return codec.EncodeIntegerDict(arr, dictionaryChildren[T]{ctx: ctx, compressValues: compressValues}, ctx.build)
 }
 
-func buildFloat32Dict(arr array.ArrayCore[float32], ctx planContext) (EncodedArray[float32], error) {
+func buildFloat32Dict(arr array.ArrayCore[float32], ctx planContext) (codec.EncodedArray[float32], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
-	return codec.EncodeFloat32Dict(arr, 0, dictionaryChildren[float32]{ctx: ctx, compressValues: compressFloat32Core}, ctx.buildOptions())
+	return codec.EncodeFloat32Dict(arr, 0, dictionaryChildren[float32]{ctx: ctx, compressValues: compressFloat32Core}, ctx.build)
 }
 
-func buildFloat64Dict(arr array.ArrayCore[float64], ctx planContext) (EncodedArray[float64], error) {
+func buildFloat64Dict(arr array.ArrayCore[float64], ctx planContext) (codec.EncodedArray[float64], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
-	return codec.EncodeFloat64Dict(arr, 0, dictionaryChildren[float64]{ctx: ctx, compressValues: compressFloat64Core}, ctx.buildOptions())
+	return codec.EncodeFloat64Dict(arr, 0, dictionaryChildren[float64]{ctx: ctx, compressValues: compressFloat64Core}, ctx.build)
 }
 
-func buildStringDict(arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
+func buildStringDict(arr array.ArrayCore[string], ctx planContext) (codec.EncodedArray[string], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
-	return codec.EncodeStringDict(arr, dictionaryChildren[string]{ctx: ctx, compressValues: compressStringCore}, ctx.buildOptions())
+	return codec.EncodeStringDict(arr, dictionaryChildren[string]{ctx: ctx, compressValues: compressStringCore}, ctx.build)
 }
 
 type dictionaryChildren[T array.Integer | array.Float | array.String] struct {
@@ -554,37 +549,37 @@ type dictionaryChildren[T array.Integer | array.Float | array.String] struct {
 	compressValues childCompressor[T]
 }
 
-func (c dictionaryChildren[T]) BuildValues(child array.ArrayCore[T]) (EncodedArray[T], error) {
-	return c.compressValues(child, c.ctx.child(CodecTypeDict, 0))
+func (c dictionaryChildren[T]) BuildValues(child array.ArrayCore[T]) (codec.EncodedArray[T], error) {
+	return c.compressValues(child, c.ctx.child(codec.CodecTypeDict, 0))
 }
 
-func (c dictionaryChildren[T]) BuildUint8(child array.ArrayCore[uint8]) (EncodedArray[uint8], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeDict, 1))
+func (c dictionaryChildren[T]) BuildUint8(child array.ArrayCore[uint8]) (codec.EncodedArray[uint8], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeDict, 1))
 }
 
-func (c dictionaryChildren[T]) BuildUint16(child array.ArrayCore[uint16]) (EncodedArray[uint16], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeDict, 1))
+func (c dictionaryChildren[T]) BuildUint16(child array.ArrayCore[uint16]) (codec.EncodedArray[uint16], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeDict, 1))
 }
 
-func (c dictionaryChildren[T]) BuildUint32(child array.ArrayCore[uint32]) (EncodedArray[uint32], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeDict, 1))
+func (c dictionaryChildren[T]) BuildUint32(child array.ArrayCore[uint32]) (codec.EncodedArray[uint32], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeDict, 1))
 }
 
-func (c dictionaryChildren[T]) BuildUint64(child array.ArrayCore[uint64]) (EncodedArray[uint64], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeDict, 1))
+func (c dictionaryChildren[T]) BuildUint64(child array.ArrayCore[uint64]) (codec.EncodedArray[uint64], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeDict, 1))
 }
 
-func buildPrimitiveRunEnd[T array.Integer | array.Float](arr array.ArrayCore[T], ctx planContext, compressValues childCompressor[T]) (EncodedArray[T], error) {
+func buildPrimitiveRunEnd[T array.Integer | array.Float](arr array.ArrayCore[T], ctx planContext, compressValues childCompressor[T]) (codec.EncodedArray[T], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
 	if arr.Length() == 0 {
-		return nil, ErrDataEmpty
+		return nil, codec.ErrDataEmpty
 	}
 	return buildPrimitiveRunEndTyped(arr, ctx, compressValues)
 }
 
-func buildPrimitiveRunEndTyped[V array.Integer | array.Float](arr array.ArrayCore[V], ctx planContext, compressValues childCompressor[V]) (EncodedArray[V], error) {
+func buildPrimitiveRunEndTyped[V array.Integer | array.Float](arr array.ArrayCore[V], ctx planContext, compressValues childCompressor[V]) (codec.EncodedArray[V], error) {
 	switch n := arr.Length(); {
 	case n <= 1<<8:
 		return buildPrimitiveRunEndAs[V, uint8](arr, ctx, compressValues)
@@ -597,25 +592,25 @@ func buildPrimitiveRunEndTyped[V array.Integer | array.Float](arr array.ArrayCor
 	}
 }
 
-func buildPrimitiveRunEndAs[V array.Integer | array.Float, I array.UnsignedInteger](arr array.ArrayCore[V], ctx planContext, compressValues childCompressor[V]) (EncodedArray[V], error) {
+func buildPrimitiveRunEndAs[V array.Integer | array.Float, I array.UnsignedInteger](arr array.ArrayCore[V], ctx planContext, compressValues childCompressor[V]) (codec.EncodedArray[V], error) {
 	return codec.EncodePrimitiveRunEndAs(
 		arr,
-		func(child array.ArrayCore[V]) (EncodedArray[V], error) {
-			return compressValues(child, ctx.child(CodecTypeRunEnd, 0))
+		func(child array.ArrayCore[V]) (codec.EncodedArray[V], error) {
+			return compressValues(child, ctx.child(codec.CodecTypeRunEnd, 0))
 		},
-		func(child array.ArrayCore[I]) (EncodedArray[I], error) {
-			return compressUnsignedCore(child, ctx.child(CodecTypeRunEnd, 1))
+		func(child array.ArrayCore[I]) (codec.EncodedArray[I], error) {
+			return compressUnsignedCore(child, ctx.child(codec.CodecTypeRunEnd, 1))
 		},
-		ctx.buildOptions(),
+		ctx.build,
 	)
 }
 
-func buildStringRunEnd(arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
+func buildStringRunEnd(arr array.ArrayCore[string], ctx planContext) (codec.EncodedArray[string], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
 	if arr.Length() == 0 {
-		return nil, ErrDataEmpty
+		return nil, codec.ErrDataEmpty
 	}
 	switch n := arr.Length(); {
 	case n <= 1<<8:
@@ -629,38 +624,38 @@ func buildStringRunEnd(arr array.ArrayCore[string], ctx planContext) (EncodedArr
 	}
 }
 
-func buildStringRunEndAs[I array.UnsignedInteger](arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
+func buildStringRunEndAs[I array.UnsignedInteger](arr array.ArrayCore[string], ctx planContext) (codec.EncodedArray[string], error) {
 	return codec.EncodeStringRunEndAs(
 		arr,
-		func(child array.ArrayCore[string]) (EncodedArray[string], error) {
-			return compressStringCore(child, ctx.child(CodecTypeRunEnd, 0))
+		func(child array.ArrayCore[string]) (codec.EncodedArray[string], error) {
+			return compressStringCore(child, ctx.child(codec.CodecTypeRunEnd, 0))
 		},
-		func(child array.ArrayCore[I]) (EncodedArray[I], error) {
-			return compressUnsignedCore(child, ctx.child(CodecTypeRunEnd, 1))
+		func(child array.ArrayCore[I]) (codec.EncodedArray[I], error) {
+			return compressUnsignedCore(child, ctx.child(codec.CodecTypeRunEnd, 1))
 		},
-		ctx.buildOptions(),
+		ctx.build,
 	)
 }
 
-func buildIntegerSparse[T array.Integer](arr array.ArrayCore[T], ctx planContext, compressValues childCompressor[T]) (EncodedArray[T], error) {
+func buildIntegerSparse[T array.Integer](arr array.ArrayCore[T], ctx planContext, compressValues childCompressor[T]) (codec.EncodedArray[T], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
-	return codec.EncodeIntegerSparse(arr, sparseChildren[T]{ctx: ctx, compressValues: compressValues}, ctx.buildOptions())
+	return codec.EncodeIntegerSparse(arr, sparseChildren[T]{ctx: ctx, compressValues: compressValues}, ctx.build)
 }
 
-func buildFloatSparse[T array.Float](arr array.ArrayCore[T], ctx planContext, compressValues childCompressor[T]) (EncodedArray[T], error) {
+func buildFloatSparse[T array.Float](arr array.ArrayCore[T], ctx planContext, compressValues childCompressor[T]) (codec.EncodedArray[T], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
-	return codec.EncodeFloatSparse(arr, sparseChildren[T]{ctx: ctx, compressValues: compressValues}, ctx.buildOptions())
+	return codec.EncodeFloatSparse(arr, sparseChildren[T]{ctx: ctx, compressValues: compressValues}, ctx.build)
 }
 
-func buildStringSparse(arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
+func buildStringSparse(arr array.ArrayCore[string], ctx planContext) (codec.EncodedArray[string], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
-	return codec.EncodeStringSparse(arr, sparseChildren[string]{ctx: ctx, compressValues: compressStringCore}, ctx.buildOptions())
+	return codec.EncodeStringSparse(arr, sparseChildren[string]{ctx: ctx, compressValues: compressStringCore}, ctx.build)
 }
 
 type sparseChildren[T array.Integer | array.Float | array.String] struct {
@@ -668,35 +663,35 @@ type sparseChildren[T array.Integer | array.Float | array.String] struct {
 	compressValues childCompressor[T]
 }
 
-func (c sparseChildren[T]) BuildFill(child array.ArrayCore[T]) (EncodedArray[T], error) {
-	return c.compressValues(child, c.ctx.child(CodecTypeSparse, 0))
+func (c sparseChildren[T]) BuildFill(child array.ArrayCore[T]) (codec.EncodedArray[T], error) {
+	return c.compressValues(child, c.ctx.child(codec.CodecTypeSparse, 0))
 }
 
-func (c sparseChildren[T]) BuildValues(child array.ArrayCore[T]) (EncodedArray[T], error) {
-	return c.compressValues(child, c.ctx.child(CodecTypeSparse, 2))
+func (c sparseChildren[T]) BuildValues(child array.ArrayCore[T]) (codec.EncodedArray[T], error) {
+	return c.compressValues(child, c.ctx.child(codec.CodecTypeSparse, 2))
 }
 
-func (c sparseChildren[T]) BuildUint8(child array.ArrayCore[uint8]) (EncodedArray[uint8], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeSparse, 1))
+func (c sparseChildren[T]) BuildUint8(child array.ArrayCore[uint8]) (codec.EncodedArray[uint8], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeSparse, 1))
 }
 
-func (c sparseChildren[T]) BuildUint16(child array.ArrayCore[uint16]) (EncodedArray[uint16], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeSparse, 1))
+func (c sparseChildren[T]) BuildUint16(child array.ArrayCore[uint16]) (codec.EncodedArray[uint16], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeSparse, 1))
 }
 
-func (c sparseChildren[T]) BuildUint32(child array.ArrayCore[uint32]) (EncodedArray[uint32], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeSparse, 1))
+func (c sparseChildren[T]) BuildUint32(child array.ArrayCore[uint32]) (codec.EncodedArray[uint32], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeSparse, 1))
 }
 
-func (c sparseChildren[T]) BuildUint64(child array.ArrayCore[uint64]) (EncodedArray[uint64], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeSparse, 1))
+func (c sparseChildren[T]) BuildUint64(child array.ArrayCore[uint64]) (codec.EncodedArray[uint64], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeSparse, 1))
 }
 
-func buildZigZag[T array.SignedInteger](arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
+func buildZigZag[T array.SignedInteger](arr array.ArrayCore[T], ctx planContext) (codec.EncodedArray[T], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
-	encodedType, err := codec.ZigZagEncodedType(arr, ctx.buildOptions())
+	encodedType, err := codec.ZigZagEncodedType(arr, ctx.build)
 	if err != nil {
 		return nil, err
 	}
@@ -712,28 +707,28 @@ func buildZigZag[T array.SignedInteger](arr array.ArrayCore[T], ctx planContext)
 	}
 }
 
-func buildZigZagAs[T array.SignedInteger, U array.UnsignedInteger](arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
-	return codec.EncodeZigZagAs(arr, func(child array.ArrayCore[U]) (EncodedArray[U], error) {
-		return compressUnsignedCore(child, ctx.child(CodecTypeZigZag, 0))
-	}, ctx.buildOptions())
+func buildZigZagAs[T array.SignedInteger, U array.UnsignedInteger](arr array.ArrayCore[T], ctx planContext) (codec.EncodedArray[T], error) {
+	return codec.EncodeZigZagAs(arr, func(child array.ArrayCore[U]) (codec.EncodedArray[U], error) {
+		return compressUnsignedCore(child, ctx.child(codec.CodecTypeZigZag, 0))
+	}, ctx.build)
 }
 
-func buildBitpack[T array.UnsignedInteger](arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
-	return codec.EncodeBitpack(arr, ctx.buildOptions())
+func buildBitpack[T array.UnsignedInteger](arr array.ArrayCore[T], ctx planContext) (codec.EncodedArray[T], error) {
+	return codec.EncodeBitpack(arr, ctx.build)
 }
 
-func buildALP32(arr array.ArrayCore[float32], ctx planContext) (EncodedArray[float32], error) {
+func buildALP32(arr array.ArrayCore[float32], ctx planContext) (codec.EncodedArray[float32], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
-	return codec.EncodeALP32(arr, alpChildren{ctx: ctx}, ctx.buildOptions())
+	return codec.EncodeALP32(arr, alpChildren{ctx: ctx}, ctx.build)
 }
 
-func buildALP64(arr array.ArrayCore[float64], ctx planContext) (EncodedArray[float64], error) {
+func buildALP64(arr array.ArrayCore[float64], ctx planContext) (codec.EncodedArray[float64], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
-	return codec.EncodeALP64(arr, alpChildren{ctx: ctx}, ctx.buildOptions())
+	return codec.EncodeALP64(arr, alpChildren{ctx: ctx}, ctx.build)
 }
 
 type alpChildren struct {
@@ -741,104 +736,104 @@ type alpChildren struct {
 }
 
 func (c alpChildren) encodedContext() planContext {
-	child := c.ctx.child(CodecTypeALP, 0)
-	if c.ctx.excludes.floats.Has(CodecTypeDict) {
-		child.excludes.integers = child.excludes.integers.With(CodecTypeDict)
+	child := c.ctx.child(codec.CodecTypeALP, 0)
+	if c.ctx.excludes.floats.Has(codec.CodecTypeDict) {
+		child.excludes.integers = child.excludes.integers.With(codec.CodecTypeDict)
 	}
-	if c.ctx.excludes.floats.Has(CodecTypeRunEnd) {
-		child.excludes.integers = child.excludes.integers.With(CodecTypeRunEnd)
+	if c.ctx.excludes.floats.Has(codec.CodecTypeRunEnd) {
+		child.excludes.integers = child.excludes.integers.With(codec.CodecTypeRunEnd)
 	}
 	return child
 }
 
-func (c alpChildren) BuildInt32(child array.ArrayCore[int32]) (EncodedArray[int32], error) {
+func (c alpChildren) BuildInt32(child array.ArrayCore[int32]) (codec.EncodedArray[int32], error) {
 	return compressSignedCore(child, c.encodedContext())
 }
 
-func (c alpChildren) BuildInt64(child array.ArrayCore[int64]) (EncodedArray[int64], error) {
+func (c alpChildren) BuildInt64(child array.ArrayCore[int64]) (codec.EncodedArray[int64], error) {
 	return compressSignedCore(child, c.encodedContext())
 }
 
-func (c alpChildren) BuildUint8(child array.ArrayCore[uint8]) (EncodedArray[uint8], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeALP, 1))
+func (c alpChildren) BuildUint8(child array.ArrayCore[uint8]) (codec.EncodedArray[uint8], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeALP, 1))
 }
 
-func (c alpChildren) BuildUint16(child array.ArrayCore[uint16]) (EncodedArray[uint16], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeALP, 1))
+func (c alpChildren) BuildUint16(child array.ArrayCore[uint16]) (codec.EncodedArray[uint16], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeALP, 1))
 }
 
-func (c alpChildren) BuildUint32(child array.ArrayCore[uint32]) (EncodedArray[uint32], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeALP, 1))
+func (c alpChildren) BuildUint32(child array.ArrayCore[uint32]) (codec.EncodedArray[uint32], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeALP, 1))
 }
 
-func (c alpChildren) BuildUint64(child array.ArrayCore[uint64]) (EncodedArray[uint64], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeALP, 1))
+func (c alpChildren) BuildUint64(child array.ArrayCore[uint64]) (codec.EncodedArray[uint64], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeALP, 1))
 }
 
-func buildALPRD32(arr array.ArrayCore[float32], ctx planContext) (EncodedArray[float32], error) {
+func buildALPRD32(arr array.ArrayCore[float32], ctx planContext) (codec.EncodedArray[float32], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
-	return codec.EncodeALPRD32(arr, alprdChildren{ctx: ctx}, ctx.buildOptions())
+	return codec.EncodeALPRD32(arr, alprdChildren{ctx: ctx}, ctx.build)
 }
 
-func buildALPRD64(arr array.ArrayCore[float64], ctx planContext) (EncodedArray[float64], error) {
+func buildALPRD64(arr array.ArrayCore[float64], ctx planContext) (codec.EncodedArray[float64], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
-	return codec.EncodeALPRD64(arr, alprdChildren{ctx: ctx}, ctx.buildOptions())
+	return codec.EncodeALPRD64(arr, alprdChildren{ctx: ctx}, ctx.build)
 }
 
 type alprdChildren struct {
 	ctx planContext
 }
 
-func (c alprdChildren) BuildUint8(child array.ArrayCore[uint8]) (EncodedArray[uint8], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeALPRD, 0))
+func (c alprdChildren) BuildUint8(child array.ArrayCore[uint8]) (codec.EncodedArray[uint8], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeALPRD, 0))
 }
 
-func (c alprdChildren) BuildUint16(child array.ArrayCore[uint16]) (EncodedArray[uint16], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeALPRD, 0))
+func (c alprdChildren) BuildUint16(child array.ArrayCore[uint16]) (codec.EncodedArray[uint16], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeALPRD, 0))
 }
 
-func (c alprdChildren) BuildUint32(child array.ArrayCore[uint32]) (EncodedArray[uint32], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeALPRD, 0))
+func (c alprdChildren) BuildUint32(child array.ArrayCore[uint32]) (codec.EncodedArray[uint32], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeALPRD, 0))
 }
 
-func (c alprdChildren) BuildUint64(child array.ArrayCore[uint64]) (EncodedArray[uint64], error) {
-	return compressUnsignedCore(child, c.ctx.child(CodecTypeALPRD, 0))
+func (c alprdChildren) BuildUint64(child array.ArrayCore[uint64]) (codec.EncodedArray[uint64], error) {
+	return compressUnsignedCore(child, c.ctx.child(codec.CodecTypeALPRD, 0))
 }
 
-func buildFSST(arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
+func buildFSST(arr array.ArrayCore[string], ctx planContext) (codec.EncodedArray[string], error) {
 	if ctx.depth <= 0 {
-		return nil, ErrDepthExhausted
+		return nil, codec.ErrDepthExhausted
 	}
 	return codec.EncodeFSST(
 		arr,
-		unsignedChildren{ctx: ctx, parent: CodecTypeFSST, childIndex: 0},
-		unsignedChildren{ctx: ctx, parent: CodecTypeFSST, childIndex: 1},
-		ctx.buildOptions(),
+		unsignedChildren{ctx: ctx, parent: codec.CodecTypeFSST, childIndex: 0},
+		unsignedChildren{ctx: ctx, parent: codec.CodecTypeFSST, childIndex: 1},
+		ctx.build,
 	)
 }
 
 type unsignedChildren struct {
 	ctx        planContext
-	parent     CodecType
+	parent     codec.CodecType
 	childIndex uint8
 }
 
-func (c unsignedChildren) BuildUint8(child array.ArrayCore[uint8]) (EncodedArray[uint8], error) {
+func (c unsignedChildren) BuildUint8(child array.ArrayCore[uint8]) (codec.EncodedArray[uint8], error) {
 	return compressUnsignedCore(child, c.ctx.child(c.parent, c.childIndex))
 }
 
-func (c unsignedChildren) BuildUint16(child array.ArrayCore[uint16]) (EncodedArray[uint16], error) {
+func (c unsignedChildren) BuildUint16(child array.ArrayCore[uint16]) (codec.EncodedArray[uint16], error) {
 	return compressUnsignedCore(child, c.ctx.child(c.parent, c.childIndex))
 }
 
-func (c unsignedChildren) BuildUint32(child array.ArrayCore[uint32]) (EncodedArray[uint32], error) {
+func (c unsignedChildren) BuildUint32(child array.ArrayCore[uint32]) (codec.EncodedArray[uint32], error) {
 	return compressUnsignedCore(child, c.ctx.child(c.parent, c.childIndex))
 }
 
-func (c unsignedChildren) BuildUint64(child array.ArrayCore[uint64]) (EncodedArray[uint64], error) {
+func (c unsignedChildren) BuildUint64(child array.ArrayCore[uint64]) (codec.EncodedArray[uint64], error) {
 	return compressUnsignedCore(child, c.ctx.child(c.parent, c.childIndex))
 }

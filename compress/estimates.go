@@ -4,6 +4,7 @@ import (
 	"math/bits"
 
 	"github.com/axiomhq/btrblocks/array"
+	"github.com/axiomhq/btrblocks/codec"
 )
 
 func bitWidthForUnsigned(value uint64) uint { return uint(bits.Len64(value)) }
@@ -44,7 +45,7 @@ func estimateKnownSequence[T array.Integer](arr array.ArrayCore[T], isSequence b
 	if !isSequence {
 		return skipEstimate()
 	}
-	after := uint64(headerSize + 2*array.PTypeOfPrimitive[T]().ByteWidth())
+	after := uint64(codec.HeaderSize + 2*array.PTypeOfPrimitive[T]().ByteWidth())
 	return immediateEstimate(float64(primitiveRawEncodedSize(arr))/float64(after), true)
 }
 
@@ -69,7 +70,7 @@ func estimateFoR[T array.Integer](arr array.ArrayCore[T], ctx planContext, minVa
 	}
 
 	packedBytes := (arr.Length()*uint64(rangeWidth) + 7) / 8
-	after := uint64(2*headerSize+1+array.PTypeOfPrimitive[T]().ByteWidth()) + packedBytes
+	after := uint64(2*codec.HeaderSize+1+array.PTypeOfPrimitive[T]().ByteWidth()) + packedBytes
 	before := primitiveRawEncodedSize(arr)
 	if after >= before {
 		return skipEstimate()
@@ -83,7 +84,7 @@ func estimateBitpack[T array.Integer](stats intStats[T], ctx planContext) scheme
 	}
 	bitWidth := bitWidthForUnsigned(uint64(stats.max))
 	packedBytes := (stats.Source().Length()*uint64(bitWidth) + 7) / 8
-	after := uint64(headerSize+1) + packedBytes
+	after := uint64(codec.HeaderSize+1) + packedBytes
 	before := primitiveRawEncodedSize(stats.Source())
 	if after >= before {
 		return skipEstimate()
@@ -144,13 +145,13 @@ func deltaRatioForWidth[T array.Integer](source array.ArrayCore[T], rangeWidth u
 	n := source.Length()
 	elemBytes := uint64(array.PTypeOfPrimitive[T]().ByteWidth())
 	packedBytes := ((n-1)*uint64(rangeWidth) + 7) / 8
-	childBytes := uint64(headerSize+1) + packedBytes
+	childBytes := uint64(codec.HeaderSize+1) + packedBytes
 	// Signed residuals need FoR before bitpacking. Unsigned residuals need it
 	// whenever their minimum is non-zero.
 	if family == signedInteger || deltaMin != 0 {
-		childBytes += uint64(headerSize) + elemBytes
+		childBytes += uint64(codec.HeaderSize) + elemBytes
 	}
-	after := uint64(headerSize) + elemBytes + childBytes
+	after := uint64(codec.HeaderSize) + elemBytes + childBytes
 	before := primitiveRawEncodedSize(source)
 	if after >= before {
 		return 0
@@ -205,11 +206,11 @@ func estimateIntegerDict[T array.Integer, S statsSource[T]](stats S, ctx planCon
 	if beforeBytes < minSampledPlanningBytes {
 		elemBytes := uint64(array.PTypeOfPrimitive[T]().ByteWidth())
 		valuesBytes := min(
-			uint64(headerSize)+2*elemBytes,
-			uint64(headerSize+array.HeaderSize)+distinctCount*elemBytes,
+			uint64(codec.HeaderSize)+2*elemBytes,
+			uint64(codec.HeaderSize+array.HeaderSize)+distinctCount*elemBytes,
 		)
-		indicesBytes := uint64(headerSize+1) + (codesBW*n+7)/8
-		afterBytes := uint64(headerSize) + valuesBytes + indicesBytes
+		indicesBytes := uint64(codec.HeaderSize+1) + (codesBW*n+7)/8
+		afterBytes := uint64(codec.HeaderSize) + valuesBytes + indicesBytes
 		if afterBytes >= beforeBytes {
 			return skipEstimate()
 		}

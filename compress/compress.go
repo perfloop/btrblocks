@@ -9,7 +9,7 @@ import (
 
 // SignedArray encodes a signed integer array according to opts. Raw fallback
 // may continue to reference arr after SignedArray returns.
-func SignedArray[T array.SignedInteger](arr array.Array[T], opts Options) (EncodedArray[T], error) {
+func SignedArray[T array.SignedInteger](arr array.Array[T], opts Options) (codec.EncodedArray[T], error) {
 	if arr == nil {
 		return nil, fmt.Errorf("compress: nil signed array")
 	}
@@ -18,7 +18,7 @@ func SignedArray[T array.SignedInteger](arr array.Array[T], opts Options) (Encod
 
 // UnsignedArray encodes an unsigned integer array according to opts. Raw
 // fallback may continue to reference arr after UnsignedArray returns.
-func UnsignedArray[T array.UnsignedInteger](arr array.Array[T], opts Options) (EncodedArray[T], error) {
+func UnsignedArray[T array.UnsignedInteger](arr array.Array[T], opts Options) (codec.EncodedArray[T], error) {
 	if arr == nil {
 		return nil, fmt.Errorf("compress: nil unsigned array")
 	}
@@ -27,7 +27,7 @@ func UnsignedArray[T array.UnsignedInteger](arr array.Array[T], opts Options) (E
 
 // Float32Array encodes a float32 array according to opts. Raw fallback may
 // continue to reference arr after Float32Array returns.
-func Float32Array(arr array.Array[float32], opts Options) (EncodedArray[float32], error) {
+func Float32Array(arr array.Array[float32], opts Options) (codec.EncodedArray[float32], error) {
 	if arr == nil {
 		return nil, fmt.Errorf("compress: nil float32 array")
 	}
@@ -36,7 +36,7 @@ func Float32Array(arr array.Array[float32], opts Options) (EncodedArray[float32]
 
 // Float64Array encodes a float64 array according to opts. Raw fallback may
 // continue to reference arr after Float64Array returns.
-func Float64Array(arr array.Array[float64], opts Options) (EncodedArray[float64], error) {
+func Float64Array(arr array.Array[float64], opts Options) (codec.EncodedArray[float64], error) {
 	if arr == nil {
 		return nil, fmt.Errorf("compress: nil float64 array")
 	}
@@ -45,7 +45,7 @@ func Float64Array(arr array.Array[float64], opts Options) (EncodedArray[float64]
 
 // StringArray encodes a string array according to opts. Raw fallback may
 // continue to reference arr after StringArray returns.
-func StringArray(arr array.Array[string], opts Options) (EncodedArray[string], error) {
+func StringArray(arr array.Array[string], opts Options) (codec.EncodedArray[string], error) {
 	if arr == nil {
 		return nil, fmt.Errorf("compress: nil string array")
 	}
@@ -61,15 +61,15 @@ func compressFamilyNullable[T array.Integer | array.Float | array.String, S stat
 	ctx planContext,
 	comp compressor[T, S],
 	mask func(array.Array[T]) *maskedArray[T],
-	nullSparse func(array.ArrayCore[T], planContext) (EncodedArray[T], error),
-) (EncodedArray[T], error) {
+	nullSparse func(array.ArrayCore[T], planContext) (codec.EncodedArray[T], error),
+) (codec.EncodedArray[T], error) {
 	nullCount := arr.NullCount()
 	if nullCount == 0 {
 		return compressWith(arr, ctx, comp)
 	}
 	masked := mask(arr)
-	var values EncodedArray[T]
-	var validity EncodedArray[uint8]
+	var values codec.EncodedArray[T]
+	var validity codec.EncodedArray[uint8]
 	if nullCount == arr.Length() {
 		var zero T
 		body, err := masked.materialize([]T{zero})
@@ -91,7 +91,7 @@ func compressFamilyNullable[T array.Integer | array.Float | array.String, S stat
 	} else {
 		valueCtx := ctx.withNullCount(nullCount)
 		var err error
-		if useNullSparse(arr.Length(), nullCount, ctx, comp.IsExcluded(ctx, CodecTypeSparse)) {
+		if useNullSparse(arr.Length(), nullCount, ctx, comp.IsExcluded(ctx, codec.CodecTypeSparse)) {
 			values, err = nullSparse(masked, valueCtx)
 		} else {
 			values, err = compressWith(masked, valueCtx, comp)
@@ -99,19 +99,22 @@ func compressFamilyNullable[T array.Integer | array.Float | array.String, S stat
 		if err != nil {
 			return nil, err
 		}
-		bitmap, countedNulls, err := array.ValidityBitmap(arr, 0, arr.Length(), ctx.validityBitmapOptions())
+		bitmap, countedNulls, err := array.ValidityBitmap(arr, 0, arr.Length(), ctx.build)
 		if err != nil {
 			return nil, fmt.Errorf("codec: materialize validity: %w", err)
 		}
 		if countedNulls != nullCount {
 			return nil, fmt.Errorf("codec: validity has %d nulls, metadata says %d", countedNulls, nullCount)
 		}
-		validity, err = compressUnsigned(array.NewPrimitivesUnsafe(bitmap), ctx)
+		// ValidityBitmap's result is read-only and may alias arr's own bitmap,
+		// which arr keeps owning; NewPrimitives copies so the encoded validity
+		// never shares storage with the source it was derived from.
+		validity, err = compressUnsigned(array.NewPrimitives(bitmap), ctx)
 		if err != nil {
 			return nil, fmt.Errorf("codec: compress validity: %w", err)
 		}
 	}
-	nullable, err := codec.NewNullable(values, validity, nullCount)
+	nullable, err := codec.NewNullable(values, validity, nullCount, ctx.build)
 	if err != nil {
 		return nil, fmt.Errorf("codec: build nullable: %w", err)
 	}
@@ -126,8 +129,8 @@ func compressFamilyNullable[T array.Integer | array.Float | array.String, S stat
 	// view alive and re-materializing it on every WriteTo; pin one
 	// materialized copy instead. Delta and zigzag children hold Virtual views
 	// of the lane one level down; that corner stays lazy.
-	if values.CodecType() == CodecTypeRaw {
-		materialized, err := masked.materialized(ctx.maxBytes)
+	if values.CodecType() == codec.CodecTypeRaw {
+		materialized, err := masked.materialized(ctx.build.MaxBytes)
 		if err != nil {
 			return nil, fmt.Errorf("codec: materialize nullable values: %w", err)
 		}
@@ -135,7 +138,7 @@ func compressFamilyNullable[T array.Integer | array.Float | array.String, S stat
 		if err != nil {
 			return nil, fmt.Errorf("codec: wrap nullable values: %w", err)
 		}
-		nullable, err = codec.NewNullable(values, validity, nullCount)
+		nullable, err = codec.NewNullable(values, validity, nullCount, ctx.build)
 		if err != nil {
 			return nil, fmt.Errorf("codec: rebuild nullable: %w", err)
 		}
@@ -143,32 +146,32 @@ func compressFamilyNullable[T array.Integer | array.Float | array.String, S stat
 	return nullable, nil
 }
 
-func compressSigned[T array.SignedInteger](arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
-	return compressFamilyNullable(arr, ctx, signedIntCompressor[T]{}, maskPrimitiveArray[T], func(values array.ArrayCore[T], childCtx planContext) (EncodedArray[T], error) {
-		return codec.EncodeIntegerSparseWithFill(values, childCtx.nullCount, sparseChildren[T]{ctx: childCtx, compressValues: compressSignedCore[T]}, childCtx.buildOptions())
+func compressSigned[T array.SignedInteger](arr array.Array[T], ctx planContext) (codec.EncodedArray[T], error) {
+	return compressFamilyNullable(arr, ctx, signedIntCompressor[T]{}, maskPrimitiveArray[T], func(values array.ArrayCore[T], childCtx planContext) (codec.EncodedArray[T], error) {
+		return codec.EncodeIntegerSparseWithFill(values, childCtx.nullCount, sparseChildren[T]{ctx: childCtx, compressValues: compressSignedCore[T]}, childCtx.build)
 	})
 }
 
-func compressUnsigned[T array.UnsignedInteger](arr array.Array[T], ctx planContext) (EncodedArray[T], error) {
-	return compressFamilyNullable(arr, ctx, unsignedIntCompressor[T]{}, maskPrimitiveArray[T], func(values array.ArrayCore[T], childCtx planContext) (EncodedArray[T], error) {
-		return codec.EncodeIntegerSparseWithFill(values, childCtx.nullCount, sparseChildren[T]{ctx: childCtx, compressValues: compressUnsignedCore[T]}, childCtx.buildOptions())
+func compressUnsigned[T array.UnsignedInteger](arr array.Array[T], ctx planContext) (codec.EncodedArray[T], error) {
+	return compressFamilyNullable(arr, ctx, unsignedIntCompressor[T]{}, maskPrimitiveArray[T], func(values array.ArrayCore[T], childCtx planContext) (codec.EncodedArray[T], error) {
+		return codec.EncodeIntegerSparseWithFill(values, childCtx.nullCount, sparseChildren[T]{ctx: childCtx, compressValues: compressUnsignedCore[T]}, childCtx.build)
 	})
 }
 
-func compressFloat32(arr array.Array[float32], ctx planContext) (EncodedArray[float32], error) {
-	return compressFamilyNullable(arr, ctx, float32Compressor(), maskPrimitiveArray[float32], func(values array.ArrayCore[float32], childCtx planContext) (EncodedArray[float32], error) {
-		return codec.EncodeFloatSparseWithFill(values, childCtx.nullCount, sparseChildren[float32]{ctx: childCtx, compressValues: compressFloat32Core}, childCtx.buildOptions())
+func compressFloat32(arr array.Array[float32], ctx planContext) (codec.EncodedArray[float32], error) {
+	return compressFamilyNullable(arr, ctx, float32Compressor(), maskPrimitiveArray[float32], func(values array.ArrayCore[float32], childCtx planContext) (codec.EncodedArray[float32], error) {
+		return codec.EncodeFloatSparseWithFill(values, childCtx.nullCount, sparseChildren[float32]{ctx: childCtx, compressValues: compressFloat32Core}, childCtx.build)
 	})
 }
 
-func compressFloat64(arr array.Array[float64], ctx planContext) (EncodedArray[float64], error) {
-	return compressFamilyNullable(arr, ctx, float64Compressor(), maskPrimitiveArray[float64], func(values array.ArrayCore[float64], childCtx planContext) (EncodedArray[float64], error) {
-		return codec.EncodeFloatSparseWithFill(values, childCtx.nullCount, sparseChildren[float64]{ctx: childCtx, compressValues: compressFloat64Core}, childCtx.buildOptions())
+func compressFloat64(arr array.Array[float64], ctx planContext) (codec.EncodedArray[float64], error) {
+	return compressFamilyNullable(arr, ctx, float64Compressor(), maskPrimitiveArray[float64], func(values array.ArrayCore[float64], childCtx planContext) (codec.EncodedArray[float64], error) {
+		return codec.EncodeFloatSparseWithFill(values, childCtx.nullCount, sparseChildren[float64]{ctx: childCtx, compressValues: compressFloat64Core}, childCtx.build)
 	})
 }
 
-func compressString(arr array.Array[string], ctx planContext) (EncodedArray[string], error) {
-	return compressFamilyNullable(arr, ctx, stringCompressor{}, maskStringArray, func(values array.ArrayCore[string], childCtx planContext) (EncodedArray[string], error) {
-		return codec.EncodeStringSparseWithFill(values, childCtx.nullCount, sparseChildren[string]{ctx: childCtx, compressValues: compressStringCore}, childCtx.buildOptions())
+func compressString(arr array.Array[string], ctx planContext) (codec.EncodedArray[string], error) {
+	return compressFamilyNullable(arr, ctx, stringCompressor{}, maskStringArray, func(values array.ArrayCore[string], childCtx planContext) (codec.EncodedArray[string], error) {
+		return codec.EncodeStringSparseWithFill(values, childCtx.nullCount, sparseChildren[string]{ctx: childCtx, compressValues: compressStringCore}, childCtx.build)
 	})
 }

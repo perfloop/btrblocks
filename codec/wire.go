@@ -48,7 +48,7 @@ const (
 	defaultMaxReadDepth = 32
 )
 
-type encodedReader[T Integer | Float | String] func(*array.BufReader, ReadOptions) (EncodedArray[T], error)
+type encodedReader[T Integer | Float | String] func(*array.BufReader, *readOptions) (EncodedArray[T], error)
 
 func load[T Integer | Float | String](data []byte, opts []ReadOptions, read encodedReader[T]) (EncodedArray[T], error) {
 	br := array.BufReader{Buf: data}
@@ -66,11 +66,16 @@ func loadFromBuf[T Integer | Float | String](br *array.BufReader, opts []ReadOpt
 	if br == nil {
 		return nil, errors.New("codec: nil buffer reader")
 	}
+	// Extras are rejected rather than silently dropped: accepting them now would
+	// make it a breaking change to give them meaning later.
+	if len(opts) > 1 {
+		return nil, fmt.Errorf("codec: at most one ReadOptions is allowed, got %d", len(opts))
+	}
 	var option ReadOptions
-	if len(opts) > 0 {
+	if len(opts) == 1 {
 		option = opts[0]
 	}
-	return read(br, option)
+	return read(br, newReadOptions(option))
 }
 
 // LoadSigned deserializes exactly one signed-integer array from data. The
@@ -282,7 +287,35 @@ func sliceStringToRawArray(src array.ArrayCore[string], start, end uint64) (Enco
 	return newRawArray(values), nil
 }
 
-func validateHeaderForType(h codecHeader, opts ReadOptions, expected PType) error {
+// sliceByDecoding materializes [start, end) of a node that cannot slice itself
+// structurally. It decodes src once, sequentially, and then materializes out of
+// the decoded values, whose ValueAt is O(1). Walking src itself per row is what
+// the read path already refuses to do: ValueAt is O(offset) in the delta codec
+// and O(runs) in run-end, so a window of n rows costs O(n^2) — enough for a
+// load-accepted 130-byte stream to spend minutes inside Slice.
+//
+// Decoding the whole node to answer for a window is what these codecs cost: a
+// delta value is defined by every value before it. So the decode is charged to
+// limit — the node's own budget, which for a loaded node is the caller's
+// ReadOptions.MaxDecodedBytes — and a node whose whole-array footprint exceeds
+// it is refused before anything is allocated, even when the window alone would
+// fit. A caller that must page a large array in small windows decodes it once
+// itself; it cannot get small allocations out of this path.
+func sliceByDecoding[T Integer | Float | String](src EncodedArray[T], limit decodeLimit, start, end uint64, materialize sliceBuilder[T]) (EncodedArray[T], error) {
+	if err := array.ValidateSliceBounds(src.Length(), start, end); err != nil {
+		return nil, err
+	}
+	if start == end {
+		return materialize(sliceArrayCore[T](nil), 0, 0)
+	}
+	decoded, err := decompress(src, limit.maxDecodedBytes())
+	if err != nil {
+		return nil, fmt.Errorf("codec: slice [%d, %d) decodes all %d rows of %s: %w", start, end, src.Length(), src.CodecType(), err)
+	}
+	return materialize(sliceArrayCore[T](decoded[start:end]), 0, end-start)
+}
+
+func validateHeaderForType(h codecHeader, opts *readOptions, expected PType) error {
 	if h.Version != versionNumber {
 		return fmt.Errorf("codec: unsupported version = %d", h.Version)
 	}
@@ -324,13 +357,13 @@ func validateHeaderForType(h codecHeader, opts ReadOptions, expected PType) erro
 	return nil
 }
 
-type encodedSpecialReader[T Integer | Float | String] func(*array.BufReader, codecHeader, ReadOptions) (EncodedArray[T], error)
+type encodedSpecialReader[T Integer | Float | String] func(*array.BufReader, codecHeader, *readOptions) (EncodedArray[T], error)
 
 func readPrimitiveBody[T Integer | Float](br *array.BufReader, opts ...ReadOptions) (array.Array[T], error) {
 	return array.ReadPrimitiveFromBuf[T](br, opts...)
 }
 
-func readSignedEncodedArray[T SignedInteger](br *array.BufReader, opts ReadOptions) (EncodedArray[T], error) {
+func readSignedEncodedArray[T SignedInteger](br *array.BufReader, opts *readOptions) (EncodedArray[T], error) {
 	h, err := readHeader(br)
 	if err != nil {
 		return nil, fmt.Errorf("codec: header: %w", err)
@@ -338,7 +371,7 @@ func readSignedEncodedArray[T SignedInteger](br *array.BufReader, opts ReadOptio
 	return readSignedEncodedArrayWithHeader[T](br, h, opts)
 }
 
-func readUnsignedEncodedArray[T UnsignedInteger](br *array.BufReader, opts ReadOptions) (EncodedArray[T], error) {
+func readUnsignedEncodedArray[T UnsignedInteger](br *array.BufReader, opts *readOptions) (EncodedArray[T], error) {
 	h, err := readHeader(br)
 	if err != nil {
 		return nil, fmt.Errorf("codec: header: %w", err)
@@ -346,7 +379,7 @@ func readUnsignedEncodedArray[T UnsignedInteger](br *array.BufReader, opts ReadO
 	return readUnsignedEncodedArrayWithHeader[T](br, h, opts)
 }
 
-func readFloat32EncodedArray(br *array.BufReader, opts ReadOptions) (EncodedArray[float32], error) {
+func readFloat32EncodedArray(br *array.BufReader, opts *readOptions) (EncodedArray[float32], error) {
 	h, err := readHeader(br)
 	if err != nil {
 		return nil, fmt.Errorf("codec: header: %w", err)
@@ -354,7 +387,7 @@ func readFloat32EncodedArray(br *array.BufReader, opts ReadOptions) (EncodedArra
 	return readFloat32EncodedArrayWithHeader(br, h, opts)
 }
 
-func readFloat64EncodedArray(br *array.BufReader, opts ReadOptions) (EncodedArray[float64], error) {
+func readFloat64EncodedArray(br *array.BufReader, opts *readOptions) (EncodedArray[float64], error) {
 	h, err := readHeader(br)
 	if err != nil {
 		return nil, fmt.Errorf("codec: header: %w", err)
@@ -362,7 +395,7 @@ func readFloat64EncodedArray(br *array.BufReader, opts ReadOptions) (EncodedArra
 	return readFloat64EncodedArrayWithHeader(br, h, opts)
 }
 
-func readStringEncodedArray(br *array.BufReader, opts ReadOptions) (EncodedArray[string], error) {
+func readStringEncodedArray(br *array.BufReader, opts *readOptions) (EncodedArray[string], error) {
 	h, err := readHeader(br)
 	if err != nil {
 		return nil, fmt.Errorf("codec: header: %w", err)
@@ -370,40 +403,31 @@ func readStringEncodedArray(br *array.BufReader, opts ReadOptions) (EncodedArray
 	return readStringEncodedArrayWithHeader(br, h, opts)
 }
 
-func readSignedEncodedArrayWithHeader[T SignedInteger](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
+func readSignedEncodedArrayWithHeader[T SignedInteger](br *array.BufReader, h codecHeader, opts *readOptions) (EncodedArray[T], error) {
 	return readEncodedArrayWithHeader(br, h, opts, array.PTypeOfPrimitive[T](), readSignedEncodedArray[T], readPrimitiveBody[T], slicePrimitiveToRawArray[T], readSignedSpecial[T])
 }
 
-func readUnsignedEncodedArrayWithHeader[T UnsignedInteger](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
+func readUnsignedEncodedArrayWithHeader[T UnsignedInteger](br *array.BufReader, h codecHeader, opts *readOptions) (EncodedArray[T], error) {
 	return readEncodedArrayWithHeader(br, h, opts, array.PTypeOfPrimitive[T](), readUnsignedEncodedArray[T], readPrimitiveBody[T], slicePrimitiveToRawArray[T], readUnsignedSpecial[T])
 }
 
-func readFloat32EncodedArrayWithHeader(br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[float32], error) {
+func readFloat32EncodedArrayWithHeader(br *array.BufReader, h codecHeader, opts *readOptions) (EncodedArray[float32], error) {
 	return readEncodedArrayWithHeader(br, h, opts, PTypeFloat32, readFloat32EncodedArray, readPrimitiveBody[float32], slicePrimitiveToRawArray[float32], readFloat32Special)
 }
 
-func readFloat64EncodedArrayWithHeader(br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[float64], error) {
+func readFloat64EncodedArrayWithHeader(br *array.BufReader, h codecHeader, opts *readOptions) (EncodedArray[float64], error) {
 	return readEncodedArrayWithHeader(br, h, opts, PTypeFloat64, readFloat64EncodedArray, readPrimitiveBody[float64], slicePrimitiveToRawArray[float64], readFloat64Special)
 }
 
-func readStringEncodedArrayWithHeader(br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[string], error) {
+func readStringEncodedArrayWithHeader(br *array.BufReader, h codecHeader, opts *readOptions) (EncodedArray[string], error) {
 	return readEncodedArrayWithHeader(br, h, opts, PTypeString, readStringEncodedArray, array.ReadStringsFromBuf, sliceStringToRawArray, readStringSpecial)
 }
 
-func readEncodedArrayWithHeader[T Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions, expected PType, readValues encodedReader[T], readBody arrayBodyReader[T], slice sliceBuilder[T], readSpecial encodedSpecialReader[T]) (EncodedArray[T], error) {
-	// Bound input-driven recursion: every codec node consumes one level, and
-	// the decremented opts value propagates to all child reads. Zero means
-	// "unset" and normalizes to the default; -1 marks exhaustion because a
-	// plain decrement to zero would re-normalize in the child.
-	if opts.MaxDepth == 0 {
-		opts.MaxDepth = defaultMaxReadDepth
+func readEncodedArrayWithHeader[T Integer | Float | String](br *array.BufReader, h codecHeader, opts *readOptions, expected PType, readValues encodedReader[T], readBody arrayBodyReader[T], slice sliceBuilder[T], readSpecial encodedSpecialReader[T]) (EncodedArray[T], error) {
+	if err := opts.enter(); err != nil {
+		return nil, err
 	}
-	if opts.MaxDepth < 0 {
-		return nil, fmt.Errorf("codec: nesting depth exceeds limit")
-	}
-	if opts.MaxDepth--; opts.MaxDepth == 0 {
-		opts.MaxDepth = -1
-	}
+	defer opts.leave()
 	if err := validateHeaderForType(h, opts, expected); err != nil {
 		return nil, err
 	}
@@ -425,18 +449,18 @@ func readEncodedArrayWithHeader[T Integer | Float | String](br *array.BufReader,
 	}
 }
 
-func readSignedSpecial[T SignedInteger](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
+func readSignedSpecial[T SignedInteger](br *array.BufReader, h codecHeader, opts *readOptions) (EncodedArray[T], error) {
 	if h.Type == CodecTypeZigZag {
 		return readZigZagArray[T](br, h, opts)
 	}
 	return readIntegerArray(br, h, opts, readSignedEncodedArray[T])
 }
 
-func readUnsignedSpecial[T UnsignedInteger](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
+func readUnsignedSpecial[T UnsignedInteger](br *array.BufReader, h codecHeader, opts *readOptions) (EncodedArray[T], error) {
 	return readIntegerArray(br, h, opts, readUnsignedEncodedArray[T])
 }
 
-func readFloat32Special(br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[float32], error) {
+func readFloat32Special(br *array.BufReader, h codecHeader, opts *readOptions) (EncodedArray[float32], error) {
 	switch h.Type {
 	case CodecTypeALP:
 		return readALPArrayTyped(br, h, opts, alpFuncs32, readFloat32EncodedArray)
@@ -447,7 +471,7 @@ func readFloat32Special(br *array.BufReader, h codecHeader, opts ReadOptions) (E
 	}
 }
 
-func readFloat64Special(br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[float64], error) {
+func readFloat64Special(br *array.BufReader, h codecHeader, opts *readOptions) (EncodedArray[float64], error) {
 	switch h.Type {
 	case CodecTypeALP:
 		return readALPArrayTyped(br, h, opts, alpFuncs64, readFloat64EncodedArray)
@@ -458,14 +482,14 @@ func readFloat64Special(br *array.BufReader, h codecHeader, opts ReadOptions) (E
 	}
 }
 
-func readStringSpecial(br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[string], error) {
+func readStringSpecial(br *array.BufReader, h codecHeader, opts *readOptions) (EncodedArray[string], error) {
 	if h.Type != CodecTypeFSST {
 		return nil, fmt.Errorf("codec: %s is not a string codec", h.Type)
 	}
 	return readFSSTArray(br, h, opts)
 }
 
-func readIntegerArray[U Integer](br *array.BufReader, h codecHeader, opts ReadOptions, readValues encodedReader[U]) (EncodedArray[U], error) {
+func readIntegerArray[U Integer](br *array.BufReader, h codecHeader, opts *readOptions, readValues encodedReader[U]) (EncodedArray[U], error) {
 	switch h.Type {
 	case CodecTypeBitpack:
 		return readBitPackedArray(br, h, opts, readValues)

@@ -15,11 +15,11 @@ import (
 
 func TestPlannerPropagatesBuildBudget(t *testing.T) {
 	source := array.NewVirtual(2, func(i uint64) uint64 { return i + 1 })
-	ctx := newPlanContext(Options{}.WithMaxBuildBytes(8))
-	if _, err := buildFoR(source, ctx); !errors.Is(err, ErrMaterializationLimit) {
-		t.Fatalf("buildFoR error = %v, want %v", err, ErrMaterializationLimit)
+	ctx := newPlanContext(Options{}.WithMaxBytes(8))
+	if _, err := buildFoR(source, ctx); !errors.Is(err, codec.ErrMaterializationLimit) {
+		t.Fatalf("buildFoR error = %v, want %v", err, codec.ErrMaterializationLimit)
 	}
-	if _, err := buildFoR(source, newPlanContext(Options{}.WithMaxBuildBytes(16))); err != nil {
+	if _, err := buildFoR(source, newPlanContext(Options{}.WithMaxBytes(16))); err != nil {
 		t.Fatalf("buildFoR with sufficient budget: %v", err)
 	}
 }
@@ -33,11 +33,11 @@ func TestPlannerDefersSamplingUntilAfterImmediateEstimates(t *testing.T) {
 	arr := array.NewPrimitivesUnsafe(values)
 	stats := testStatsUint32{arr: arr}
 	compressor := testCompressorUint32{schemes: []scheme[uint32, testStatsUint32]{
-		{kind: CodecTypeBitpack, build: buildBitpack[uint32], estimate: func(_ testStatsUint32, ctx planContext) schemeEstimate { return sampleEstimate(ctx) }},
-		{kind: CodecTypeDict, build: func(arr array.ArrayCore[uint32], ctx planContext) (EncodedArray[uint32], error) {
+		{kind: codec.CodecTypeBitpack, build: buildBitpack[uint32], estimate: func(_ testStatsUint32, ctx planContext) schemeEstimate { return sampleEstimate(ctx) }},
+		{kind: codec.CodecTypeDict, build: func(arr array.ArrayCore[uint32], ctx planContext) (codec.EncodedArray[uint32], error) {
 			return buildIntegerDict(arr, ctx, compressUnsignedCore[uint32])
 		}, estimate: func(_ testStatsUint32, ctx planContext) schemeEstimate { return sampleEstimate(ctx) }},
-		{kind: CodecTypeFor, estimate: func(testStatsUint32, planContext) schemeEstimate {
+		{kind: codec.CodecTypeFor, estimate: func(testStatsUint32, planContext) schemeEstimate {
 			events = append(events, "immediate")
 			return immediateEstimate(1.01, true)
 		}},
@@ -58,14 +58,14 @@ func TestSelectorDoesNotCreateSampleForImmediateWinner(t *testing.T) {
 	arr := array.NewPrimitivesUnsafe(values)
 	stats := testStatsUint32{arr: arr}
 	compressor := testCompressorUint32{schemes: []scheme[uint32, testStatsUint32]{
-		{kind: CodecTypeBitpack, estimate: func(testStatsUint32, planContext) schemeEstimate {
+		{kind: codec.CodecTypeBitpack, estimate: func(testStatsUint32, planContext) schemeEstimate {
 			return immediateEstimate(4, true)
 		}},
 	}}
 	var diagnostics selectorDiagnostics
 	selection, err := chooseScheme(arr, stats, newPlanContext(Options{}), compressor, &diagnostics)
 	require.NoError(t, err)
-	require.Equal(t, CodecTypeBitpack, selection.candidate.kind)
+	require.Equal(t, codec.CodecTypeBitpack, selection.candidate.kind)
 	require.False(t, diagnostics.sampleCreated)
 }
 
@@ -79,10 +79,10 @@ func TestSelectorDefersExactFloatDictionary(t *testing.T) {
 	var diagnostics selectorDiagnostics
 	encoded, err := compressWithDiagnostics(arr, newPlanContext(Options{}), float64Compressor(), &diagnostics)
 	require.NoError(t, err)
-	require.Equal(t, CodecTypeDict, encoded.CodecType(), diagnostics.String())
+	require.Equal(t, codec.CodecTypeDict, encoded.CodecType(), diagnostics.String())
 	require.False(t, diagnostics.sampleCreated, diagnostics.String())
 
-	dictDiagnostic, ok := findCandidateDiagnostic(diagnostics, CodecTypeDict)
+	dictDiagnostic, ok := findCandidateDiagnostic(diagnostics, codec.CodecTypeDict)
 	require.True(t, ok)
 	require.Equal(t, estimateDeferred, dictDiagnostic.estimate)
 	require.True(t, dictDiagnostic.selected)
@@ -98,7 +98,7 @@ func TestDeferredFloatDictionaryIsDeterministic(t *testing.T) {
 	for i := range buffers {
 		encoded, err := Float64Array(arr, Options{})
 		require.NoError(t, err)
-		require.Equal(t, CodecTypeDict, encoded.CodecType())
+		require.Equal(t, codec.CodecTypeDict, encoded.CodecType())
 		_, err = encoded.WriteTo(&buffers[i])
 		require.NoError(t, err)
 	}
@@ -134,8 +134,8 @@ func TestSelectorFoRRedundancyAndDeltaCostPolicy(t *testing.T) {
 			values[i] = uint32(i % 16)
 		}
 		encoded, diagnostics := compressWithRootDiagnostics(t, array.NewPrimitivesUnsafe(values), &unsignedIntCompressor[uint32]{})
-		require.Equal(t, CodecTypeBitpack, encoded.CodecType(), diagnostics.String())
-		forDiagnostic, ok := findCandidateDiagnostic(diagnostics, CodecTypeFor)
+		require.Equal(t, codec.CodecTypeBitpack, encoded.CodecType(), diagnostics.String())
+		forDiagnostic, ok := findCandidateDiagnostic(diagnostics, codec.CodecTypeFor)
 		require.True(t, ok)
 		require.Equal(t, estimateSkip, forDiagnostic.estimate)
 	})
@@ -148,7 +148,7 @@ func TestSelectorFoRRedundancyAndDeltaCostPolicy(t *testing.T) {
 			values[i] = value
 		}
 		_, diagnostics := compressWithRootDiagnostics(t, array.NewPrimitivesUnsafe(values), &unsignedIntCompressor[uint64]{})
-		deltaDiagnostic, ok := findCandidateDiagnostic(diagnostics, CodecTypeDelta)
+		deltaDiagnostic, ok := findCandidateDiagnostic(diagnostics, codec.CodecTypeDelta)
 		require.True(t, ok)
 		require.Equal(t, estimateSkip, deltaDiagnostic.estimate)
 	})
@@ -161,8 +161,8 @@ func TestSelectorFoRRedundancyAndDeltaCostPolicy(t *testing.T) {
 			values[i] = value
 		}
 		encoded, diagnostics := compressWithRootDiagnostics(t, array.NewPrimitivesUnsafe(values), &unsignedIntCompressor[uint64]{})
-		require.Equal(t, CodecTypeDelta, encoded.CodecType(), diagnostics.String())
-		deltaDiagnostic, ok := findCandidateDiagnostic(diagnostics, CodecTypeDelta)
+		require.Equal(t, codec.CodecTypeDelta, encoded.CodecType(), diagnostics.String())
+		deltaDiagnostic, ok := findCandidateDiagnostic(diagnostics, codec.CodecTypeDelta)
 		require.True(t, ok)
 		require.Equal(t, estimateDeferred, deltaDiagnostic.estimate)
 	})
@@ -170,7 +170,7 @@ func TestSelectorFoRRedundancyAndDeltaCostPolicy(t *testing.T) {
 
 func TestSelectorGoldenEncodings(t *testing.T) {
 	t.Run("constant", func(t *testing.T) {
-		assertSelectorGolden(t, array.NewPrimitivesUnsafe([]uint32{42, 42, 42, 42}), CodecTypeConst, &unsignedIntCompressor[uint32]{})
+		assertSelectorGolden(t, array.NewPrimitivesUnsafe([]uint32{42, 42, 42, 42}), codec.CodecTypeConst, &unsignedIntCompressor[uint32]{})
 	})
 
 	t.Run("sequence", func(t *testing.T) {
@@ -178,7 +178,7 @@ func TestSelectorGoldenEncodings(t *testing.T) {
 		for i := range values {
 			values[i] = -1_000_000 + int64(i)*7
 		}
-		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), CodecTypeSequence, &signedIntCompressor[int64]{})
+		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), codec.CodecTypeSequence, &signedIntCompressor[int64]{})
 	})
 
 	t.Run("for", func(t *testing.T) {
@@ -186,7 +186,7 @@ func TestSelectorGoldenEncodings(t *testing.T) {
 		for i := range values {
 			values[i] = 1<<40 + uint64((i*37)%101)
 		}
-		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), CodecTypeFor, &unsignedIntCompressor[uint64]{})
+		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), codec.CodecTypeFor, &unsignedIntCompressor[uint64]{})
 	})
 
 	t.Run("bitpack", func(t *testing.T) {
@@ -194,7 +194,7 @@ func TestSelectorGoldenEncodings(t *testing.T) {
 		for i := range values {
 			values[i] = uint32(i % 16)
 		}
-		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), CodecTypeBitpack, &unsignedIntCompressor[uint32]{})
+		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), codec.CodecTypeBitpack, &unsignedIntCompressor[uint32]{})
 	})
 
 	t.Run("sparse", func(t *testing.T) {
@@ -205,7 +205,7 @@ func TestSelectorGoldenEncodings(t *testing.T) {
 		for i := 0; i < 200; i++ {
 			values[i*20] = uint32(i + 1000)
 		}
-		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), CodecTypeSparse, &unsignedIntCompressor[uint32]{})
+		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), codec.CodecTypeSparse, &unsignedIntCompressor[uint32]{})
 	})
 
 	t.Run("dictionary", func(t *testing.T) {
@@ -214,7 +214,7 @@ func TestSelectorGoldenEncodings(t *testing.T) {
 		for i := range values {
 			values[i] = choices[(i*37+i/11)%len(choices)]
 		}
-		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), CodecTypeDict, &signedIntCompressor[int32]{})
+		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), codec.CodecTypeDict, &signedIntCompressor[int32]{})
 	})
 
 	t.Run("delta", func(t *testing.T) {
@@ -224,7 +224,7 @@ func TestSelectorGoldenEncodings(t *testing.T) {
 			value += uint64(i%7 + 1)
 			values[i] = value
 		}
-		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), CodecTypeDelta, &unsignedIntCompressor[uint64]{})
+		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), codec.CodecTypeDelta, &unsignedIntCompressor[uint64]{})
 	})
 
 	t.Run("alp", func(t *testing.T) {
@@ -232,12 +232,12 @@ func TestSelectorGoldenEncodings(t *testing.T) {
 		for i := range values {
 			values[i] = float64(i) * 0.01
 		}
-		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), CodecTypeALP, float64Compressor())
+		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), codec.CodecTypeALP, float64Compressor())
 	})
 
 	t.Run("alprd", func(t *testing.T) {
 		values := makeALPRDSelectorValues(4096)
-		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), CodecTypeALPRD, float64Compressor())
+		assertSelectorGolden(t, array.NewPrimitivesUnsafe(values), codec.CodecTypeALPRD, float64Compressor())
 	})
 
 	t.Run("fsst", func(t *testing.T) {
@@ -245,7 +245,7 @@ func TestSelectorGoldenEncodings(t *testing.T) {
 		for i := range values {
 			values[i] = fmt.Sprintf("https://logs.example.com/v1/tenant/common/path/event/%08d", i)
 		}
-		assertSelectorGolden(t, mustStrings(t, values), CodecTypeFSST, stringCompressor{})
+		assertSelectorGolden(t, mustStrings(t, values), codec.CodecTypeFSST, stringCompressor{})
 	})
 }
 
@@ -292,7 +292,7 @@ func makeALPRDSelectorValues(n int) []float64 {
 
 func benchmarkSelectorArray[T array.Integer | array.Float | array.String, S statsSource[T]](b *testing.B, arr array.Array[T], c compressor[T, S]) {
 	b.Helper()
-	var encoded EncodedArray[T]
+	var encoded codec.EncodedArray[T]
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
@@ -303,7 +303,7 @@ func benchmarkSelectorArray[T array.Integer | array.Float | array.String, S stat
 	runtime.KeepAlive(encoded)
 }
 
-func assertSelectorGolden[T array.Integer | array.Float | array.String, S statsSource[T]](t *testing.T, arr array.Array[T], want CodecType, c compressor[T, S]) {
+func assertSelectorGolden[T array.Integer | array.Float | array.String, S statsSource[T]](t *testing.T, arr array.Array[T], want codec.CodecType, c compressor[T, S]) {
 	t.Helper()
 	encoded, diagnostics := compressWithRootDiagnostics(t, arr, c)
 	require.Equal(t, want, encoded.CodecType(), diagnostics.String())
@@ -314,7 +314,7 @@ func assertSelectorGolden[T array.Integer | array.Float | array.String, S statsS
 	require.Equal(t, wantValues, decoded)
 }
 
-func compressWithRootDiagnostics[T array.Integer | array.Float | array.String, S statsSource[T]](t testing.TB, arr array.Array[T], c compressor[T, S]) (EncodedArray[T], selectorDiagnostics) {
+func compressWithRootDiagnostics[T array.Integer | array.Float | array.String, S statsSource[T]](t testing.TB, arr array.Array[T], c compressor[T, S]) (codec.EncodedArray[T], selectorDiagnostics) {
 	t.Helper()
 	ctx := newPlanContext(Options{})
 	var diagnostics selectorDiagnostics
@@ -325,7 +325,7 @@ func compressWithRootDiagnostics[T array.Integer | array.Float | array.String, S
 	return result, diagnostics
 }
 
-func findCandidateDiagnostic(diagnostics selectorDiagnostics, kind CodecType) (selectorCandidateDiagnostic, bool) {
+func findCandidateDiagnostic(diagnostics selectorDiagnostics, kind codec.CodecType) (selectorCandidateDiagnostic, bool) {
 	for _, candidate := range diagnostics.candidates[:diagnostics.count] {
 		if candidate.kind == kind {
 			return candidate, true

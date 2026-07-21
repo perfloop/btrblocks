@@ -23,15 +23,14 @@ type Validity struct {
 // configured allocation limit.
 var ErrValidityBitmapLimit = errors.New("array: validity bitmap allocation limit exceeded")
 
-// DefaultMaxValidityBitmapBytes is the default allocation limit used by
-// ValidityBitmap.
-const DefaultMaxValidityBitmapBytes uint64 = 64 << 20
-
-// ValidityBitmapOptions bounds allocation performed by ValidityBitmap.
-// MaxBytes limits a newly materialized bitmap. Zero selects
-// DefaultMaxValidityBitmapBytes.
-type ValidityBitmapOptions struct {
-	MaxBytes uint64
+// ValiditySource is the minimum an array must expose for ValidityBitmap to
+// derive a bitmap from it: a row count and per-row validity.
+type ValiditySource interface {
+	// Length is the number of rows the source describes.
+	Length() uint64
+	// IsValid reports whether the row at offset is non-null. Panics if
+	// offset >= Length().
+	IsValid(offset uint64) bool
 }
 
 // AllValid returns validity metadata for an array without null values.
@@ -117,12 +116,15 @@ func ValidityFromNulls(length uint64, nulls []bool) (Validity, error) {
 // The returned bytes are always read-only and may alias source-owned storage;
 // callers must not modify them. A whole-array request may borrow an available
 // bitmap, while other requests materialize a rebased bitmap.
-func ValidityBitmap(source interface {
-	Length() uint64
-	IsValid(uint64) bool
-}, start, length uint64, opts ...ValidityBitmapOptions) ([]byte, uint64, error) {
+func ValidityBitmap(source ValiditySource, start, length uint64, opts ...BuildOptions) ([]byte, uint64, error) {
 	if source == nil {
 		return nil, 0, errors.New("array: nil validity source")
+	}
+	// Ahead of the borrow fast path, so the same arguments are accepted or
+	// rejected whether or not the source can hand over its bitmap.
+	maxBytes, err := buildByteLimit(opts)
+	if err != nil {
+		return nil, 0, err
 	}
 	sourceLength := source.Length()
 	if start > sourceLength || length > sourceLength-start {
@@ -139,10 +141,6 @@ func ValidityBitmap(source interface {
 				return validity.Bytes(), validity.NullCount(), nil
 			}
 		}
-	}
-	maxBytes := DefaultMaxValidityBitmapBytes
-	if len(opts) != 0 && opts[0].MaxBytes != 0 {
-		maxBytes = opts[0].MaxBytes
 	}
 	if byteLength > maxBytes {
 		return nil, 0, fmt.Errorf("%w: requires %d bytes, limit %d", ErrValidityBitmapLimit, byteLength, maxBytes)

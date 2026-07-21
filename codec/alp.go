@@ -131,6 +131,7 @@ func isAllSameFloat[T Float](values []T, toBits func(T) uint64) bool {
 
 // alpArray stores an ALP-encoded integer child plus optional float exceptions.
 type alpArray[T Float, I SignedInteger, J UnsignedInteger] struct {
+	encodedNode
 	denseRows
 	expE    uint8
 	expF    uint8
@@ -146,7 +147,13 @@ func (a *alpArray[T, I, J]) CodecType() CodecType {
 }
 func (a *alpArray[T, I, J]) PType() PType { return array.PTypeOfPrimitive[T]() }
 func (a *alpArray[T, I, J]) DecodedBytes() (uint64, error) {
-	return decodedBytesFor(a.Length(), a.PType())
+	// The integer child decodes into dst's backing memory — same width, same
+	// element count — so its footprint already includes this node's
+	// destination; only the patch children add buffers.
+	var f decodeFootprint
+	f.add(a.encoded.DecodedBytes())
+	f.add(a.patches.decodedBytes())
+	return f.result()
 }
 func (a *alpArray[T, I, J]) BinarySize() uint64 {
 	size := uint64(headerSize) + alpBodySize + a.encoded.BinarySize()
@@ -242,7 +249,7 @@ func (a *alpArray[T, I, J]) WriteTo(w io.Writer) (int64, error) {
 	return sum.n, nil
 }
 
-func readALPArrayTyped[T Float, I SignedInteger](br *array.BufReader, h codecHeader, opts ReadOptions, funcs alpFuncs[T, I], readValues encodedReader[T]) (EncodedArray[T], error) {
+func readALPArrayTyped[T Float, I SignedInteger](br *array.BufReader, h codecHeader, opts *readOptions, funcs alpFuncs[T, I], readValues encodedReader[T]) (EncodedArray[T], error) {
 	if h.Flags&^flagALPHasPatches != 0 {
 		return nil, fmt.Errorf("codec: unsupported ALP flags = 0x%x", h.Flags)
 	}
@@ -306,7 +313,7 @@ func readALPArrayTyped[T Float, I SignedInteger](br *array.BufReader, h codecHea
 	}
 }
 
-func readALPWithPatchIdx[T Float, I SignedInteger, J UnsignedInteger](br *array.BufReader, h codecHeader, opts ReadOptions, buf [2]byte, encoded EncodedArray[I], decode func(I, uint8, uint8) T, offset uint64, idxHeader codecHeader, readValues encodedReader[T]) (EncodedArray[T], error) {
+func readALPWithPatchIdx[T Float, I SignedInteger, J UnsignedInteger](br *array.BufReader, h codecHeader, opts *readOptions, buf [2]byte, encoded EncodedArray[I], decode func(I, uint8, uint8) T, offset uint64, idxHeader codecHeader, readValues encodedReader[T]) (EncodedArray[T], error) {
 	idxCodec, err := readUnsignedEncodedArrayWithHeader[J](br, idxHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: reading ALP patch indices: %w", err)
@@ -321,7 +328,7 @@ func readALPWithPatchIdx[T Float, I SignedInteger, J UnsignedInteger](br *array.
 	if err := requireNonNullable(valCodec, "ALP patch values"); err != nil {
 		return nil, err
 	}
-	patches, err := newPatches(h.Length, offset, idxCodec, valCodec)
+	patches, err := readPatches(h.Length, offset, idxCodec, valCodec, opts)
 	if err != nil {
 		return nil, prefixPatchError(err, "ALP")
 	}
@@ -335,19 +342,8 @@ func readALPWithPatchIdx[T Float, I SignedInteger, J UnsignedInteger](br *array.
 	}, nil
 }
 
-// alpChildBuilder compresses ALP's signed encoded values and each supported
-// patch-index width.
-type alpChildBuilder interface {
-	BuildInt32(array.ArrayCore[int32]) (EncodedArray[int32], error)
-	BuildInt64(array.ArrayCore[int64]) (EncodedArray[int64], error)
-	BuildUint8(array.ArrayCore[uint8]) (EncodedArray[uint8], error)
-	BuildUint16(array.ArrayCore[uint16]) (EncodedArray[uint16], error)
-	BuildUint32(array.ArrayCore[uint32]) (EncodedArray[uint32], error)
-	BuildUint64(array.ArrayCore[uint64]) (EncodedArray[uint64], error)
-}
-
 // encodeALP32 transforms arr and delegates its encoded values and patch indices.
-func encodeALP32(arr array.ArrayCore[float32], children alpChildBuilder, budget buildBudget) (EncodedArray[float32], error) {
+func encodeALP32(arr array.ArrayCore[float32], children ALPChildBuilder, budget buildBudget) (EncodedArray[float32], error) {
 	if arr.Length() == 0 {
 		return nil, errDataEmpty
 	}
@@ -358,7 +354,7 @@ func encodeALP32(arr array.ArrayCore[float32], children alpChildBuilder, budget 
 }
 
 // encodeALP64 transforms arr and delegates its encoded values and patch indices.
-func encodeALP64(arr array.ArrayCore[float64], children alpChildBuilder, budget buildBudget) (EncodedArray[float64], error) {
+func encodeALP64(arr array.ArrayCore[float64], children ALPChildBuilder, budget buildBudget) (EncodedArray[float64], error) {
 	if arr.Length() == 0 {
 		return nil, errDataEmpty
 	}
@@ -368,7 +364,7 @@ func encodeALP64(arr array.ArrayCore[float64], children alpChildBuilder, budget 
 	return buildALPArrayTyped(arr, alpFuncs64, children.BuildInt64, children, budget)
 }
 
-func buildALPArrayTyped[T Float, I SignedInteger](arr array.ArrayCore[T], funcs alpFuncs[T, I], buildEncoded childBuilder[I], children alpChildBuilder, budget buildBudget) (EncodedArray[T], error) {
+func buildALPArrayTyped[T Float, I SignedInteger](arr array.ArrayCore[T], funcs alpFuncs[T, I], buildEncoded ChildBuilder[I], children ALPChildBuilder, budget buildBudget) (EncodedArray[T], error) {
 	n := arr.Length()
 
 	// Materialize once to avoid per-element interface dispatch across
@@ -402,8 +398,9 @@ func buildALPArrayTyped[T Float, I SignedInteger](arr array.ArrayCore[T], funcs 
 	}
 
 	child, err := buildEncoded(array.NewVirtual(n, func(i uint64) I { return funcs.encode(vals[i], e, f) }))
+	child, err = adoptChild(n, child, err)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("codec: compress ALP encoded values: %w", err)
 	}
 
 	if len(patchIdx) == 0 {
@@ -429,7 +426,7 @@ func buildALPArrayTyped[T Float, I SignedInteger](arr array.ArrayCore[T], funcs 
 	}
 }
 
-func buildALPWithPatches[T Float, I SignedInteger, J UnsignedInteger](n uint64, e, f uint8, child EncodedArray[I], funcs alpFuncs[T, I], patchIdx []uint64, patchVals []T, buildIndices childBuilder[J], budget buildBudget) (EncodedArray[T], error) {
+func buildALPWithPatches[T Float, I SignedInteger, J UnsignedInteger](n uint64, e, f uint8, child EncodedArray[I], funcs alpFuncs[T, I], patchIdx []uint64, patchVals []T, buildIndices ChildBuilder[J], budget buildBudget) (EncodedArray[T], error) {
 	patches, err := buildALPPatchesTyped(n, patchIdx, patchVals, buildIndices, funcs.toBits, budget)
 	if err != nil {
 		return nil, err
@@ -437,7 +434,7 @@ func buildALPWithPatches[T Float, I SignedInteger, J UnsignedInteger](n uint64, 
 	return &alpArray[T, I, J]{denseRows: denseRows(n), expE: e, expF: f, encoded: child, patches: patches, decode: funcs.decode}, nil
 }
 
-func buildALPPatchesTyped[T Float, J UnsignedInteger](length uint64, patchIdx []uint64, patchVals []T, buildIndices childBuilder[J], toBits func(T) uint64, budget buildBudget) (*patches[T, J], error) {
+func buildALPPatchesTyped[T Float, J UnsignedInteger](length uint64, patchIdx []uint64, patchVals []T, buildIndices ChildBuilder[J], toBits func(T) uint64, budget buildBudget) (*patches[T, J], error) {
 	narrow, err := makeBuildSlice[J](budget, uint64(len(patchIdx)), uint64(len(patchIdx)), "ALP narrowed patch indices")
 	if err != nil {
 		return nil, err
@@ -446,15 +443,16 @@ func buildALPPatchesTyped[T Float, J UnsignedInteger](length uint64, patchIdx []
 		narrow[i] = J(v)
 	}
 	patchIdxCodec, err := buildIndices(array.NewPrimitivesUnsafe(narrow))
+	patchIdxCodec, err = adoptChild(uint64(len(narrow)), patchIdxCodec, err)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("codec: compress ALP patch indices: %w", err)
 	}
 	if isAllSameFloat(patchVals, toBits) {
 		patchValCodec, err := newConstFloatArray(array.NewPrimitivesUnsafe(patchVals))
 		if err != nil {
 			return nil, err
 		}
-		return newPatches(length, 0, patchIdxCodec, patchValCodec)
+		return newPatches(length, 0, patchIdxCodec, patchValCodec, narrow)
 	}
-	return newPatches(length, 0, patchIdxCodec, newRawArray(array.NewPrimitivesUnsafe(patchVals)))
+	return newPatches(length, 0, patchIdxCodec, newRawArray(array.NewPrimitivesUnsafe(patchVals)), narrow)
 }

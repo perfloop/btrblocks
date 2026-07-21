@@ -10,16 +10,20 @@ import (
 
 // forArray stores a reference value plus a child encoded array for biased deltas.
 type forArray[T Integer] struct {
+	encodedNode
 	min   T
 	child EncodedArray[T]
 }
 
-func (f *forArray[T]) CodecType() CodecType          { return CodecTypeFor }
-func (f *forArray[T]) Length() uint64                { return f.child.Length() }
-func (f *forArray[T]) IsValid(offset uint64) bool    { return allValidAt(f.Length(), offset) }
-func (f *forArray[T]) NullCount() uint64             { return 0 }
-func (f *forArray[T]) PType() PType                  { return array.PTypeOfPrimitive[T]() }
-func (f *forArray[T]) DecodedBytes() (uint64, error) { return decodedBytesFor(f.Length(), f.PType()) }
+func (f *forArray[T]) CodecType() CodecType       { return CodecTypeFor }
+func (f *forArray[T]) Length() uint64             { return f.child.Length() }
+func (f *forArray[T]) IsValid(offset uint64) bool { return allValidAt(f.Length(), offset) }
+func (f *forArray[T]) NullCount() uint64          { return 0 }
+func (f *forArray[T]) PType() PType               { return array.PTypeOfPrimitive[T]() }
+
+// DecodedBytes is the child's: DecompressInto decodes it straight into dst and
+// then biases it in place, so the child's destination is this node's.
+func (f *forArray[T]) DecodedBytes() (uint64, error) { return f.child.DecodedBytes() }
 
 func (f *forArray[T]) BinarySize() uint64 {
 	return uint64(headerSize) + uint64(unsafe.Sizeof(f.min)) + f.child.BinarySize()
@@ -68,7 +72,7 @@ func (f *forArray[T]) WriteTo(w io.Writer) (int64, error) {
 	return sum.n, nil
 }
 
-func readFoRArray[T Integer](br *array.BufReader, h codecHeader, opts ReadOptions, readValues encodedReader[T]) (EncodedArray[T], error) {
+func readFoRArray[T Integer](br *array.BufReader, h codecHeader, opts *readOptions, readValues encodedReader[T]) (EncodedArray[T], error) {
 	minSize := uint64(unsafe.Sizeof(T(0)))
 	if h.NumBytes != minSize {
 		return nil, fmt.Errorf("codec: for body size = %d, want %d", h.NumBytes, minSize)

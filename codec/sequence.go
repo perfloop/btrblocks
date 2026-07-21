@@ -12,6 +12,7 @@ var errNotArithmeticSequence = ErrNotArithmeticSequence
 
 // sequenceArray stores an arithmetic progression as a base value and step.
 type sequenceArray[T Integer] struct {
+	encodedNode
 	denseRows
 	base T
 	step T
@@ -106,7 +107,7 @@ func (s *sequenceArray[T]) WriteTo(w io.Writer) (int64, error) {
 	return sum.n, nil
 }
 
-func readSequenceArray[T Integer](br *array.BufReader, h codecHeader, _ ReadOptions) (EncodedArray[T], error) {
+func readSequenceArray[T Integer](br *array.BufReader, h codecHeader, _ *readOptions) (EncodedArray[T], error) {
 	elemSize := uint64(unsafe.Sizeof(T(0)))
 	if h.NumBytes != 2*elemSize {
 		return nil, fmt.Errorf("codec: sequence body size = %d, want %d", h.NumBytes, 2*elemSize)

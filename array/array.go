@@ -97,22 +97,32 @@ func materializeValiditySlice(src interface {
 	return NewValidityUnsafe(length, bitmap)
 }
 
-func readOpts(opts []ReadOptions) ReadOptions {
-	if len(opts) > 0 {
-		return opts[0]
+// readOpts collapses a variadic ReadOptions tail to the single option the
+// readers honour. Extras are rejected rather than silently dropped: accepting
+// them now would make it a breaking change to give them meaning later.
+func readOpts(opts []ReadOptions) (ReadOptions, error) {
+	if len(opts) > 1 {
+		return ReadOptions{}, fmt.Errorf("array: at most one ReadOptions is allowed, got %d", len(opts))
 	}
-	return ReadOptions{}
+	if len(opts) == 1 {
+		return opts[0], nil
+	}
+	return ReadOptions{}, nil
 }
 
 func readArrayHeader(br *BufReader, opts []ReadOptions) (Header, error) {
 	if br == nil {
 		return Header{}, errors.New("array: nil buffer reader")
 	}
+	option, err := readOpts(opts)
+	if err != nil {
+		return Header{}, err
+	}
 	header, err := readHeaderFromBuf(br)
 	if err != nil {
 		return Header{}, fmt.Errorf("array: reading header: %w", err)
 	}
-	if err := validateHeader(header, readOpts(opts)); err != nil {
+	if err := validateHeader(header, option); err != nil {
 		return Header{}, err
 	}
 	return header, nil

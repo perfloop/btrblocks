@@ -11,6 +11,7 @@ var errValueNotConstant = ErrValueNotConstant
 
 // constArray stores one repeated value for the entire logical array length.
 type constArray[T Integer | Float | String] struct {
+	encodedNode
 	denseRows
 	body array.Array[T]
 }
@@ -123,8 +124,8 @@ func encodeConstString(arr array.ArrayCore[string]) (EncodedArray[string], error
 
 type arrayBodyReader[T Integer | Float | String] func(*array.BufReader, ...ReadOptions) (array.Array[T], error)
 
-func readConstArray[T Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions, readBody arrayBodyReader[T]) (EncodedArray[T], error) {
-	arr, err := readBody(br, opts)
+func readConstArray[T Integer | Float | String](br *array.BufReader, h codecHeader, opts *readOptions, readBody arrayBodyReader[T]) (EncodedArray[T], error) {
+	arr, err := readBody(br, opts.ReadOptions)
 	if err != nil {
 		return nil, fmt.Errorf("codec: const body: %w", err)
 	}

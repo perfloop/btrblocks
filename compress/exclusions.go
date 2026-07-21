@@ -1,38 +1,40 @@
 package compress
 
-func childExclusions(parent CodecType, childIndex uint8) excludeSet {
+import "github.com/axiomhq/btrblocks/codec"
+
+func childExclusions(parent codec.CodecType, childIndex uint8) excludeSet {
 	self := excludeSet(1) << parent
-	bits := func(kinds ...CodecType) excludeSet {
+	bits := func(kinds ...codec.CodecType) excludeSet {
 		var result excludeSet
 		return result.With(kinds...)
 	}
 	switch parent {
-	case CodecTypeDict:
+	case codec.CodecTypeDict:
 		if childIndex == 0 { // dictionary values
-			return self | bits(CodecTypeRunEnd, CodecTypeSparse)
+			return self | bits(codec.CodecTypeRunEnd, codec.CodecTypeSparse)
 		}
-		return self | bits(CodecTypeFor, CodecTypeSequence, CodecTypeZigZag, CodecTypeDelta)
-	case CodecTypeRunEnd:
+		return self | bits(codec.CodecTypeFor, codec.CodecTypeSequence, codec.CodecTypeZigZag, codec.CodecTypeDelta)
+	case codec.CodecTypeRunEnd:
 		if childIndex == 1 { // run ends
-			return self | bits(CodecTypeDict, CodecTypeSparse)
+			return self | bits(codec.CodecTypeDict, codec.CodecTypeSparse)
 		}
-	case CodecTypeZigZag:
-		return self | bits(CodecTypeDict, CodecTypeRunEnd, CodecTypeSparse)
-	case CodecTypeDelta:
-		return self | bits(CodecTypeDict, CodecTypeRunEnd, CodecTypeSparse, CodecTypeSequence, CodecTypeZigZag)
-	case CodecTypeSparse:
+	case codec.CodecTypeZigZag:
+		return self | bits(codec.CodecTypeDict, codec.CodecTypeRunEnd, codec.CodecTypeSparse)
+	case codec.CodecTypeDelta:
+		return self | bits(codec.CodecTypeDict, codec.CodecTypeRunEnd, codec.CodecTypeSparse, codec.CodecTypeSequence, codec.CodecTypeZigZag)
+	case codec.CodecTypeSparse:
 		if childIndex == 1 { // patch indices
-			return self | bits(CodecTypeDict, CodecTypeRunEnd)
+			return self | bits(codec.CodecTypeDict, codec.CodecTypeRunEnd)
 		}
-	case CodecTypeALP:
+	case codec.CodecTypeALP:
 		if childIndex == 1 { // patch indices
-			return self | bits(CodecTypeDict, CodecTypeRunEnd, CodecTypeSparse)
+			return self | bits(codec.CodecTypeDict, codec.CodecTypeRunEnd, codec.CodecTypeSparse)
 		}
-	case CodecTypeALPRD:
-		return self | bits(CodecTypeDict, CodecTypeRunEnd, CodecTypeSparse)
-	case CodecTypeFSST:
+	case codec.CodecTypeALPRD:
+		return self | bits(codec.CodecTypeDict, codec.CodecTypeRunEnd, codec.CodecTypeSparse)
+	case codec.CodecTypeFSST:
 		if childIndex == 0 { // offsets
-			return self | bits(CodecTypeDict, CodecTypeRunEnd, CodecTypeSparse)
+			return self | bits(codec.CodecTypeDict, codec.CodecTypeRunEnd, codec.CodecTypeSparse)
 		}
 	}
 	return self

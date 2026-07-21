@@ -16,6 +16,8 @@ import (
 
 // dictArray stores unique values plus an ordinal child that indexes into them.
 type dictArray[V Integer | Float | String, I UnsignedInteger] struct {
+	encodedNode
+	decodeLimit
 	values  EncodedArray[V]
 	indices EncodedArray[I]
 	visits  atomic.Uint32
@@ -36,7 +38,13 @@ func (d *dictArray[V, I]) IsValid(offset uint64) bool {
 func (d *dictArray[V, I]) NullCount() uint64 { return 0 }
 func (d *dictArray[V, I]) PType() PType      { return d.values.PType() }
 func (d *dictArray[V, I]) DecodedBytes() (uint64, error) {
-	return decodedBytesFor(d.Length(), d.PType())
+	// DecompressInto bulk-decodes both children before gathering, so all three
+	// buffers are live at once.
+	var f decodeFootprint
+	f.add(decodedBytesFor(d.Length(), d.PType()))
+	f.add(d.values.DecodedBytes())
+	f.add(d.indices.DecodedBytes())
+	return f.result()
 }
 
 func (d *dictArray[V, I]) NumDictionaryValues() uint64 { return d.values.Length() }
@@ -235,11 +243,11 @@ func visitDirectOrdinals[I UnsignedInteger](encoded EncodedArray[I], visit func(
 }
 
 func visitRunEndOrdinals[V UnsignedInteger, I UnsignedInteger](values *runEndArray[V, I], visit func(offset, ordinal uint64)) bool {
-	runs, err := Decompress(values.runs)
+	runs, err := decompress(values.runs, values.maxDecodedBytes())
 	if err != nil {
 		return false
 	}
-	ends, err := Decompress(values.ends)
+	ends, err := decompress(values.ends, values.maxDecodedBytes())
 	if err != nil {
 		return false
 	}
@@ -291,11 +299,11 @@ func (d *dictArray[V, I]) DecompressInto(dst []V) error {
 	if err := checkDstLen(dst, d.indices.Length()); err != nil {
 		return err
 	}
-	values, err := Decompress(d.values)
+	values, err := decompress(d.values, d.maxDecodedBytes())
 	if err != nil {
 		return err
 	}
-	indices, err := Decompress(d.indices)
+	indices, err := decompress(d.indices, d.maxDecodedBytes())
 	if err != nil {
 		return err
 	}
@@ -314,7 +322,7 @@ func (d *dictArray[V, I]) Slice(start, end uint64) (EncodedArray[V], error) {
 	if err != nil {
 		return nil, err
 	}
-	return &dictArray[V, I]{values: d.values, indices: indices}, nil
+	return &dictArray[V, I]{decodeLimit: d.decodeLimit, values: d.values, indices: indices}, nil
 }
 
 func (d *dictArray[V, I]) WriteTo(w io.Writer) (int64, error) {
@@ -337,7 +345,7 @@ func (d *dictArray[V, I]) WriteTo(w io.Writer) (int64, error) {
 	return sum.n, nil
 }
 
-func readDictArray[V Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions, readValues encodedReader[V]) (EncodedArray[V], error) {
+func readDictArray[V Integer | Float | String](br *array.BufReader, h codecHeader, opts *readOptions, readValues encodedReader[V]) (EncodedArray[V], error) {
 	if h.NumBytes != 0 {
 		return nil, fmt.Errorf("codec: dict body size = %d, want 0", h.NumBytes)
 	}
@@ -366,7 +374,7 @@ func readDictArray[V Integer | Float | String](br *array.BufReader, h codecHeade
 	}
 }
 
-func readDictOrdinals[V Integer | Float | String, I UnsignedInteger](br *array.BufReader, h codecHeader, childHeader codecHeader, opts ReadOptions, values EncodedArray[V]) (EncodedArray[V], error) {
+func readDictOrdinals[V Integer | Float | String, I UnsignedInteger](br *array.BufReader, h codecHeader, childHeader codecHeader, opts *readOptions, values EncodedArray[V]) (EncodedArray[V], error) {
 	indices, err := readUnsignedEncodedArrayWithHeader[I](br, childHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: dict ordinals: %w", err)
@@ -377,14 +385,17 @@ func readDictOrdinals[V Integer | Float | String, I UnsignedInteger](br *array.B
 	if indices.Length() != h.Length {
 		return nil, fmt.Errorf("codec: dict length = %d, want %d", indices.Length(), h.Length)
 	}
+	ordinals, err := scanChild(indices, opts)
+	if err != nil {
+		return nil, fmt.Errorf("codec: dict ordinal scan: %w", err)
+	}
 	valuesLength := values.Length()
-	for i := range indices.Length() {
-		ordinal := uint64(indices.ValueAt(i))
-		if ordinal >= valuesLength {
+	for i, ordinal := range ordinals {
+		if uint64(ordinal) >= valuesLength {
 			return nil, fmt.Errorf("codec: dict ordinal %d at position %d exceeds values length %d", ordinal, i, valuesLength)
 		}
 	}
-	return &dictArray[V, I]{values: values, indices: indices}, nil
+	return &dictArray[V, I]{decodeLimit: opts.decodeLimit(), values: values, indices: indices}, nil
 }
 
 // distinctLookup abstracts the key->ordinal dictionary buildDictWithKey and
@@ -416,17 +427,7 @@ func (m mapLookup[K]) All() iter.Seq2[K, uint64] {
 	}
 }
 
-// dictionaryChildBuilder compresses the dictionary values and each supported
-// ordinal width. Calls occur once per structural child, never per row.
-type dictionaryChildBuilder[T Integer | Float | String] interface {
-	BuildValues(array.ArrayCore[T]) (EncodedArray[T], error)
-	BuildUint8(array.ArrayCore[uint8]) (EncodedArray[uint8], error)
-	BuildUint16(array.ArrayCore[uint16]) (EncodedArray[uint16], error)
-	BuildUint32(array.ArrayCore[uint32]) (EncodedArray[uint32], error)
-	BuildUint64(array.ArrayCore[uint64]) (EncodedArray[uint64], error)
-}
-
-func buildIntegerDictFromDistinctWithChildren[T Integer](arr array.ArrayCore[T], distinct distinctLookup[T], children dictionaryChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
+func buildIntegerDictFromDistinctWithChildren[T Integer](arr array.ArrayCore[T], distinct distinctLookup[T], children DictionaryChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
 	if children == nil {
 		return nil, ErrBuilderRequired
 	}
@@ -466,6 +467,7 @@ func buildIntegerDictFromDistinctWithChildren[T Integer](arr array.ArrayCore[T],
 	}
 
 	valuesCodec, err := children.BuildValues(sliceArrayCore[T](values))
+	valuesCodec, err = adoptChild(uint64(len(values)), valuesCodec, err)
 	if err != nil {
 		return nil, fmt.Errorf("codec: compress dictionary values: %w", err)
 	}
@@ -478,7 +480,7 @@ func identityKey[T comparable](value T) T { return value }
 // max code is len(distinct)-1 — and builds the codes child. The key function
 // maps a value to its distinct-map key (identity for integers and strings,
 // floatBits for floats).
-func buildDictWithKey[T Integer | Float | String, K comparable](arr array.ArrayCore[T], distinct distinctLookup[K], key func(T) K, valuesCodec EncodedArray[T], children dictionaryChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
+func buildDictWithKey[T Integer | Float | String, K comparable](arr array.ArrayCore[T], distinct distinctLookup[K], key func(T) K, valuesCodec EncodedArray[T], children DictionaryChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
 	switch numDistinct := distinct.Len(); {
 	case numDistinct <= 1<<8:
 		return buildDictCodes(arr, distinct, key, valuesCodec, children.BuildUint8, budget)
@@ -492,7 +494,7 @@ func buildDictWithKey[T Integer | Float | String, K comparable](arr array.ArrayC
 }
 
 // buildDictCodes builds the codes array as []I directly from the distinct map.
-func buildDictCodes[T Integer | Float | String, K comparable, I UnsignedInteger](arr array.ArrayCore[T], distinct distinctLookup[K], key func(T) K, valuesCodec EncodedArray[T], buildCodes childBuilder[I], budget buildBudget) (EncodedArray[T], error) {
+func buildDictCodes[T Integer | Float | String, K comparable, I UnsignedInteger](arr array.ArrayCore[T], distinct distinctLookup[K], key func(T) K, valuesCodec EncodedArray[T], buildCodes ChildBuilder[I], budget buildBudget) (EncodedArray[T], error) {
 	n := arr.Length()
 	codes, err := makeBuildSlice[I](budget, n, n, "dictionary codes")
 	if err != nil {
@@ -503,13 +505,14 @@ func buildDictCodes[T Integer | Float | String, K comparable, I UnsignedInteger]
 		codes[i] = I(ord)
 	}
 	codesCodec, err := buildCodes(array.NewPrimitivesUnsafe(codes))
+	codesCodec, err = adoptChild(n, codesCodec, err)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("codec: compress dictionary codes: %w", err)
 	}
 	return &dictArray[T, I]{values: valuesCodec, indices: codesCodec}, nil
 }
 
-func buildFloatDictFromDistinctCapacityWithChildren[T Float](arr array.ArrayCore[T], distinct distinctLookup[uint64], expectedDistinct uint64, fromBits func(uint64) T, children dictionaryChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
+func buildFloatDictFromDistinctCapacityWithChildren[T Float](arr array.ArrayCore[T], distinct distinctLookup[uint64], expectedDistinct uint64, fromBits func(uint64) T, children DictionaryChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
 	if children == nil {
 		return nil, ErrBuilderRequired
 	}
@@ -550,6 +553,7 @@ func buildFloatDictFromDistinctCapacityWithChildren[T Float](arr array.ArrayCore
 	}
 
 	valuesCodec, err := children.BuildValues(sliceArrayCore[T](values))
+	valuesCodec, err = adoptChild(uint64(len(values)), valuesCodec, err)
 	if err != nil {
 		return nil, fmt.Errorf("codec: compress float dictionary values: %w", err)
 	}
@@ -558,24 +562,24 @@ func buildFloatDictFromDistinctCapacityWithChildren[T Float](arr array.ArrayCore
 
 // encodeIntegerDict builds an integer dictionary while leaving
 // value and ordinal child selection to the caller.
-func encodeIntegerDict[T Integer](arr array.ArrayCore[T], distinct map[T]uint64, children dictionaryChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
+func encodeIntegerDict[T Integer](arr array.ArrayCore[T], distinct map[T]uint64, children DictionaryChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
 	return buildIntegerDictFromDistinctWithChildren(arr, mapLookup[T](distinct), children, budget)
 }
 
 // BuildFloatDictWithChildren builds a float dictionary with a cardinality hint
 // while leaving value and ordinal child selection to the caller.
-func encodeFloat32Dict(arr array.ArrayCore[float32], distinct map[uint64]uint64, expectedDistinct uint64, children dictionaryChildBuilder[float32], budget buildBudget) (EncodedArray[float32], error) {
+func encodeFloat32Dict(arr array.ArrayCore[float32], distinct map[uint64]uint64, expectedDistinct uint64, children DictionaryChildBuilder[float32], budget buildBudget) (EncodedArray[float32], error) {
 	return buildFloatDictFromDistinctCapacityWithChildren(arr, mapLookup[uint64](distinct), expectedDistinct, func(bits uint64) float32 {
 		return math.Float32frombits(uint32(bits))
 	}, children, budget)
 }
 
 // encodeFloat64Dict builds a float64 dictionary and its children.
-func encodeFloat64Dict(arr array.ArrayCore[float64], distinct map[uint64]uint64, expectedDistinct uint64, children dictionaryChildBuilder[float64], budget buildBudget) (EncodedArray[float64], error) {
+func encodeFloat64Dict(arr array.ArrayCore[float64], distinct map[uint64]uint64, expectedDistinct uint64, children DictionaryChildBuilder[float64], budget buildBudget) (EncodedArray[float64], error) {
 	return buildFloatDictFromDistinctCapacityWithChildren(arr, mapLookup[uint64](distinct), expectedDistinct, math.Float64frombits, children, budget)
 }
 
-func buildStringDictWithChildren[T String](arr array.ArrayCore[T], children dictionaryChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
+func buildStringDictWithChildren[T String](arr array.ArrayCore[T], children DictionaryChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
 	if children == nil {
 		return nil, ErrBuilderRequired
 	}
@@ -597,6 +601,7 @@ func buildStringDictWithChildren[T String](arr array.ArrayCore[T], children dict
 	}
 
 	valuesCodec, err := children.BuildValues(sliceArrayCore[T](values))
+	valuesCodec, err = adoptChild(uint64(len(values)), valuesCodec, err)
 	if err != nil {
 		return nil, fmt.Errorf("codec: compress string dictionary values: %w", err)
 	}
@@ -605,6 +610,6 @@ func buildStringDictWithChildren[T String](arr array.ArrayCore[T], children dict
 
 // encodeStringDict builds a string dictionary while leaving value
 // and ordinal child selection to the caller.
-func encodeStringDict[T String](arr array.ArrayCore[T], children dictionaryChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
+func encodeStringDict[T String](arr array.ArrayCore[T], children DictionaryChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
 	return buildStringDictWithChildren(arr, children, budget)
 }

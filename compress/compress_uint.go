@@ -2,6 +2,7 @@ package compress
 
 import (
 	"github.com/axiomhq/btrblocks/array"
+	"github.com/axiomhq/btrblocks/codec"
 )
 
 // unsignedIntCompressor owns the unsigned-integer schemes and stats policy.
@@ -10,7 +11,7 @@ type unsignedIntCompressor[T array.UnsignedInteger] struct{}
 func unsignedIntegerSchemes[T array.UnsignedInteger]() schemeSet[T, intStats[T]] {
 	set := integerSchemes(compressUnsignedCore[T], unsignedInteger, resolveUnsignedDelta[T])
 	set.values[set.count] = scheme[T, intStats[T]]{
-		kind:  CodecTypeBitpack,
+		kind:  codec.CodecTypeBitpack,
 		build: buildBitpack[T],
 		estimate: func(stats intStats[T], ctx planContext) schemeEstimate {
 			return estimateBitpack(stats, ctx)
@@ -28,7 +29,7 @@ func (unsignedIntCompressor[T]) Schemes(intStats[T]) schemeSet[T, intStats[T]] {
 	return unsignedIntegerSchemes[T]()
 }
 
-func (unsignedIntCompressor[T]) IsExcluded(ctx planContext, kind CodecType) bool {
+func (unsignedIntCompressor[T]) IsExcluded(ctx planContext, kind codec.CodecType) bool {
 	return ctx.excludesInteger(kind)
 }
 

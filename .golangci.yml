@@ -18,3 +18,13 @@ linters:
         # same text on every concrete implementation obscures the code.
         - name: exported
           disabled: true
+  exclusions:
+    rules:
+      # encodedNode is the marker that seals EncodedArray: embedding it is what
+      # makes a node satisfy the interface, so removing one breaks the build.
+      # unused does not follow method-set satisfaction through the embed on
+      # these generic node types and reports every one of them.
+      - linters:
+          - unused
+        path: codec/
+        text: field encodedNode is unused

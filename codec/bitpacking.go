@@ -13,6 +13,7 @@ const flagBitpackHasPatches uint32 = 1 << 0
 
 // bitPackedArray stores fixed-width packed values plus optional patches.
 type bitPackedArray[T Integer, I UnsignedInteger] struct {
+	encodedNode
 	denseRows
 	bitWidth uint
 	buf      []byte
@@ -128,7 +129,7 @@ func buildBitPackedArrayCore[T Integer](arr array.ArrayCore[T], bitWidth uint, b
 	if err != nil {
 		return nil, err
 	}
-	p, err := newPatches(n, 0, patchIdxCodec, patchValCodec)
+	p, err := newPatches(n, 0, patchIdxCodec, patchValCodec, patchIdx)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +163,11 @@ func (c *bitPackedArray[T, I]) CodecType() CodecType {
 }
 func (c *bitPackedArray[T, I]) PType() PType { return array.PTypeOfPrimitive[T]() }
 func (c *bitPackedArray[T, I]) DecodedBytes() (uint64, error) {
-	return decodedBytesFor(c.Length(), c.PType())
+	// Unpacking writes straight into dst; only the patch children add buffers.
+	var f decodeFootprint
+	f.add(decodedBytesFor(c.Length(), c.PType()))
+	f.add(c.patches.decodedBytes())
+	return f.result()
 }
 func (c *bitPackedArray[T, I]) BinarySize() uint64 {
 	size := uint64(headerSize) + 1 + uint64(len(c.buf))
@@ -271,7 +276,7 @@ func (c *bitPackedArray[T, I]) WriteTo(w io.Writer) (int64, error) {
 	return sum.n, nil
 }
 
-func readBitPackedArray[T Integer](br *array.BufReader, h codecHeader, opts ReadOptions, readValues encodedReader[T]) (EncodedArray[T], error) {
+func readBitPackedArray[T Integer](br *array.BufReader, h codecHeader, opts *readOptions, readValues encodedReader[T]) (EncodedArray[T], error) {
 	if h.Flags&^flagBitpackHasPatches != 0 {
 		return nil, fmt.Errorf("codec: unsupported bitpack flags = 0x%x", h.Flags)
 	}
@@ -333,7 +338,7 @@ func readBitPackedArray[T Integer](br *array.BufReader, h codecHeader, opts Read
 	}
 }
 
-func readBitPackedWithPatchIdx[T Integer, I UnsignedInteger](br *array.BufReader, h codecHeader, opts ReadOptions, bitWidth uint, buf []byte, offset uint64, idxHeader codecHeader, readValues encodedReader[T]) (EncodedArray[T], error) {
+func readBitPackedWithPatchIdx[T Integer, I UnsignedInteger](br *array.BufReader, h codecHeader, opts *readOptions, bitWidth uint, buf []byte, offset uint64, idxHeader codecHeader, readValues encodedReader[T]) (EncodedArray[T], error) {
 	idxCodec, err := readUnsignedEncodedArrayWithHeader[I](br, idxHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: reading bitpack patch indices: %w", err)
@@ -348,7 +353,7 @@ func readBitPackedWithPatchIdx[T Integer, I UnsignedInteger](br *array.BufReader
 	if err := requireNonNullable(valCodec, "bitpack patch values"); err != nil {
 		return nil, err
 	}
-	p, err := newPatches(h.Length, offset, idxCodec, valCodec)
+	p, err := readPatches(h.Length, offset, idxCodec, valCodec, opts)
 	if err != nil {
 		return nil, prefixPatchError(err, "bitpack")
 	}

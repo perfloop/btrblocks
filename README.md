@@ -66,7 +66,7 @@ encoded, err := btrblocks.SignedArray(arr, btrblocks.Options{})
 rejected with errors, never panics, and `ReadOptions` bounds decode-time
 allocations. Compression similarly limits individual temporary
 materializations to 64 MiB by default; raise that limit explicitly with
-`Options{}.WithMaxBuildBytes(n)` for larger columns.
+`Options{}.WithMaxBytes(n)` for larger columns.
 
 ## Production support
 

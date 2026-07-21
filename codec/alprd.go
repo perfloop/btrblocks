@@ -165,6 +165,7 @@ func alprdFindBestDict[T Float](arr array.ArrayCore[T], funcs alprdFuncs[T], bud
 
 // alprdArray stores ALP-RD encoded float values.
 type alprdArray[T Float, J UnsignedInteger] struct {
+	encodedNode
 	denseRows
 	rightBitWidth uint8
 	dictSize      uint8
@@ -186,7 +187,12 @@ func (a *alprdArray[T, J]) CodecType() CodecType {
 }
 func (a *alprdArray[T, J]) PType() PType { return array.PTypeOfPrimitive[T]() }
 func (a *alprdArray[T, J]) DecodedBytes() (uint64, error) {
-	return decodedBytesFor(a.Length(), a.PType())
+	// Left and right parts are unpacked from the body straight into dst; only
+	// the patch children add buffers.
+	var f decodeFootprint
+	f.add(decodedBytesFor(a.Length(), a.PType()))
+	f.add(a.patches.decodedBytes())
+	return f.result()
 }
 func (a *alprdArray[T, J]) BinarySize() uint64 {
 	size := uint64(headerSize) + alprdBodySize(a.dictSize, a.leftParts, a.rightParts)
@@ -318,13 +324,8 @@ func (a *alprdArray[T, J]) WriteTo(w io.Writer) (int64, error) {
 	return sum.n, nil
 }
 
-// alprdChildBuilder compresses each supported patch-index width.
-type alprdChildBuilder interface {
-	unsignedChildBuilder
-}
-
 // encodeALPRD32 transforms arr and leaves patch-index compression to the caller.
-func encodeALPRD32(arr array.ArrayCore[float32], children alprdChildBuilder, budget buildBudget) (EncodedArray[float32], error) {
+func encodeALPRD32(arr array.ArrayCore[float32], children UnsignedChildBuilder, budget buildBudget) (EncodedArray[float32], error) {
 	if arr.Length() == 0 {
 		return nil, errDataEmpty
 	}
@@ -335,7 +336,7 @@ func encodeALPRD32(arr array.ArrayCore[float32], children alprdChildBuilder, bud
 }
 
 // encodeALPRD64 transforms arr and leaves patch-index compression to the caller.
-func encodeALPRD64(arr array.ArrayCore[float64], children alprdChildBuilder, budget buildBudget) (EncodedArray[float64], error) {
+func encodeALPRD64(arr array.ArrayCore[float64], children UnsignedChildBuilder, budget buildBudget) (EncodedArray[float64], error) {
 	if arr.Length() == 0 {
 		return nil, errDataEmpty
 	}
@@ -345,7 +346,7 @@ func encodeALPRD64(arr array.ArrayCore[float64], children alprdChildBuilder, bud
 	return buildALPRDArrayTyped(arr, alprdFuncs64, children, budget)
 }
 
-func buildALPRDArrayTyped[T Float](arr array.ArrayCore[T], funcs alprdFuncs[T], children alprdChildBuilder, budget buildBudget) (EncodedArray[T], error) {
+func buildALPRDArrayTyped[T Float](arr array.ArrayCore[T], funcs alprdFuncs[T], children UnsignedChildBuilder, budget buildBudget) (EncodedArray[T], error) {
 	n := arr.Length()
 
 	// Materialize once to avoid per-element interface dispatch across
@@ -439,7 +440,7 @@ func buildALPRDArrayTyped[T Float](arr array.ArrayCore[T], funcs alprdFuncs[T], 
 	}
 }
 
-func buildALPRDWithPatches[T Float, J UnsignedInteger](n uint64, dict alprdDict, leftBuf, rightBuf []byte, funcs alprdFuncs[T], patchIdx []uint64, patchVals []uint16, buildIndices childBuilder[J], budget buildBudget) (EncodedArray[T], error) {
+func buildALPRDWithPatches[T Float, J UnsignedInteger](n uint64, dict alprdDict, leftBuf, rightBuf []byte, funcs alprdFuncs[T], patchIdx []uint64, patchVals []uint16, buildIndices ChildBuilder[J], budget buildBudget) (EncodedArray[T], error) {
 	patches, err := buildALPRDPatchesTyped(n, patchIdx, patchVals, buildIndices, budget)
 	if err != nil {
 		return nil, err
@@ -457,7 +458,7 @@ func buildALPRDWithPatches[T Float, J UnsignedInteger](n uint64, dict alprdDict,
 	}, nil
 }
 
-func buildALPRDPatchesTyped[J UnsignedInteger](length uint64, patchIdx []uint64, patchVals []uint16, buildIndices childBuilder[J], budget buildBudget) (*patches[uint16, J], error) {
+func buildALPRDPatchesTyped[J UnsignedInteger](length uint64, patchIdx []uint64, patchVals []uint16, buildIndices ChildBuilder[J], budget buildBudget) (*patches[uint16, J], error) {
 	narrow, err := makeBuildSlice[J](budget, uint64(len(patchIdx)), uint64(len(patchIdx)), "ALP-RD narrowed patch indices")
 	if err != nil {
 		return nil, err
@@ -466,20 +467,21 @@ func buildALPRDPatchesTyped[J UnsignedInteger](length uint64, patchIdx []uint64,
 		narrow[i] = J(v)
 	}
 	patchIdxCodec, err := buildIndices(array.NewPrimitivesUnsafe(narrow))
+	patchIdxCodec, err = adoptChild(uint64(len(narrow)), patchIdxCodec, err)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("codec: compress ALP-RD patch indices: %w", err)
 	}
 	if isAllSameUnsigned(patchVals) {
 		patchValCodec, err := newConstIntegerArray(array.NewPrimitivesUnsafe(patchVals))
 		if err != nil {
 			return nil, err
 		}
-		return newPatches(length, 0, patchIdxCodec, patchValCodec)
+		return newPatches(length, 0, patchIdxCodec, patchValCodec, narrow)
 	}
-	return newPatches(length, 0, patchIdxCodec, newRawArray(array.NewPrimitivesUnsafe(patchVals)))
+	return newPatches(length, 0, patchIdxCodec, newRawArray(array.NewPrimitivesUnsafe(patchVals)), narrow)
 }
 
-func readALPRDArrayTyped[T Float](br *array.BufReader, h codecHeader, opts ReadOptions, funcs alprdFuncs[T]) (EncodedArray[T], error) {
+func readALPRDArrayTyped[T Float](br *array.BufReader, h codecHeader, opts *readOptions, funcs alprdFuncs[T]) (EncodedArray[T], error) {
 	floatFromBits := funcs.floatFromBits
 	if h.Flags&^flagALPRDHasPatches != 0 {
 		return nil, fmt.Errorf("codec: unsupported ALPRD flags = 0x%x", h.Flags)
@@ -610,7 +612,7 @@ func readALPRDArrayTyped[T Float](br *array.BufReader, h codecHeader, opts ReadO
 	}
 }
 
-func readALPRDWithPatchIdx[T Float, J UnsignedInteger](br *array.BufReader, h codecHeader, opts ReadOptions, rightBitWidth, leftBitWidth, dictSize uint8, dict [alprdMaxDictSize]uint16, leftParts, rightParts []byte, floatFromBits func(uint64) T, offset uint64, idxHeader codecHeader) (EncodedArray[T], error) {
+func readALPRDWithPatchIdx[T Float, J UnsignedInteger](br *array.BufReader, h codecHeader, opts *readOptions, rightBitWidth, leftBitWidth, dictSize uint8, dict [alprdMaxDictSize]uint16, leftParts, rightParts []byte, floatFromBits func(uint64) T, offset uint64, idxHeader codecHeader) (EncodedArray[T], error) {
 	idxCodec, err := readUnsignedEncodedArrayWithHeader[J](br, idxHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: reading ALPRD patch indices: %w", err)
@@ -625,7 +627,7 @@ func readALPRDWithPatchIdx[T Float, J UnsignedInteger](br *array.BufReader, h co
 	if err := requireNonNullable(valCodec, "ALPRD patch values"); err != nil {
 		return nil, err
 	}
-	patches, err := newPatches(h.Length, offset, idxCodec, valCodec)
+	patches, err := readPatches(h.Length, offset, idxCodec, valCodec, opts)
 	if err != nil {
 		return nil, prefixPatchError(err, "ALPRD")
 	}

@@ -70,6 +70,7 @@ var (
 	ErrALPHighPatchRatio     = codec.ErrALPHighPatchRatio
 	ErrALPRDHighPatchRatio   = codec.ErrALPRDHighPatchRatio
 	ErrMaterializationLimit  = codec.ErrMaterializationLimit
+	ErrWorkLimit             = codec.ErrWorkLimit
 )
 
 // LoadSigned deserializes exactly one signed-integer array from data. The

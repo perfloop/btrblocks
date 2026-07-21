@@ -1,13 +1,19 @@
 package compress
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"unsafe"
 
 	"github.com/axiomhq/btrblocks/array"
+	"github.com/axiomhq/btrblocks/codec"
 )
+
+// errOffsetOutOfRange is the panic value the planner's array views raise for an
+// out-of-range index, matching array.ArrayCore's documented contract.
+var errOffsetOutOfRange = errors.New("offset out of range")
 
 func allValidAt(length, offset uint64) bool {
 	if offset >= length {
@@ -28,10 +34,10 @@ func checkMaskedAllocation[T array.Integer | array.Float | array.String](length,
 	var value T
 	width := uint64(unsafe.Sizeof(value))
 	if width != 0 && length > maxBytes/width {
-		return fmt.Errorf("%w: %s needs %d values of width %d, limit %d bytes", ErrMaterializationLimit, name, length, width, maxBytes)
+		return fmt.Errorf("%w: %s needs %d values of width %d, limit %d bytes", codec.ErrMaterializationLimit, name, length, width, maxBytes)
 	}
 	if length > uint64(^uint(0)>>1) {
-		return fmt.Errorf("%w: %s length %d overflows int", ErrMaterializationLimit, name, length)
+		return fmt.Errorf("%w: %s length %d overflows int", codec.ErrMaterializationLimit, name, length)
 	}
 	return nil
 }
@@ -70,7 +76,7 @@ func (a *maskedArray[T]) Slice(start, end uint64) (array.Array[T], error) {
 	if err := array.ValidateSliceBounds(a.Length(), start, end); err != nil {
 		return nil, err
 	}
-	if err := checkMaskedAllocation[T](end-start, DefaultMaxBuildBytes, "masked slice"); err != nil {
+	if err := checkMaskedAllocation[T](end-start, codec.DefaultMaxBuildBytes, "masked slice"); err != nil {
 		return nil, err
 	}
 	values := make([]T, end-start)
@@ -89,7 +95,7 @@ func (a *maskedArray[T]) WriteTo(w io.Writer) (int64, error) {
 }
 
 func (a *maskedArray[T]) materialized(limits ...uint64) (array.Array[T], error) {
-	maxBytes := uint64(DefaultMaxBuildBytes)
+	maxBytes := uint64(codec.DefaultMaxBuildBytes)
 	if len(limits) != 0 && limits[0] != 0 {
 		maxBytes = limits[0]
 	}
@@ -130,12 +136,12 @@ func maskStringArray(source array.Array[string]) *maskedArray[string] {
 		for i := range masked.Length() {
 			size := uint64(len(masked.ValueAt(i)))
 			if size > maxBytes-total {
-				return fmt.Errorf("%w: masked string payload exceeds %d bytes", ErrMaterializationLimit, maxBytes)
+				return fmt.Errorf("%w: masked string payload exceeds %d bytes", codec.ErrMaterializationLimit, maxBytes)
 			}
 			total += size
 		}
 		if masked.Length() == math.MaxUint64 {
-			return fmt.Errorf("%w: masked string offsets length overflows", ErrMaterializationLimit)
+			return fmt.Errorf("%w: masked string offsets length overflows", codec.ErrMaterializationLimit)
 		}
 		offsetWidth := uint64(4)
 		switch {
@@ -145,7 +151,7 @@ func maskStringArray(source array.Array[string]) *maskedArray[string] {
 			offsetWidth = 2
 		}
 		if masked.Length()+1 > maxBytes/offsetWidth {
-			return fmt.Errorf("%w: masked string offsets exceed %d bytes", ErrMaterializationLimit, maxBytes)
+			return fmt.Errorf("%w: masked string offsets exceed %d bytes", codec.ErrMaterializationLimit, maxBytes)
 		}
 		return nil
 	}

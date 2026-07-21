@@ -7,14 +7,14 @@ import (
 	"testing"
 )
 
-type mismatchedValidityProvider struct {
+type validityProvider struct {
 	length   uint64
 	validity Validity
 }
 
-func (s mismatchedValidityProvider) Length() uint64      { return s.length }
-func (s mismatchedValidityProvider) IsValid(uint64) bool { return true }
-func (s mismatchedValidityProvider) Validity() Validity  { return s.validity }
+func (s validityProvider) Length() uint64      { return s.length }
+func (s validityProvider) IsValid(uint64) bool { return true }
+func (s validityProvider) Validity() Validity  { return s.validity }
 
 func TestValidityFromNullsAndSlice(t *testing.T) {
 	validity, err := ValidityFromNulls(10, []bool{false, true, false, false, true, false, false, true, false, false})
@@ -68,10 +68,10 @@ func TestValidityBitmapRejectsInvalidRange(t *testing.T) {
 
 func TestValidityBitmapHonorsAllocationBudget(t *testing.T) {
 	source := AllValid(16)
-	if _, _, err := ValidityBitmap(source, 0, 16, ValidityBitmapOptions{MaxBytes: 1}); !errors.Is(err, ErrValidityBitmapLimit) {
+	if _, _, err := ValidityBitmap(source, 0, 16, BuildOptions{MaxBytes: 1}); !errors.Is(err, ErrValidityBitmapLimit) {
 		t.Fatalf("small-budget error = %v, want %v", err, ErrValidityBitmapLimit)
 	}
-	bitmap, nullCount, err := ValidityBitmap(source, 0, 16, ValidityBitmapOptions{MaxBytes: 2})
+	bitmap, nullCount, err := ValidityBitmap(source, 0, 16, BuildOptions{MaxBytes: 2})
 	if err != nil {
 		t.Fatalf("sufficient-budget error = %v", err)
 	}
@@ -79,9 +79,32 @@ func TestValidityBitmapHonorsAllocationBudget(t *testing.T) {
 		t.Fatalf("bitmap length = %d, null count = %d; want 2, 0", len(bitmap), nullCount)
 	}
 
-	hostile := AllValid((DefaultMaxValidityBitmapBytes + 1) * 8)
+	hostile := AllValid((DefaultMaxBuildBytes + 1) * 8)
 	if _, _, err := ValidityBitmap(hostile, 0, hostile.Length()); !errors.Is(err, ErrValidityBitmapLimit) {
 		t.Fatalf("default-budget error = %v, want %v", err, ErrValidityBitmapLimit)
+	}
+}
+
+// TestValidityBitmapRejectsExtraOptions pins the pre-v1 decision that a
+// variadic options tail with more than one element is an error, on the borrow
+// fast path as well as the materializing one. Silently honouring opts[0] can
+// never start rejecting once the surface is tagged.
+func TestValidityBitmapRejectsExtraOptions(t *testing.T) {
+	borrowable, err := NewValidityUnsafe(16, []byte{0x0f, 0x0f})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := map[string]ValiditySource{
+		"materialized": AllValid(16),
+		"borrowed":     validityProvider{length: 16, validity: borrowable},
+	}
+	for name, source := range sources {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := ValidityBitmap(source, 0, 16, BuildOptions{MaxBytes: 2}, BuildOptions{MaxBytes: 4})
+			if err == nil || !strings.Contains(err.Error(), "at most one BuildOptions") {
+				t.Fatalf("ValidityBitmap error = %v, want at-most-one rejection", err)
+			}
+		})
 	}
 }
 
@@ -90,7 +113,7 @@ func TestValidityBitmapRejectsMismatchedBorrowedBitmap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := mismatchedValidityProvider{length: 16, validity: validity}
+	source := validityProvider{length: 16, validity: validity}
 	bitmap, nullCount, err := ValidityBitmap(source, 0, source.Length())
 	if err != nil {
 		t.Fatal(err)

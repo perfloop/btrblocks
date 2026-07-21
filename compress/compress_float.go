@@ -43,14 +43,14 @@ func floatSchemes[T array.Float](compressValues childCompressor[T], buildALP, bu
 		count: 6,
 		values: [maxSchemeCount]scheme[T, floatStats[T]]{
 			{
-				kind:  CodecTypeConst,
+				kind:  codec.CodecTypeConst,
 				build: buildFloatConst[T],
 				estimate: func(stats floatStats[T], ctx planContext) schemeEstimate {
 					return estimateConst(stats.Source(), ctx, stats.isConst)
 				},
 			},
 			{
-				kind:  CodecTypeALP,
+				kind:  codec.CodecTypeALP,
 				build: buildALP,
 				estimate: func(stats floatStats[T], ctx planContext) schemeEstimate {
 					if preferFloatDictionary(stats) {
@@ -60,7 +60,7 @@ func floatSchemes[T array.Float](compressValues childCompressor[T], buildALP, bu
 				},
 			},
 			{
-				kind:  CodecTypeALPRD,
+				kind:  codec.CodecTypeALPRD,
 				build: buildALPRD,
 				estimate: func(stats floatStats[T], ctx planContext) schemeEstimate {
 					if preferFloatDictionary(stats) {
@@ -70,8 +70,8 @@ func floatSchemes[T array.Float](compressValues childCompressor[T], buildALP, bu
 				},
 			},
 			{
-				kind: CodecTypeRunEnd,
-				build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
+				kind: codec.CodecTypeRunEnd,
+				build: func(arr array.ArrayCore[T], ctx planContext) (codec.EncodedArray[T], error) {
 					return buildPrimitiveRunEnd(arr, ctx, compressValues)
 				},
 				estimate: func(stats floatStats[T], ctx planContext) schemeEstimate {
@@ -79,8 +79,8 @@ func floatSchemes[T array.Float](compressValues childCompressor[T], buildALP, bu
 				},
 			},
 			{
-				kind: CodecTypeSparse,
-				build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
+				kind: codec.CodecTypeSparse,
+				build: func(arr array.ArrayCore[T], ctx planContext) (codec.EncodedArray[T], error) {
 					return buildFloatSparse(arr, ctx, compressValues)
 				},
 				estimate: func(stats floatStats[T], ctx planContext) schemeEstimate {
@@ -88,7 +88,7 @@ func floatSchemes[T array.Float](compressValues childCompressor[T], buildALP, bu
 				},
 			},
 			{
-				kind:    CodecTypeDict,
+				kind:    codec.CodecTypeDict,
 				build:   buildDict,
 				resolve: resolveDict,
 				estimate: func(stats floatStats[T], ctx planContext) schemeEstimate {
@@ -104,7 +104,7 @@ func preferFloatDictionary[T array.Float](stats floatStats[T]) bool {
 	return stats.distinctEstimate > 1 && stats.distinctEstimate <= 8192 && stats.distinctEstimate*16 <= n
 }
 
-func (floatCompressor[T]) IsExcluded(ctx planContext, kind CodecType) bool {
+func (floatCompressor[T]) IsExcluded(ctx planContext, kind codec.CodecType) bool {
 	return ctx.excludesFloat(kind)
 }
 
@@ -119,7 +119,7 @@ const floatDictionaryRefineMargin = 0.90
 // accurate enough to avoid rebuilding dictionaries that are clearly unable to
 // beat the incumbent, while the exact output is retained when it wins so it is
 // never built twice.
-type floatDictionaryBuilder[T array.Float] func(array.ArrayCore[T], uint64, codec.DictionaryChildBuilder[T], ...codec.BuildOptions) (EncodedArray[T], error)
+type floatDictionaryBuilder[T array.Float] func(array.ArrayCore[T], uint64, codec.DictionaryChildBuilder[T], ...codec.BuildOptions) (codec.EncodedArray[T], error)
 
 func resolveFloat32Dictionary(arr array.Array[float32], stats floatStats[float32], ctx planContext, estimate schemeEstimate, bestRatio float64) (resolvedEstimate[float32], error) {
 	return resolveFloatDictionary(arr, stats, ctx, estimate, bestRatio, compressFloat32Core, codec.EncodeFloat32Dict)
@@ -133,7 +133,7 @@ func resolveFloatDictionary[T array.Float](arr array.Array[T], stats floatStats[
 	if estimate.ratio < bestRatio*floatDictionaryRefineMargin {
 		return resolvedEstimate[T]{}, nil
 	}
-	dictionary, err := buildDictionary(arr, stats.distinctEstimate, dictionaryChildren[T]{ctx: ctx, compressValues: compressValues}, ctx.buildOptions())
+	dictionary, err := buildDictionary(arr, stats.distinctEstimate, dictionaryChildren[T]{ctx: ctx, compressValues: compressValues}, ctx.build)
 	if err != nil {
 		if isExpectedBuildError(err) {
 			return resolvedEstimate[T]{}, nil

@@ -13,6 +13,7 @@ func TestPatchesRejectCountBeyondLogicalLength(t *testing.T) {
 		0,
 		&constArray[uint8]{denseRows: 2, body: array.NewPrimitivesUnsafe([]uint8{0})},
 		&constArray[uint32]{denseRows: 2, body: array.NewPrimitivesUnsafe([]uint32{1})},
+		[]uint8{0, 0},
 	)
 	require.ErrorContains(t, err, "patch count 2 exceeds logical length 1")
 }

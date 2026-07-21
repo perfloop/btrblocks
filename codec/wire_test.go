@@ -2,10 +2,14 @@ package codec
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/axiomhq/btrblocks/array"
 	"github.com/axiomhq/fsst"
@@ -136,7 +140,7 @@ func FuzzLoadEncodedBytesAllTypes(f *testing.F) {
 	f.Add([]byte(nil))
 	f.Add(make([]byte, HeaderSize))
 
-	f.Fuzz(func(_ *testing.T, data []byte) {
+	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) > 1<<20 {
 			return
 		}
@@ -146,18 +150,80 @@ func FuzzLoadEncodedBytesAllTypes(f *testing.F) {
 			MaxDecodedBytes: 1 << 20,
 			MaxDepth:        8,
 		}
-		_, _ = LoadSigned[int8](data, opts)
-		_, _ = LoadSigned[int16](data, opts)
-		_, _ = LoadSigned[int32](data, opts)
-		_, _ = LoadSigned[int64](data, opts)
-		_, _ = LoadUnsigned[uint8](data, opts)
-		_, _ = LoadUnsigned[uint16](data, opts)
-		_, _ = LoadUnsigned[uint32](data, opts)
-		_, _ = LoadUnsigned[uint64](data, opts)
-		_, _ = LoadFloat32(data, opts)
-		_, _ = LoadFloat64(data, opts)
-		_, _ = LoadStrings(data, opts)
+		exerciseLoad(t, data, opts, LoadSigned[int8])
+		exerciseLoad(t, data, opts, LoadSigned[int16])
+		exerciseLoad(t, data, opts, LoadSigned[int32])
+		exerciseLoad(t, data, opts, LoadSigned[int64])
+		exerciseLoad(t, data, opts, LoadUnsigned[uint8])
+		exerciseLoad(t, data, opts, LoadUnsigned[uint16])
+		exerciseLoad(t, data, opts, LoadUnsigned[uint32])
+		exerciseLoad(t, data, opts, LoadUnsigned[uint64])
+		exerciseLoad(t, data, opts, LoadFloat32)
+		exerciseLoad(t, data, opts, LoadFloat64)
+		exerciseLoad(t, data, opts, LoadStrings)
 	})
+}
+
+// valueAtSamples bounds how many offsets exerciseLoad reads individually.
+// ValueAt is O(offset) in the delta and run-end codecs, so scanning every offset
+// would cost O(n^2) for evidence a spread of offsets already gives — the same
+// reason the read path validates with a sequential pass (see readBudget).
+const valueAtSamples = 64
+
+// exerciseLoad loads data and, when it decodes, drives the access path that
+// Load deliberately defers validation to. Load range-checks only what costs
+// O(1) per element; Decompress, DecompressInto, ValueAt and Slice are where the
+// rest of a crafted tree's claims are finally tested, so a fuzz target that
+// stops at Load never reaches them. Refusing to decode is a valid answer here —
+// panicking, or a tree disagreeing with itself, is not.
+func exerciseLoad[T Integer | Float | String](t *testing.T, data []byte, opts ReadOptions, load func([]byte, ...ReadOptions) (EncodedArray[T], error)) {
+	encoded, err := load(data, opts)
+	if err != nil {
+		return
+	}
+	values, err := Decompress(encoded)
+	if err != nil {
+		return
+	}
+	length := encoded.Length()
+	if uint64(len(values)) != length {
+		t.Fatalf("decompressed %d values, want length %d", len(values), length)
+	}
+
+	into := make([]T, length)
+	if err := encoded.DecompressInto(into); err != nil {
+		t.Fatalf("DecompressInto after a successful Decompress: %v", err)
+	}
+	assertValuesEqual(t, values, into)
+
+	sampled := make([]T, 0, valueAtSamples+1)
+	want := make([]T, 0, valueAtSamples+1)
+	stride := max(length/valueAtSamples, 1)
+	for offset := uint64(0); offset < length; offset += stride {
+		if !encoded.IsValid(offset) && encoded.NullCount() == 0 {
+			t.Fatalf("offset %d is null in an array reporting no nulls", offset)
+		}
+		sampled = append(sampled, encoded.ValueAt(offset))
+		want = append(want, values[offset])
+	}
+	assertValuesEqual(t, want, sampled)
+
+	start := length / 2
+	sliced, err := encoded.Slice(start, length)
+	if errors.Is(err, ErrMaterializationLimit) {
+		// A codec that cannot slice structurally decodes the whole node under
+		// the limit this stream was loaded with, which is tighter than the
+		// ambient one Decompress just answered under. Refusing is valid.
+		return
+	}
+	if err != nil {
+		t.Fatalf("Slice [%d, %d): %v", start, length, err)
+	}
+	slicedValues, err := Decompress(sliced)
+	if err != nil {
+		t.Fatalf("Decompress slice [%d, %d): %v", start, length, err)
+	}
+	assertValuesEqual(t, values[start:], slicedValues)
 }
 
 func TestReadRejectsRemovedCodecKind(t *testing.T) {
@@ -243,7 +309,7 @@ func TestPatchValidateRejectsInteriorOutOfRange(t *testing.T) {
 		indices: newRawArray(array.NewPrimitivesUnsafe([]uint16{5, 1000, 6})),
 		values:  newRawArray(buildArray([]uint32{1, 2, 3})),
 	}
-	err := p.Validate()
+	err := p.validateIndices([]uint16{5, 1000, 6})
 	require.Error(t, err)
 	require.ErrorContains(t, err, "patch index = 1000")
 }
@@ -255,7 +321,7 @@ func TestPatchValidateRejectsNonStrictlyIncreasing(t *testing.T) {
 		indices: newRawArray(array.NewPrimitivesUnsafe([]uint8{2, 5, 3})),
 		values:  newRawArray(buildArray([]uint32{1, 2, 3})),
 	}
-	err := p.Validate()
+	err := p.validateIndices([]uint8{2, 5, 3})
 	require.Error(t, err)
 	require.ErrorContains(t, err, "not strictly increasing")
 }
@@ -267,7 +333,8 @@ func TestPatchValidateAcceptsValidPatches(t *testing.T) {
 		indices: newRawArray(array.NewPrimitivesUnsafe([]uint8{1, 3, 7})),
 		values:  newRawArray(buildArray([]uint32{10, 20, 30})),
 	}
-	require.NoError(t, p.Validate())
+	require.NoError(t, p.validate())
+	require.NoError(t, p.validateIndices([]uint8{1, 3, 7}))
 }
 
 func TestReadBitpackKeepsPatchesEncodedUntilCopy(t *testing.T) {
@@ -716,4 +783,388 @@ func TestReadRejectsExcessiveNestingDepth(t *testing.T) {
 	}
 	_, err := LoadSigned[int64](buf.Bytes())
 	require.ErrorContains(t, err, "nesting depth")
+}
+
+// --- Decode-work regression tests ---
+//
+// Each stream below is a few dozen bytes that declares a length a child codec
+// expands from almost nothing. Before the read path was charged, validating
+// them walked the child with ValueAt, whose cost is O(offset) in the delta
+// codec: the run-end stream took 16.65s and was then accepted, the nullable one
+// 16.04s before it was rejected. Every one of them must now settle in the time
+// a single sequential pass takes.
+
+// maxDecodeAnswer bounds how long one of those decodes may take to answer. They
+// answer in single-digit milliseconds now and took 16s before, so a bound in
+// between fails loudly on a regression without being flaky on a busy machine.
+const maxDecodeAnswer = 2 * time.Second
+
+// assertAnsweredWithin requires work to finish within maxDecodeAnswer and
+// returns its error for the caller to classify: an answer given slowly is a
+// regression even when it is the right answer.
+//
+// The work runs on its own goroutine so the bound is on the wait, not on a
+// measurement taken afterwards. Uncharged validation of these streams does not
+// take a few seconds, it takes hours; a test that timed the call and checked
+// the elapsed time after it returned would hang until the whole package's
+// timeout instead of reporting the regression. The abandoned goroutine outlives
+// the failure, which only happens in a run that has already failed.
+func assertAnsweredWithin(t *testing.T, work func() error) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- work() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(maxDecodeAnswer):
+		t.Fatalf("no answer within %s", maxDecodeAnswer)
+		return nil
+	}
+}
+
+// assertRejectsWithin additionally requires the answer to be a rejection.
+func assertRejectsWithin(t *testing.T, load func() error) error {
+	t.Helper()
+	err := assertAnsweredWithin(t, load)
+	require.Error(t, err)
+	return err
+}
+
+func codecNode(t *testing.T, h codecHeader, parts ...[]byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	_, err := h.WriteTo(&buf)
+	require.NoError(t, err)
+	for _, part := range parts {
+		buf.Write(part)
+	}
+	return buf.Bytes()
+}
+
+// sequenceNode declares length elements of an arithmetic progression in two
+// inline scalars, the cheapest way to buy an enormous logical length.
+func sequenceNode[T Integer](t *testing.T, length uint64, base, step T) []byte {
+	t.Helper()
+	var body bytes.Buffer
+	_, err := writeIntegerLE(&body, base)
+	require.NoError(t, err)
+	_, err = writeIntegerLE(&body, step)
+	require.NoError(t, err)
+	return codecNode(t, codecHeader{
+		Version:  versionNumber,
+		Type:     CodecTypeSequence,
+		ElemType: array.PTypeOfPrimitive[T](),
+		Length:   length,
+		NumBytes: uint64(body.Len()),
+	}, body.Bytes())
+}
+
+// dictNode declares length ordinals over values. One level costs about a
+// hundred bytes and buys a full scan of its own declared length, so nesting
+// them is the cheapest way to ask a decoder for unbounded validation work.
+func dictNode(t *testing.T, elem PType, length uint64, values, indices []byte) []byte {
+	t.Helper()
+	return codecNode(t, codecHeader{
+		Version:  versionNumber,
+		Type:     CodecTypeDict,
+		ElemType: elem,
+		Length:   length,
+	}, values, indices)
+}
+
+// deltaNode wraps child, whose ValueAt costs O(offset), in a prefix sum.
+func deltaNode[T Integer](t *testing.T, childLength uint64, base T, child []byte) []byte {
+	t.Helper()
+	var body bytes.Buffer
+	_, err := writeIntegerLE(&body, base)
+	require.NoError(t, err)
+	return codecNode(t, codecHeader{
+		Version:  versionNumber,
+		Type:     CodecTypeDelta,
+		ElemType: array.PTypeOfPrimitive[T](),
+		Length:   childLength + 1,
+		NumBytes: uint64(body.Len()),
+	}, body.Bytes(), child)
+}
+
+func TestLoadRejectsRunEndOverDeltaSequence(t *testing.T) {
+	// 16M run ends, each of which the old validation loop reached by summing
+	// every delta before it.
+	const ends = 1 << 24
+	stream := codecNode(t, codecHeader{
+		Version:  versionNumber,
+		Type:     CodecTypeRunEnd,
+		ElemType: PTypeUint64,
+		Length:   ends + 1,
+	},
+		sequenceNode[uint64](t, ends+1, 0, 1),
+		deltaNode[uint64](t, ends-1, 1, sequenceNode[uint64](t, ends-1, 1, 0)),
+	)
+	require.Less(t, len(stream), 200)
+
+	err := assertRejectsWithin(t, func() error {
+		_, err := LoadUnsigned[uint64](stream)
+		return err
+	})
+	require.ErrorIs(t, err, ErrMaterializationLimit)
+}
+
+func TestLoadRejectsNestedDictSequence(t *testing.T) {
+	// Eight dictionaries, each declaring a full-length ordinal child over the
+	// next, in a few hundred bytes: the work the tree asks for is the product of
+	// its declared lengths, and only the budget bounds it.
+	const length = defaultMaxReadLength
+	stream := sequenceNode[uint64](t, 256, 1000, 1)
+	for range 8 {
+		stream = dictNode(t, PTypeUint64, length, stream, sequenceNode[uint8](t, length, 0, 0))
+	}
+	require.Less(t, len(stream), 1024)
+
+	err := assertRejectsWithin(t, func() error {
+		_, err := LoadUnsigned[uint64](stream, ReadOptions{MaxWork: 1 << 16})
+		return err
+	})
+	require.ErrorIs(t, err, ErrWorkLimit)
+}
+
+// TestLoadRejectsNestedDictOverOversizedValues pins the charge on the whole
+// subtree a scan materializes rather than on the scanned node's declared
+// length. A dictionary's Length() is its ordinal child's, so each level here
+// measures one element while its values child measures 64 MiB, and each level
+// is the next one's ordinal child. Charging the declared length billed 28
+// visits for 28 full 64 MiB decodes: accepted, seconds later, with every
+// level's buffer still live under the one below it.
+func TestLoadRejectsNestedDictOverOversizedValues(t *testing.T) {
+	// A values child of the whole decode budget leaves no room for the node's
+	// own destination, so the first scan of an enclosing level is refused
+	// before it allocates.
+	const values = defaultMaxReadLength
+	stream := sequenceNode[uint8](t, 1, 0, 0)
+	for range 28 {
+		stream = dictNode(t, PTypeUint8, 1, sequenceNode[uint8](t, values, 0, 1), stream)
+	}
+	require.Less(t, len(stream), 2048)
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	err := assertRejectsWithin(t, func() error {
+		_, err := LoadUnsigned[uint8](stream)
+		return err
+	})
+	runtime.ReadMemStats(&after)
+	require.ErrorIs(t, err, ErrMaterializationLimit)
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(16<<20), "rejected, but only after materializing the nest")
+}
+
+func TestLoadRejectsNullableWithDeltaSequenceValidity(t *testing.T) {
+	// A 1M-row bitmap is 128 KiB of validity bytes, every one of which the old
+	// loop reached through the whole prefix sum before it.
+	const length = 1 << 20
+	const validityBytes = length / 8
+	var nullCount [nullableBodySize]byte
+	binary.LittleEndian.PutUint64(nullCount[:], 1)
+	stream := codecNode(t, codecHeader{
+		Version:  versionNumber,
+		Type:     CodecTypeNullable,
+		ElemType: PTypeUint64,
+		Length:   length,
+		NumBytes: nullableBodySize,
+	},
+		nullCount[:],
+		sequenceNode[uint64](t, length, 0, 1),
+		// Every delta is zero, so the whole bitmap reads 0xff: no nulls at all,
+		// which contradicts the header.
+		deltaNode[uint8](t, validityBytes-1, 0xff, sequenceNode[uint8](t, validityBytes-1, 0, 0)),
+	)
+	require.Less(t, len(stream), 200)
+
+	err := assertRejectsWithin(t, func() error {
+		_, err := LoadUnsigned[uint64](stream)
+		return err
+	})
+	require.ErrorContains(t, err, "bitmap has 0 nulls, header says 1")
+}
+
+// TestSliceNullableOverDeltaSequenceValidity extends the read path's rule to
+// the access path: anything charged per element must be O(1) per element. This
+// bitmap agrees with its header, so the tree loads in about a millisecond, and
+// slicing it then reached the validity child once per row — each read summing
+// the whole delta prefix before it. 123 bytes bought 2m6s inside Slice, at
+// 1/64th of the default length limit, and returned a correct answer.
+func TestSliceNullableOverDeltaSequenceValidity(t *testing.T) {
+	const length = 1 << 20
+	const validityBytes = length / 8
+	// Every validity byte decodes to 0x7f: seven valid rows and one null, which
+	// is exactly what the header declares.
+	const nulls = validityBytes
+	var nullCount [nullableBodySize]byte
+	binary.LittleEndian.PutUint64(nullCount[:], nulls)
+	stream := codecNode(t, codecHeader{
+		Version:  versionNumber,
+		Type:     CodecTypeNullable,
+		ElemType: PTypeUint64,
+		Length:   length,
+		NumBytes: nullableBodySize,
+	},
+		nullCount[:],
+		sequenceNode[uint64](t, length, 0, 1),
+		deltaNode[uint8](t, validityBytes-1, 0x7f, sequenceNode[uint8](t, validityBytes-1, 0, 0)),
+	)
+	require.Less(t, len(stream), 200)
+
+	encoded, err := LoadUnsigned[uint64](stream)
+	require.NoError(t, err)
+	require.Equal(t, uint64(nulls), encoded.NullCount())
+
+	var sliced EncodedArray[uint64]
+	require.NoError(t, assertAnsweredWithin(t, func() error {
+		var err error
+		sliced, err = encoded.Slice(0, length)
+		return err
+	}))
+	require.Equal(t, uint64(length), sliced.Length())
+	require.Equal(t, uint64(nulls), sliced.NullCount())
+	for _, offset := range []uint64{0, 7, 8, length - 1} {
+		require.Equal(t, encoded.IsValid(offset), sliced.IsValid(offset), "validity at %d", offset)
+	}
+}
+
+// TestSliceRunEndOverDeltaSequence is the same defect reached through run-end:
+// its ValueAt binary-searches the ordinal child, whose own ValueAt is O(offset),
+// and Slice called it once per row. 136 bytes and 16385 rows took 2.08s; the
+// default length limit is 4096x that work.
+func TestSliceRunEndOverDeltaSequence(t *testing.T) {
+	const ends = 1 << 15
+	const length = ends + 1
+	stream := codecNode(t, codecHeader{
+		Version:  versionNumber,
+		Type:     CodecTypeRunEnd,
+		ElemType: PTypeUint64,
+		Length:   length,
+	},
+		sequenceNode[uint64](t, ends+1, 0, 1),
+		deltaNode[uint64](t, ends-1, 1, sequenceNode[uint64](t, ends-1, 1, 0)),
+	)
+	require.Less(t, len(stream), 200)
+
+	encoded, err := LoadUnsigned[uint64](stream)
+	require.NoError(t, err)
+
+	var sliced EncodedArray[uint64]
+	require.NoError(t, assertAnsweredWithin(t, func() error {
+		var err error
+		sliced, err = encoded.Slice(0, length)
+		return err
+	}))
+	want, err := Decompress(encoded)
+	require.NoError(t, err)
+	got, err := Decompress(sliced)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+}
+
+// TestSliceHonorsCallerDecodedByteLimit pins which budget Slice decodes under.
+// A codec that cannot slice structurally decodes the whole node to answer for
+// any window, so it is the whole node that has to fit the limit the stream was
+// loaded with — the window fitting proves nothing. Charged to the package
+// default instead, a 72-byte stream answered Slice(0, 1) by allocating 8 MiB:
+// 128x the limit its caller declared, and a paging loop's worth of it per page.
+func TestSliceHonorsCallerDecodedByteLimit(t *testing.T) {
+	const length = 1 << 20
+	stream := deltaNode[uint64](t, length-1, 0, sequenceNode[uint64](t, length-1, 1, 0))
+	require.Less(t, len(stream), 100)
+
+	encoded, err := LoadUnsigned[uint64](stream, ReadOptions{MaxDecodedBytes: 1 << 16})
+	require.NoError(t, err)
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err = encoded.Slice(0, 1)
+	runtime.ReadMemStats(&after)
+	require.ErrorIs(t, err, ErrMaterializationLimit)
+	require.ErrorContains(t, err, "slice [0, 1) decodes all 1048576 rows of delta")
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(1<<16), "refused, but only after decoding the array")
+
+	// Same bytes, a limit that covers the whole node: the window is answered.
+	encoded, err = LoadUnsigned[uint64](stream, ReadOptions{MaxDecodedBytes: 16 << 20})
+	require.NoError(t, err)
+	sliced, err := encoded.Slice(0, 1)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), sliced.Length())
+	require.Equal(t, uint64(0), sliced.ValueAt(0))
+}
+
+func TestDecompressBitmapSparseOverDeltaSequence(t *testing.T) {
+	// An all-ones bitmap makes every row a patch, and reaching each patch value
+	// through the values child's ValueAt summed every delta before it: 16 KiB
+	// bought a quadratic scatter that ran 9s and then succeeded. The child is
+	// also a buffer DecompressInto holds live, so DecodedBytes must charge it
+	// before the decode allocates it.
+	const length = 1 << 17
+	bitmap := bytes.Repeat([]byte{0xff}, length/8)
+	stream := codecNode(t, codecHeader{
+		Version:  versionNumber,
+		Type:     CodecTypeSparse,
+		ElemType: PTypeUint64,
+		Flags:    flagSparseBitmap,
+		Length:   length,
+		NumBytes: uint64(len(bitmap)),
+	}, bitmap,
+		sequenceNode[uint64](t, 1, 0, 0),
+		deltaNode[uint64](t, length-1, 0, sequenceNode[uint64](t, length-1, 1, 0)),
+	)
+
+	sparse, err := LoadUnsigned[uint64](stream)
+	require.NoError(t, err)
+
+	decoded, err := sparse.DecodedBytes()
+	require.NoError(t, err)
+	require.Greater(t, decoded, uint64(length*8), "patch values buffer is materialized but not accounted")
+
+	require.NoError(t, assertAnsweredWithin(t, func() error {
+		_, err := Decompress(sparse)
+		return err
+	}))
+}
+
+func TestLoadDecisionIgnoresTrailingBytes(t *testing.T) {
+	// The work budget comes from ReadOptions alone. Seeding it from the bytes
+	// left in the caller's buffer made this tree's acceptance depend on
+	// whatever happened to follow it.
+	const length = 1 << 16
+	node := codecNode(t, codecHeader{
+		Version:  versionNumber,
+		Type:     CodecTypeDict,
+		ElemType: PTypeUint64,
+		Length:   length,
+	},
+		sequenceNode[uint64](t, 256, 1000, 1),
+		sequenceNode[uint8](t, length, 0, 1),
+	)
+
+	exact, err := LoadUnsignedFromBuf[uint64](&array.BufReader{Buf: node})
+	require.NoError(t, err)
+
+	padded, err := LoadUnsignedFromBuf[uint64](&array.BufReader{Buf: append(node, make([]byte, 4096)...)})
+	require.NoError(t, err)
+	require.Equal(t, exact.Length(), padded.Length())
+}
+
+func TestLoadChargesValidationWorkToTheBudget(t *testing.T) {
+	const length = 1 << 16
+	node := codecNode(t, codecHeader{
+		Version:  versionNumber,
+		Type:     CodecTypeDict,
+		ElemType: PTypeUint64,
+		Length:   length,
+	},
+		sequenceNode[uint64](t, 256, 1000, 1),
+		sequenceNode[uint8](t, length, 0, 1),
+	)
+
+	_, err := LoadUnsigned[uint64](node, ReadOptions{MaxWork: length})
+	require.NoError(t, err)
+
+	_, err = LoadUnsigned[uint64](node, ReadOptions{MaxWork: length - 1})
+	require.ErrorIs(t, err, ErrWorkLimit)
 }

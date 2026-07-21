@@ -49,7 +49,7 @@ func TestPlannerSelectsSparseForDominantInteger(t *testing.T) {
 
 	encoded, err := UnsignedArray(array.NewPrimitivesUnsafe(values), Options{})
 	require.NoError(t, err)
-	require.Equal(t, CodecTypeSparse, encoded.CodecType())
+	require.Equal(t, codec.CodecTypeSparse, encoded.CodecType())
 	decoded, err := codec.Decompress(encoded)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
@@ -61,26 +61,26 @@ func TestPlannerBuildsOnlyWinner(t *testing.T) {
 		values[i] = uint32(i % 4)
 	}
 	arr := array.NewPrimitivesUnsafe(values)
-	var builds []CodecType
+	var builds []codec.CodecType
 	compressor := testCompressorUint32{
 		schemes: []scheme[uint32, testStatsUint32]{
 			{
-				kind: CodecTypeBitpack,
+				kind: codec.CodecTypeBitpack,
 				estimate: func(testStatsUint32, planContext) schemeEstimate {
 					return immediateEstimate(10, true)
 				},
-				build: func(arr array.ArrayCore[uint32], ctx planContext) (EncodedArray[uint32], error) {
-					builds = append(builds, CodecTypeBitpack)
+				build: func(arr array.ArrayCore[uint32], ctx planContext) (codec.EncodedArray[uint32], error) {
+					builds = append(builds, codec.CodecTypeBitpack)
 					return buildBitpack(arr, ctx)
 				},
 			},
 			{
-				kind: CodecTypeFor,
+				kind: codec.CodecTypeFor,
 				estimate: func(testStatsUint32, planContext) schemeEstimate {
 					return immediateEstimate(2, true)
 				},
-				build: func(arr array.ArrayCore[uint32], ctx planContext) (EncodedArray[uint32], error) {
-					builds = append(builds, CodecTypeFor)
+				build: func(arr array.ArrayCore[uint32], ctx planContext) (codec.EncodedArray[uint32], error) {
+					builds = append(builds, codec.CodecTypeFor)
 					return buildFoR(arr, ctx)
 				},
 			},
@@ -88,8 +88,8 @@ func TestPlannerBuildsOnlyWinner(t *testing.T) {
 	}
 	encoded, err := compressWith(arr, newPlanContext(Options{}), compressor)
 	require.NoError(t, err)
-	require.Equal(t, CodecTypeBitpack, encoded.CodecType())
-	require.Equal(t, []CodecType{CodecTypeBitpack}, builds)
+	require.Equal(t, codec.CodecTypeBitpack, encoded.CodecType())
+	require.Equal(t, []codec.CodecType{codec.CodecTypeBitpack}, builds)
 }
 
 func TestPlannerStopsAfterExactConstantDetection(t *testing.T) {
@@ -97,8 +97,8 @@ func TestPlannerStopsAfterExactConstantDetection(t *testing.T) {
 	stats := testStatsUint32{arr: arr, isConstant: true}
 	compressor := testCompressorUint32{
 		schemes: []scheme[uint32, testStatsUint32]{
-			{kind: CodecTypeConst, estimate: func(testStatsUint32, planContext) schemeEstimate { return immediateEstimate(2, true) }},
-			{kind: CodecTypeBitpack, estimate: func(testStatsUint32, planContext) schemeEstimate {
+			{kind: codec.CodecTypeConst, estimate: func(testStatsUint32, planContext) schemeEstimate { return immediateEstimate(2, true) }},
+			{kind: codec.CodecTypeBitpack, estimate: func(testStatsUint32, planContext) schemeEstimate {
 				t.Fatal("evaluated a codec after exact constant detection")
 				return skipEstimate()
 			}},
@@ -107,7 +107,7 @@ func TestPlannerStopsAfterExactConstantDetection(t *testing.T) {
 
 	chosen, err := chooseScheme(arr, stats, newPlanContext(Options{}), compressor, nil)
 	require.NoError(t, err)
-	require.Equal(t, CodecTypeConst, chosen.candidate.kind)
+	require.Equal(t, codec.CodecTypeConst, chosen.candidate.kind)
 }
 
 func TestSampleEstimateSkipsTinyArrays(t *testing.T) {
@@ -151,7 +151,7 @@ func TestPlannerBitpacksTinyUnsignedArraysAnalytically(t *testing.T) {
 	}
 	encoded, err := UnsignedArray(array.NewPrimitivesUnsafe(values), Options{})
 	require.NoError(t, err)
-	require.Equal(t, CodecTypeBitpack, encoded.CodecType())
+	require.Equal(t, codec.CodecTypeBitpack, encoded.CodecType())
 	decoded, err := codec.Decompress(encoded)
 	require.NoError(t, err)
 	require.Equal(t, values, decoded)
@@ -181,7 +181,7 @@ func (c testCompressorUint32) Schemes(testStatsUint32) schemeSet[uint32, testSta
 	set.count = copy(set.values[:], c.schemes)
 	return set
 }
-func (testCompressorUint32) IsExcluded(ctx planContext, kind CodecType) bool {
+func (testCompressorUint32) IsExcluded(ctx planContext, kind codec.CodecType) bool {
 	return ctx.excludesInteger(kind)
 }
 

@@ -9,6 +9,8 @@ import (
 
 // zigzagArray stores signed integers by delegating to an unsigned child array.
 type zigzagArray[T SignedInteger, U UnsignedInteger] struct {
+	encodedNode
+	decodeLimit
 	child EncodedArray[U]
 }
 
@@ -36,7 +38,12 @@ func (z *zigzagArray[T, U]) IsValid(offset uint64) bool {
 func (z *zigzagArray[T, U]) NullCount() uint64 { return 0 }
 func (z *zigzagArray[T, U]) PType() PType      { return array.PTypeOfPrimitive[T]() }
 func (z *zigzagArray[T, U]) DecodedBytes() (uint64, error) {
-	return decodedBytesFor(z.Length(), z.PType())
+	// DecompressInto decodes the unsigned child into its own buffer and then
+	// widens it into dst, so both are live at once.
+	var f decodeFootprint
+	f.add(decodedBytesFor(z.Length(), z.PType()))
+	f.add(z.child.DecodedBytes())
+	return f.result()
 }
 func (z *zigzagArray[T, U]) BinarySize() uint64 { return uint64(headerSize) + z.child.BinarySize() }
 
@@ -49,7 +56,7 @@ func (z *zigzagArray[T, U]) DecompressInto(dst []T) error {
 	if err := checkDstLen(dst, z.child.Length()); err != nil {
 		return err
 	}
-	encoded, err := Decompress(z.child)
+	encoded, err := decompress(z.child, z.maxDecodedBytes())
 	if err != nil {
 		return err
 	}
@@ -64,7 +71,7 @@ func (z *zigzagArray[T, U]) Slice(start, end uint64) (EncodedArray[T], error) {
 	if err != nil {
 		return nil, err
 	}
-	return &zigzagArray[T, U]{child: child}, nil
+	return &zigzagArray[T, U]{decodeLimit: z.decodeLimit, child: child}, nil
 }
 
 func (z *zigzagArray[T, U]) WriteTo(w io.Writer) (int64, error) {
@@ -82,7 +89,7 @@ func (z *zigzagArray[T, U]) WriteTo(w io.Writer) (int64, error) {
 	return n + nn, err
 }
 
-func readZigZagArray[T SignedInteger](br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[T], error) {
+func readZigZagArray[T SignedInteger](br *array.BufReader, h codecHeader, opts *readOptions) (EncodedArray[T], error) {
 	if h.NumBytes != 0 {
 		return nil, fmt.Errorf("codec: zigzag body size = %d, want 0", h.NumBytes)
 	}
@@ -104,7 +111,7 @@ func readZigZagArray[T SignedInteger](br *array.BufReader, h codecHeader, opts R
 	}
 }
 
-func readZigZagChild[T SignedInteger, U UnsignedInteger](br *array.BufReader, h codecHeader, childHeader codecHeader, opts ReadOptions) (EncodedArray[T], error) {
+func readZigZagChild[T SignedInteger, U UnsignedInteger](br *array.BufReader, h codecHeader, childHeader codecHeader, opts *readOptions) (EncodedArray[T], error) {
 	child, err := readUnsignedEncodedArrayWithHeader[U](br, childHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: reading zigzag child: %w", err)
@@ -115,7 +122,7 @@ func readZigZagChild[T SignedInteger, U UnsignedInteger](br *array.BufReader, h 
 	if child.Length() != h.Length {
 		return nil, fmt.Errorf("codec: zigzag length = %d, want %d", child.Length(), h.Length)
 	}
-	return &zigzagArray[T, U]{child: child}, nil
+	return &zigzagArray[T, U]{decodeLimit: opts.decodeLimit(), child: child}, nil
 }
 
 // zigZagEncodedType returns the narrowest unsigned primitive type that can
@@ -136,13 +143,14 @@ func zigZagEncodedType[T SignedInteger](arr array.ArrayCore[T]) PType {
 
 // encodeZigZagAs transforms arr into unsigned U values, delegates their
 // compression to buildChild, and assembles a ZigZag node.
-func encodeZigZagAs[T SignedInteger, U UnsignedInteger](arr array.ArrayCore[T], buildChild childBuilder[U]) (EncodedArray[T], error) {
+func encodeZigZagAs[T SignedInteger, U UnsignedInteger](arr array.ArrayCore[T], buildChild ChildBuilder[U]) (EncodedArray[T], error) {
 	if buildChild == nil {
 		return nil, ErrBuilderRequired
 	}
 	child, err := buildChild(array.NewVirtual(arr.Length(), func(i uint64) U { return U(zigzagEncodeValue(arr.ValueAt(i))) }))
+	child, err = adoptChild(arr.Length(), child, err)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("codec: compress zig-zag values: %w", err)
 	}
 	return &zigzagArray[T, U]{child: child}, nil
 }
