@@ -54,6 +54,10 @@ func readHeaderFromBuf(br *BufReader) (Header, error) {
 	}, nil
 }
 
+// DefaultMaxWork is the validation budget a decode gets when
+// ReadOptions.MaxWork is zero, counted in decoded bytes.
+const DefaultMaxWork = 1 << 28
+
 // ReadOptions constrains resource usage when decoding. Its zero value applies
 // conservative defaults suitable for untrusted data.
 type ReadOptions struct {
@@ -67,15 +71,34 @@ type ReadOptions struct {
 	// trusted data that must not have a practical byte limit.
 	MaxBytes uint64
 
-	// MaxDecodedBytes is the maximum decoded variable-width payload. Zero uses
-	// the default limit of 64 MiB. Use math.MaxUint64 explicitly only when a
+	// MaxDecodedBytes is the maximum a single materialization may hold live,
+	// counting the buffers its children decode alongside it. Zero uses the
+	// default limit of 64 MiB. Use math.MaxUint64 explicitly only when a
 	// higher-level memory budget governs trusted data.
 	MaxDecodedBytes uint64
 
 	// MaxDepth is the maximum codec-tree nesting depth when decoding encoded
-	// arrays. Zero means the decoder's default limit. The codec layer
-	// decrements it on every recursive child read; negative means exhausted.
+	// arrays. Zero means the decoder's default limit. The codec layer counts
+	// levels against it per branch; a negative value admits nothing.
 	MaxDepth int
+
+	// MaxWork is the total validation work one codec-tree decode may perform,
+	// counted in bytes materialized across every validation scan:
+	// MaxDecodedBytes bounds one scan, MaxWork bounds their sum. Zero uses
+	// DefaultMaxWork. Like MaxDepth it is charged by the codec layer, which
+	// decodes children to validate a node; this package's own readers have no
+	// children to scan and ignore it. It is deliberately not derived from the
+	// size of the caller's buffer: the same bytes and the same options must
+	// always produce the same accept/reject decision.
+	MaxWork uint64
+}
+
+// WorkLimit returns the effective validation budget in decoded bytes.
+func (o ReadOptions) WorkLimit() uint64 {
+	if o.MaxWork == 0 {
+		return DefaultMaxWork
+	}
+	return o.MaxWork
 }
 
 // DecodedByteLimit returns the effective variable-width decode budget.

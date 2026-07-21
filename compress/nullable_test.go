@@ -15,8 +15,8 @@ import (
 func TestMaskedMaterializationHonorsBuildBudget(t *testing.T) {
 	source := array.NewPrimitivesUnsafe([]uint64{1, 2})
 	masked := maskPrimitiveArray(source)
-	if _, err := masked.materialized(8); !errors.Is(err, ErrMaterializationLimit) {
-		t.Fatalf("materialized error = %v, want %v", err, ErrMaterializationLimit)
+	if _, err := masked.materialized(8); !errors.Is(err, codec.ErrMaterializationLimit) {
+		t.Fatalf("materialized error = %v, want %v", err, codec.ErrMaterializationLimit)
 	}
 	if _, err := masked.materialized(16); err != nil {
 		t.Fatalf("materialized with sufficient budget: %v", err)
@@ -24,7 +24,7 @@ func TestMaskedMaterializationHonorsBuildBudget(t *testing.T) {
 }
 
 var (
-	benchmarkNullableEncoded EncodedArray[uint64]
+	benchmarkNullableEncoded codec.EncodedArray[uint64]
 	benchmarkNullableValid   bool
 )
 
@@ -51,8 +51,8 @@ func TestNullableRawFallbackPreservesValidity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnsignedArray: %v", err)
 	}
-	if got := encoded.CodecType(); got != CodecTypeRaw {
-		t.Fatalf("CodecType = %v, want %v", got, CodecTypeRaw)
+	if got := encoded.CodecType(); got != codec.CodecTypeRaw {
+		t.Fatalf("codec.CodecType = %v, want %v", got, codec.CodecTypeRaw)
 	}
 	if got := encoded.NullCount(); got != 1 {
 		t.Fatalf("NullCount = %d, want 1", got)
@@ -97,15 +97,15 @@ func TestNullableIntegerRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnsignedArray: %v", err)
 	}
-	if got := encoded.CodecType(); got != CodecTypeNullable {
-		t.Fatalf("CodecType = %v, want %v", got, CodecTypeNullable)
+	if got := encoded.CodecType(); got != codec.CodecTypeNullable {
+		t.Fatalf("codec.CodecType = %v, want %v", got, codec.CodecTypeNullable)
 	}
 	nullable, ok := codec.AsNullable(encoded)
 	if !ok {
 		t.Fatalf("encoded type = %T", encoded)
 	}
-	if got := nullable.Values().CodecType(); got != CodecTypeSparse {
-		t.Fatalf("values CodecType = %v, want %v", got, CodecTypeSparse)
+	if got := nullable.Values().CodecType(); got != codec.CodecTypeSparse {
+		t.Fatalf("values codec.CodecType = %v, want %v", got, codec.CodecTypeSparse)
 	}
 	if got := encoded.NullCount(); got != length-4 {
 		t.Fatalf("NullCount = %d, want %d", got, length-4)
@@ -173,13 +173,13 @@ func TestNullableSparseExclusionIsHonored(t *testing.T) {
 		t.Fatalf("NewPrimitivesWithValidityUnsafe: %v", err)
 	}
 
-	encoded, err := UnsignedArray(source, Options{}.WithExcludeInteger(CodecTypeSparse))
+	encoded, err := UnsignedArray(source, Options{}.WithExcludeInteger(codec.CodecTypeSparse))
 	if err != nil {
 		t.Fatalf("UnsignedArray: %v", err)
 	}
 	if nullable, ok := codec.AsNullable(encoded); ok {
-		if got := nullable.Values().CodecType(); got == CodecTypeSparse {
-			t.Fatalf("values CodecType = %v, want anything else", got)
+		if got := nullable.Values().CodecType(); got == codec.CodecTypeSparse {
+			t.Fatalf("values codec.CodecType = %v, want anything else", got)
 		}
 	}
 	for i := range source.Length() {
@@ -205,11 +205,11 @@ func TestNullableAllNullUsesConstantChildren(t *testing.T) {
 	if !ok {
 		t.Fatalf("encoded type = %T", encoded)
 	}
-	if got := nullable.Values().CodecType(); got != CodecTypeConst {
-		t.Fatalf("values CodecType = %v, want %v", got, CodecTypeConst)
+	if got := nullable.Values().CodecType(); got != codec.CodecTypeConst {
+		t.Fatalf("values codec.CodecType = %v, want %v", got, codec.CodecTypeConst)
 	}
-	if got := nullable.ValidityEncoding().CodecType(); got != CodecTypeConst {
-		t.Fatalf("validity CodecType = %v, want %v", got, CodecTypeConst)
+	if got := nullable.ValidityEncoding().CodecType(); got != codec.CodecTypeConst {
+		t.Fatalf("validity codec.CodecType = %v, want %v", got, codec.CodecTypeConst)
 	}
 	if got := encoded.NullCount(); got != length {
 		t.Fatalf("NullCount = %d, want %d", got, length)
@@ -241,8 +241,8 @@ func TestNullableSequenceIsIneligible(t *testing.T) {
 	if !ok {
 		t.Fatalf("encoded type = %T", encoded)
 	}
-	if got := nullable.Values().CodecType(); got == CodecTypeSequence {
-		t.Fatalf("values CodecType = %v, want anything else", got)
+	if got := nullable.Values().CodecType(); got == codec.CodecTypeSequence {
+		t.Fatalf("values codec.CodecType = %v, want anything else", got)
 	}
 }
 
@@ -269,8 +269,8 @@ func TestNullableStringsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StringArray: %v", err)
 	}
-	if got := encoded.CodecType(); got != CodecTypeNullable {
-		t.Fatalf("CodecType = %v, want %v", got, CodecTypeNullable)
+	if got := encoded.CodecType(); got != codec.CodecTypeNullable {
+		t.Fatalf("codec.CodecType = %v, want %v", got, codec.CodecTypeNullable)
 	}
 	loaded, err := codec.LoadStrings(mustWriteEncodedArray(t, encoded))
 	if err != nil {
@@ -314,8 +314,8 @@ func TestNullableStringRawChildMaterializesOnce(t *testing.T) {
 	if !ok {
 		t.Fatalf("encoded type = %T", encoded)
 	}
-	if got := nullable.Values().CodecType(); got != CodecTypeRaw {
-		t.Fatalf("values CodecType = %v, want %v", got, CodecTypeRaw)
+	if got := nullable.Values().CodecType(); got != codec.CodecTypeRaw {
+		t.Fatalf("values codec.CodecType = %v, want %v", got, codec.CodecTypeRaw)
 	}
 	data := mustWriteEncodedArray(t, encoded)
 	if got, want := uint64(len(data)), encoded.BinarySize(); got != want {

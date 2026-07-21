@@ -9,6 +9,7 @@ import (
 
 // rawArray wraps an array body without applying any secondary compression.
 type rawArray[T Integer | Float | String] struct {
+	encodedNode
 	arr array.Array[T]
 }
 
@@ -67,8 +68,8 @@ func (r *rawArray[T]) WriteTo(w io.Writer) (int64, error) {
 	return n + int64(nn), err
 }
 
-func readRawArray[T Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions, readBody arrayBodyReader[T]) (EncodedArray[T], error) {
-	arr, err := readBody(br, opts)
+func readRawArray[T Integer | Float | String](br *array.BufReader, h codecHeader, opts *readOptions, readBody arrayBodyReader[T]) (EncodedArray[T], error) {
+	arr, err := readBody(br, opts.ReadOptions)
 	if err != nil {
 		return nil, fmt.Errorf("codec: raw body: %w", err)
 	}

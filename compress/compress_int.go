@@ -2,6 +2,7 @@ package compress
 
 import (
 	"github.com/axiomhq/btrblocks/array"
+	"github.com/axiomhq/btrblocks/codec"
 )
 
 // integerSchemes returns the schemes shared by the signed and unsigned
@@ -12,14 +13,14 @@ func integerSchemes[T array.Integer](compressValues childCompressor[T], family i
 		count: 7,
 		values: [maxSchemeCount]scheme[T, intStats[T]]{
 			{
-				kind:  CodecTypeConst,
+				kind:  codec.CodecTypeConst,
 				build: buildIntegerConst[T],
 				estimate: func(stats intStats[T], ctx planContext) schemeEstimate {
 					return estimateConst(stats.Source(), ctx, stats.isConst)
 				},
 			},
 			{
-				kind:  CodecTypeSequence,
+				kind:  codec.CodecTypeSequence,
 				build: buildSequence[T],
 				estimate: func(stats intStats[T], ctx planContext) schemeEstimate {
 					if ctx.nullCount != 0 {
@@ -29,15 +30,15 @@ func integerSchemes[T array.Integer](compressValues childCompressor[T], family i
 				},
 			},
 			{
-				kind:  CodecTypeFor,
+				kind:  codec.CodecTypeFor,
 				build: buildFoR[T],
 				estimate: func(stats intStats[T], ctx planContext) schemeEstimate {
 					return estimateFoR(stats.Source(), ctx, stats.min, stats.max, family)
 				},
 			},
 			{
-				kind: CodecTypeDelta,
-				build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
+				kind: codec.CodecTypeDelta,
+				build: func(arr array.ArrayCore[T], ctx planContext) (codec.EncodedArray[T], error) {
 					return buildDelta(arr, ctx, compressValues)
 				},
 				resolve: resolveDelta,
@@ -46,8 +47,8 @@ func integerSchemes[T array.Integer](compressValues childCompressor[T], family i
 				},
 			},
 			{
-				kind: CodecTypeDict,
-				build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
+				kind: codec.CodecTypeDict,
+				build: func(arr array.ArrayCore[T], ctx planContext) (codec.EncodedArray[T], error) {
 					return buildIntegerDict(arr, ctx, compressValues)
 				},
 				estimate: func(stats intStats[T], ctx planContext) schemeEstimate {
@@ -58,8 +59,8 @@ func integerSchemes[T array.Integer](compressValues childCompressor[T], family i
 				},
 			},
 			{
-				kind: CodecTypeRunEnd,
-				build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
+				kind: codec.CodecTypeRunEnd,
+				build: func(arr array.ArrayCore[T], ctx planContext) (codec.EncodedArray[T], error) {
 					return buildPrimitiveRunEnd(arr, ctx, compressValues)
 				},
 				estimate: func(stats intStats[T], ctx planContext) schemeEstimate {
@@ -67,8 +68,8 @@ func integerSchemes[T array.Integer](compressValues childCompressor[T], family i
 				},
 			},
 			{
-				kind: CodecTypeSparse,
-				build: func(arr array.ArrayCore[T], ctx planContext) (EncodedArray[T], error) {
+				kind: codec.CodecTypeSparse,
+				build: func(arr array.ArrayCore[T], ctx planContext) (codec.EncodedArray[T], error) {
 					return buildIntegerSparse(arr, ctx, compressValues)
 				},
 				estimate: func(stats intStats[T], ctx planContext) schemeEstimate {
@@ -85,7 +86,7 @@ type signedIntCompressor[T array.SignedInteger] struct{}
 func signedIntegerSchemes[T array.SignedInteger]() schemeSet[T, intStats[T]] {
 	set := integerSchemes(compressSignedCore[T], signedInteger, resolveSignedDelta[T])
 	set.values[set.count] = scheme[T, intStats[T]]{
-		kind:  CodecTypeZigZag,
+		kind:  codec.CodecTypeZigZag,
 		build: buildZigZag[T],
 		estimate: func(stats intStats[T], ctx planContext) schemeEstimate {
 			return estimateZigZag(stats, ctx, stats.hasNegative)
@@ -103,7 +104,7 @@ func (signedIntCompressor[T]) Schemes(intStats[T]) schemeSet[T, intStats[T]] {
 	return signedIntegerSchemes[T]()
 }
 
-func (signedIntCompressor[T]) IsExcluded(ctx planContext, kind CodecType) bool {
+func (signedIntCompressor[T]) IsExcluded(ctx planContext, kind codec.CodecType) bool {
 	return ctx.excludesInteger(kind)
 }
 

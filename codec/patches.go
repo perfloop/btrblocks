@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/axiomhq/btrblocks/array"
@@ -11,15 +12,40 @@ import (
 
 // patches stores sparse override positions and values for a base encoded array.
 type patches[V Integer | Float, I UnsignedInteger] struct {
+	decodeLimit
 	length  uint64
 	offset  uint64
 	indices EncodedArray[I]
 	values  EncodedArray[V]
 }
 
-func newPatches[V Integer | Float, I UnsignedInteger](length, offset uint64, indices EncodedArray[I], values EncodedArray[V]) (*patches[V, I], error) {
+// newPatches assembles a patch set the builder produced. decoded is the index
+// child's values, which the builder already holds; validating them costs it no
+// extra pass.
+func newPatches[V Integer | Float, I UnsignedInteger](length, offset uint64, indices EncodedArray[I], values EncodedArray[V], decoded []I) (*patches[V, I], error) {
 	p := &patches[V, I]{length: length, offset: offset, indices: indices, values: values}
-	if err := p.Validate(); err != nil {
+	if err := p.validate(); err != nil {
+		return nil, err
+	}
+	if err := p.validateIndices(decoded); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// readPatches assembles a patch set from children just read off the wire. The
+// index scan runs over one sequential decode charged to the work budget, and
+// only after the O(1) checks have bounded how large that decode can be.
+func readPatches[V Integer | Float, I UnsignedInteger](length, offset uint64, indices EncodedArray[I], values EncodedArray[V], opts *readOptions) (*patches[V, I], error) {
+	p := &patches[V, I]{decodeLimit: opts.decodeLimit(), length: length, offset: offset, indices: indices, values: values}
+	if err := p.validate(); err != nil {
+		return nil, err
+	}
+	decoded, err := scanChild(indices, opts)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.validateIndices(decoded); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -30,6 +56,19 @@ func (p *patches[V, I]) BinarySize() uint64 {
 		return 0
 	}
 	return 8 + p.indices.BinarySize() + p.values.BinarySize()
+}
+
+// decodedBytes reports what Apply and Iterate materialize: both children in
+// full, alongside the destination their caller already holds. A nil patch set
+// costs nothing.
+func (p *patches[V, I]) decodedBytes() (uint64, error) {
+	if p == nil {
+		return 0, nil
+	}
+	var f decodeFootprint
+	f.add(p.indices.DecodedBytes())
+	f.add(p.values.DecodedBytes())
+	return f.result()
 }
 
 func (p *patches[V, I]) WriteTo(w io.Writer) (int64, error) {
@@ -53,7 +92,8 @@ func (p *patches[V, I]) WriteTo(w io.Writer) (int64, error) {
 	return int64(nn) + n + nn64, err
 }
 
-func (p *patches[V, I]) Validate() error {
+// validate checks the invariants that cost O(1).
+func (p *patches[V, I]) validate() error {
 	if p == nil {
 		return nil
 	}
@@ -72,11 +112,23 @@ func (p *patches[V, I]) Validate() error {
 	if p.offset > ^uint64(0)-p.length {
 		return fmt.Errorf("codec: patch offset %d overflows length %d", p.offset, p.length)
 	}
-	// Validate all indices without materializing attacker-sized child arrays.
+	return nil
+}
+
+// validateIndices checks that decoded — the index child's values, decoded in
+// one sequential pass — is strictly increasing within [offset, offset+length),
+// which is what Find and Apply rely on.
+func (p *patches[V, I]) validateIndices(decoded []I) error {
+	if p == nil {
+		return nil
+	}
+	if uint64(len(decoded)) != p.indices.Length() {
+		return fmt.Errorf("codec: patch index scan has %d values, want %d", len(decoded), p.indices.Length())
+	}
 	limit := p.offset + p.length
 	prev := uint64(0)
-	for i := range p.indices.Length() {
-		idx := uint64(p.indices.ValueAt(i))
+	for i, rawIdx := range decoded {
+		idx := uint64(rawIdx)
 		if idx < p.offset || idx >= limit {
 			return fmt.Errorf("codec: patch index = %d, want [%d, %d)", idx, p.offset, limit)
 		}
@@ -128,11 +180,11 @@ func (p *patches[V, I]) Iterate(fn func(position uint64, value V)) error {
 	if p == nil {
 		return nil
 	}
-	indices, err := Decompress(p.indices)
+	indices, err := decompress(p.indices, p.maxDecodedBytes())
 	if err != nil {
 		return err
 	}
-	values, err := Decompress(p.values)
+	values, err := decompress(p.values, p.maxDecodedBytes())
 	if err != nil {
 		return err
 	}
@@ -146,11 +198,11 @@ func (p *patches[V, I]) Apply(dst []V) error {
 	if p == nil {
 		return nil
 	}
-	indices, err := Decompress(p.indices)
+	indices, err := decompress(p.indices, p.maxDecodedBytes())
 	if err != nil {
 		return err
 	}
-	values, err := Decompress(p.values)
+	values, err := decompress(p.values, p.maxDecodedBytes())
 	if err != nil {
 		return err
 	}
@@ -170,48 +222,33 @@ func (p *patches[V, I]) Slice(start, end uint64) (*patches[V, I], error) {
 	absStart := p.offset + start
 	absEnd := p.offset + end
 
-	// Binary search for the first index >= absStart.
-	n := p.indices.Length()
-	first := uint64(0)
-	{
-		lo, hi := uint64(0), n
-		for lo < hi {
-			mid := lo + (hi-lo)/2
-			if uint64(p.indices.ValueAt(mid)) < absStart {
-				lo = mid + 1
-			} else {
-				hi = mid
-			}
-		}
-		first = lo
+	// Decode the index child once instead of searching and copying through its
+	// ValueAt: that costs O(offset) per read in the delta codec, which makes
+	// slicing k patches O(k^2) on a tree the loader accepted. validateIndices
+	// already established that the decoded indices are strictly increasing.
+	decoded, err := decompress(p.indices, p.maxDecodedBytes())
+	if err != nil {
+		return nil, fmt.Errorf("codec: slice [%d, %d) decodes all %d patch indices: %w", start, end, p.indices.Length(), err)
 	}
-	// Binary search for the first index >= absEnd.
-	var last uint64
-	{
-		lo, hi := first, n
-		for lo < hi {
-			mid := lo + (hi-lo)/2
-			if uint64(p.indices.ValueAt(mid)) < absEnd {
-				lo = mid + 1
-			} else {
-				hi = mid
-			}
-		}
-		last = lo
-	}
+	first := sort.Search(len(decoded), func(i int) bool { return uint64(decoded[i]) >= absStart })
+	last := first + sort.Search(len(decoded)-first, func(i int) bool { return uint64(decoded[first+i]) >= absEnd })
 	if first == last {
 		return nil, nil
 	}
 
 	indices := make([]I, last-first)
-	for i := range indices {
-		indices[i] = p.indices.ValueAt(first + uint64(i))
-	}
-	values, err := p.values.Slice(first, last)
+	copy(indices, decoded[first:last])
+	values, err := p.values.Slice(uint64(first), uint64(last))
 	if err != nil {
 		return nil, err
 	}
-	return newPatches(end-start, absStart, newRawArray(array.NewPrimitivesUnsafe(indices)), values)
+	sliced, err := newPatches(end-start, absStart, newRawArray(array.NewPrimitivesUnsafe(indices)), values, indices)
+	if err != nil {
+		return nil, err
+	}
+	// A slice of a loaded patch set decodes under the same budget its source did.
+	sliced.decodeLimit = p.decodeLimit
+	return sliced, nil
 }
 
 func prefixPatchError(err error, prefix string) error {

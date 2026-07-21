@@ -9,24 +9,29 @@ import (
 
 // runEndArray stores run values plus ordinal run-end boundaries.
 type runEndArray[V Integer | Float | String, I UnsignedInteger] struct {
+	encodedNode
 	denseRows
+	decodeLimit
 	runs  EncodedArray[V]
 	ends  EncodedArray[I]
 	slice sliceBuilder[V]
 }
 
-func validateRunEndChildren[V Integer | Float | String, I UnsignedInteger](length uint64, runs EncodedArray[V], ends EncodedArray[I]) error {
+func validateRunEndChildren[V Integer | Float | String, I UnsignedInteger](length uint64, runs EncodedArray[V], ends EncodedArray[I], opts *readOptions) error {
 	if runs.Length() != ends.Length()+1 {
 		return fmt.Errorf("codec: runend runs length = %d, want %d", runs.Length(), ends.Length()+1)
 	}
-	n := ends.Length()
-	if n == 0 {
+	if ends.Length() == 0 {
 		return nil
+	}
+	decoded, err := scanChild(ends, opts)
+	if err != nil {
+		return fmt.Errorf("codec: runend end scan: %w", err)
 	}
 	// Validate ALL ends are strictly increasing and in range (0, length).
 	prev := uint64(0)
-	for i := range n {
-		end := uint64(ends.ValueAt(i))
+	for i, rawEnd := range decoded {
+		end := uint64(rawEnd)
 		if end == 0 {
 			return fmt.Errorf("codec: runend end = 0 at position %d, want > 0", i)
 		}
@@ -46,7 +51,12 @@ func (r *runEndArray[V, I]) CodecType() CodecType {
 }
 func (r *runEndArray[V, I]) PType() PType { return r.runs.PType() }
 func (r *runEndArray[V, I]) DecodedBytes() (uint64, error) {
-	return decodedBytesFor(r.Length(), r.PType())
+	// DecompressInto holds both decoded children while it fills dst.
+	var f decodeFootprint
+	f.add(decodedBytesFor(r.Length(), r.PType()))
+	f.add(r.runs.DecodedBytes())
+	f.add(r.ends.DecodedBytes())
+	return f.result()
 }
 
 func (r *runEndArray[V, I]) BinarySize() uint64 {
@@ -94,11 +104,11 @@ func (r *runEndArray[V, I]) DecompressInto(dst []V) error {
 	if err := checkDstLen(dst, r.Length()); err != nil {
 		return err
 	}
-	runs, err := Decompress(r.runs)
+	runs, err := decompress(r.runs, r.maxDecodedBytes())
 	if err != nil {
 		return err
 	}
-	ends, err := Decompress(r.ends)
+	ends, err := decompress(r.ends, r.maxDecodedBytes())
 	if err != nil {
 		return err
 	}
@@ -112,7 +122,7 @@ func (r *runEndArray[V, I]) DecompressInto(dst []V) error {
 }
 
 func (r *runEndArray[V, I]) Slice(start, end uint64) (EncodedArray[V], error) {
-	return r.slice(r, start, end)
+	return sliceByDecoding(r, r.decodeLimit, start, end, r.slice)
 }
 
 func (r *runEndArray[V, I]) WriteTo(w io.Writer) (int64, error) {
@@ -135,7 +145,7 @@ func (r *runEndArray[V, I]) WriteTo(w io.Writer) (int64, error) {
 	return sum.n, nil
 }
 
-func readRunEndArray[V Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions, readValues encodedReader[V], slice sliceBuilder[V]) (EncodedArray[V], error) {
+func readRunEndArray[V Integer | Float | String](br *array.BufReader, h codecHeader, opts *readOptions, readValues encodedReader[V], slice sliceBuilder[V]) (EncodedArray[V], error) {
 	if h.NumBytes != 0 {
 		return nil, fmt.Errorf("codec: runend body size = %d, want 0", h.NumBytes)
 	}
@@ -167,7 +177,7 @@ func readRunEndArray[V Integer | Float | String](br *array.BufReader, h codecHea
 	}
 }
 
-func readRunEndOrdinals[V Integer | Float | String, I UnsignedInteger](br *array.BufReader, h codecHeader, childHeader codecHeader, opts ReadOptions, runs EncodedArray[V], slice sliceBuilder[V]) (EncodedArray[V], error) {
+func readRunEndOrdinals[V Integer | Float | String, I UnsignedInteger](br *array.BufReader, h codecHeader, childHeader codecHeader, opts *readOptions, runs EncodedArray[V], slice sliceBuilder[V]) (EncodedArray[V], error) {
 	ends, err := readUnsignedEncodedArrayWithHeader[I](br, childHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: reading runend ends: %w", err)
@@ -175,25 +185,45 @@ func readRunEndOrdinals[V Integer | Float | String, I UnsignedInteger](br *array
 	if err := requireNonNullable(ends, "run-end ends"); err != nil {
 		return nil, err
 	}
-	if err := validateRunEndChildren(h.Length, runs, ends); err != nil {
+	if err := validateRunEndChildren(h.Length, runs, ends, opts); err != nil {
 		return nil, err
 	}
-	return &runEndArray[V, I]{denseRows: denseRows(h.Length), runs: runs, ends: ends, slice: slice}, nil
+	return &runEndArray[V, I]{denseRows: denseRows(h.Length), decodeLimit: opts.decodeLimit(), runs: runs, ends: ends, slice: slice}, nil
+}
+
+// cmpBitExact returns the comparator that merges two values into one run only
+// when their bit patterns agree. Floats go through array.CmpFloatBits so -0.0
+// never absorbs +0.0 and NaN payloads survive; == is already bit-exact for the
+// integer types. Selection happens once per build, not per element.
+//
+// It dispatches on the element's physical type rather than on the predeclared
+// name: array.Float is ~float32|~float64, so a defined type (type Celsius
+// float64) matches no `any(zero).(float64)` case and would silently fall
+// through to ==, merging -0.0 into +0.0.
+func cmpBitExact[V Integer | Float]() cmpFn[V] {
+	switch array.PTypeOfPrimitive[V]() {
+	case array.PTypeFloat32:
+		return func(a, b V) bool { return array.CmpFloatBits(float32(a), float32(b)) }
+	case array.PTypeFloat64:
+		return func(a, b V) bool { return array.CmpFloatBits(float64(a), float64(b)) }
+	default:
+		return func(a, b V) bool { return a == b }
+	}
 }
 
 // encodePrimitiveRunEndAs extracts numeric runs and end positions and delegates
 // both typed children to the caller.
-func encodePrimitiveRunEndAs[V Integer | Float, I UnsignedInteger](arr array.ArrayCore[V], cmp func(V, V) bool, buildRuns childBuilder[V], buildEnds childBuilder[I], budget buildBudget) (EncodedArray[V], error) {
+func encodePrimitiveRunEndAs[V Integer | Float, I UnsignedInteger](arr array.ArrayCore[V], cmp func(V, V) bool, buildRuns ChildBuilder[V], buildEnds ChildBuilder[I], budget buildBudget) (EncodedArray[V], error) {
 	return buildRunEndAs(arr, cmp, buildRuns, buildEnds, slicePrimitiveToRawArray[V], budget)
 }
 
 // encodeStringRunEndAs extracts string runs and end positions and delegates
 // both typed children to the caller.
-func encodeStringRunEndAs[I UnsignedInteger](arr array.ArrayCore[string], cmp func(string, string) bool, buildRuns childBuilder[string], buildEnds childBuilder[I], budget buildBudget) (EncodedArray[string], error) {
+func encodeStringRunEndAs[I UnsignedInteger](arr array.ArrayCore[string], cmp func(string, string) bool, buildRuns ChildBuilder[string], buildEnds ChildBuilder[I], budget buildBudget) (EncodedArray[string], error) {
 	return buildRunEndAs(arr, cmp, buildRuns, buildEnds, sliceStringToRawArray, budget)
 }
 
-func buildRunEndAs[V Integer | Float | String, I UnsignedInteger](arr array.ArrayCore[V], cmp func(V, V) bool, buildRuns childBuilder[V], buildEnds childBuilder[I], slice sliceBuilder[V], budget buildBudget) (EncodedArray[V], error) {
+func buildRunEndAs[V Integer | Float | String, I UnsignedInteger](arr array.ArrayCore[V], cmp func(V, V) bool, buildRuns ChildBuilder[V], buildEnds ChildBuilder[I], slice sliceBuilder[V], budget buildBudget) (EncodedArray[V], error) {
 	if buildRuns == nil || buildEnds == nil {
 		return nil, ErrBuilderRequired
 	}
@@ -240,11 +270,13 @@ func buildRunEndAs[V Integer | Float | String, I UnsignedInteger](arr array.Arra
 	}
 
 	runsCodec, err := buildRuns(sliceArrayCore[V](runs))
+	runsCodec, err = adoptChild(uint64(len(runs)), runsCodec, err)
 	if err != nil {
 		return nil, fmt.Errorf("codec: compress run values: %w", err)
 	}
 
 	endsCodec, err := buildEnds(array.NewPrimitivesUnsafe(ends))
+	endsCodec, err = adoptChild(uint64(len(ends)), endsCodec, err)
 	if err != nil {
 		return nil, fmt.Errorf("codec: compress run ends: %w", err)
 	}

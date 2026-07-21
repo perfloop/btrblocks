@@ -2,64 +2,66 @@ package compress
 
 import (
 	"testing"
+
+	"github.com/axiomhq/btrblocks/codec"
 )
 
 func TestChildExclusions(t *testing.T) {
 	tests := []struct {
 		name      string
-		parent    CodecType
+		parent    codec.CodecType
 		child     uint8
-		excluded  []CodecType
-		permitted []CodecType
+		excluded  []codec.CodecType
+		permitted []codec.CodecType
 	}{
 		{
 			name:      "dictionary values are distinct",
-			parent:    CodecTypeDict,
+			parent:    codec.CodecTypeDict,
 			child:     0,
-			excluded:  []CodecType{CodecTypeDict, CodecTypeRunEnd, CodecTypeSparse},
-			permitted: []CodecType{CodecTypeALP, CodecTypeFSST},
+			excluded:  []codec.CodecType{codec.CodecTypeDict, codec.CodecTypeRunEnd, codec.CodecTypeSparse},
+			permitted: []codec.CodecType{codec.CodecTypeALP, codec.CodecTypeFSST},
 		},
 		{
 			name:      "dictionary codes are compact ordinals",
-			parent:    CodecTypeDict,
+			parent:    codec.CodecTypeDict,
 			child:     1,
-			excluded:  []CodecType{CodecTypeDict, CodecTypeFor, CodecTypeSequence, CodecTypeZigZag, CodecTypeDelta},
-			permitted: []CodecType{CodecTypeBitpack, CodecTypeRunEnd, CodecTypeSparse},
+			excluded:  []codec.CodecType{codec.CodecTypeDict, codec.CodecTypeFor, codec.CodecTypeSequence, codec.CodecTypeZigZag, codec.CodecTypeDelta},
+			permitted: []codec.CodecType{codec.CodecTypeBitpack, codec.CodecTypeRunEnd, codec.CodecTypeSparse},
 		},
 		{
 			name:      "run values can repeat non-adjacently",
-			parent:    CodecTypeRunEnd,
+			parent:    codec.CodecTypeRunEnd,
 			child:     0,
-			excluded:  []CodecType{CodecTypeRunEnd},
-			permitted: []CodecType{CodecTypeDict},
+			excluded:  []codec.CodecType{codec.CodecTypeRunEnd},
+			permitted: []codec.CodecType{codec.CodecTypeDict},
 		},
 		{
 			name:      "run ends are increasing and distinct",
-			parent:    CodecTypeRunEnd,
+			parent:    codec.CodecTypeRunEnd,
 			child:     1,
-			excluded:  []CodecType{CodecTypeRunEnd, CodecTypeDict, CodecTypeSparse},
-			permitted: []CodecType{CodecTypeFor, CodecTypeSequence, CodecTypeDelta},
+			excluded:  []codec.CodecType{codec.CodecTypeRunEnd, codec.CodecTypeDict, codec.CodecTypeSparse},
+			permitted: []codec.CodecType{codec.CodecTypeFor, codec.CodecTypeSequence, codec.CodecTypeDelta},
 		},
 		{
 			name:      "zigzag preserves distribution",
-			parent:    CodecTypeZigZag,
+			parent:    codec.CodecTypeZigZag,
 			child:     0,
-			excluded:  []CodecType{CodecTypeZigZag, CodecTypeDict, CodecTypeRunEnd, CodecTypeSparse},
-			permitted: []CodecType{CodecTypeBitpack, CodecTypeFor},
+			excluded:  []codec.CodecType{codec.CodecTypeZigZag, codec.CodecTypeDict, codec.CodecTypeRunEnd, codec.CodecTypeSparse},
+			permitted: []codec.CodecType{codec.CodecTypeBitpack, codec.CodecTypeFor},
 		},
 		{
 			name:      "delta residuals use direct range codecs",
-			parent:    CodecTypeDelta,
+			parent:    codec.CodecTypeDelta,
 			child:     0,
-			excluded:  []CodecType{CodecTypeDelta, CodecTypeDict, CodecTypeRunEnd, CodecTypeSparse, CodecTypeSequence, CodecTypeZigZag},
-			permitted: []CodecType{CodecTypeConst, CodecTypeBitpack, CodecTypeFor},
+			excluded:  []codec.CodecType{codec.CodecTypeDelta, codec.CodecTypeDict, codec.CodecTypeRunEnd, codec.CodecTypeSparse, codec.CodecTypeSequence, codec.CodecTypeZigZag},
+			permitted: []codec.CodecType{codec.CodecTypeConst, codec.CodecTypeBitpack, codec.CodecTypeFor},
 		},
 		{
 			name:      "fsst lengths retain distribution codecs",
-			parent:    CodecTypeFSST,
+			parent:    codec.CodecTypeFSST,
 			child:     1,
-			excluded:  []CodecType{CodecTypeFSST},
-			permitted: []CodecType{CodecTypeDict, CodecTypeRunEnd, CodecTypeSparse},
+			excluded:  []codec.CodecType{codec.CodecTypeFSST},
+			permitted: []codec.CodecType{codec.CodecTypeDict, codec.CodecTypeRunEnd, codec.CodecTypeSparse},
 		},
 	}
 

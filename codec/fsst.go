@@ -12,12 +12,22 @@ import (
 
 // fsstArray stores FSST-compressed string data.
 type fsstArray[I, J UnsignedInteger] struct {
+	encodedNode
 	denseRows
+	decodeLimit
 	tableRaw []byte          // serialized fsst.Table
 	codes    []byte          // concatenated compressed string bytes
 	offsets  EncodedArray[I] // length+1 offsets into codes
 	lengths  EncodedArray[J] // length original uncompressed string lengths
 	table    *fsst.Table
+	// decodedPayload is the total decoded string payload in bytes, and
+	// decodeScratch the reusable decode buffer DecompressInto holds live beside
+	// it: eight bytes per byte of the widest code span, FSST's expansion bound.
+	// Both are derived, not serialized — the builder computes them from its
+	// inputs and validatePayload from the children it has already checked — so
+	// DecodedBytes never has to decode a child to answer.
+	decodedPayload uint64
+	decodeScratch  uint64
 }
 
 func (f *fsstArray[I, J]) CodecType() CodecType { return CodecTypeFSST }
@@ -27,16 +37,19 @@ func (f *fsstArray[I, J]) BinarySize() uint64 {
 	return uint64(headerSize) + 4 + uint64(len(f.tableRaw)) + 4 + uint64(len(f.codes)) + f.offsets.BinarySize() + f.lengths.BinarySize()
 }
 
+// DecodedBytes reports the string header per element, the payload buffer they
+// point into, the decode buffer the fill reuses across spans, and the offsets
+// and lengths children DecompressInto decodes first. Counting only the payload
+// understates a 33M-element array by 512 MiB, and omitting the decode buffer
+// hides a scratch allocation that a crafted span can drive to the whole limit.
 func (f *fsstArray[I, J]) DecodedBytes() (uint64, error) {
-	var total uint64
-	for i := range f.lengths.Length() {
-		length := uint64(f.lengths.ValueAt(i))
-		if length > ^uint64(0)-total {
-			return 0, fmt.Errorf("codec: fsst decoded length overflows at position %d", i)
-		}
-		total += length
-	}
-	return total, nil
+	var footprint decodeFootprint
+	footprint.add(decodedBytesFor(f.Length(), array.PTypeString))
+	footprint.add(f.decodedPayload, nil)
+	footprint.add(f.decodeScratch, nil)
+	footprint.add(f.offsets.DecodedBytes())
+	footprint.add(f.lengths.DecodedBytes())
+	return footprint.result()
 }
 
 func (f *fsstArray[I, J]) ValueAt(offset uint64) string {
@@ -57,21 +70,24 @@ func (f *fsstArray[I, J]) ValueAt(offset uint64) string {
 	return unsafe.String(&decoded[0], len(decoded))
 }
 
-// validateOffsets decodes the offsets child once and checks the invariants
-// ValueAt relies on: monotonic offsets bounded by len(codes). Called on the
-// read path so single-value access can never slice out of range on crafted
-// input; DecompressInto re-validates per element.
-func (f *fsstArray[I, J]) validatePayload(maxDecodedBytes uint64) error {
-	offsets, err := Decompress(f.offsets)
+// validatePayload decodes the offsets and lengths children once each and checks
+// the invariants ValueAt relies on: monotonic offsets bounded by len(codes).
+// Called on the read path so single-value access can never slice out of range
+// on crafted input; DecompressInto re-validates per element. It records the
+// decoded payload total and the widest code span it sees, so DecodedBytes need
+// not recompute either.
+func (f *fsstArray[I, J]) validatePayload(opts *readOptions) error {
+	offsets, err := scanChild(f.offsets, opts)
 	if err != nil {
 		return fmt.Errorf("codec: decompress fsst offsets: %w", err)
 	}
-	lengths, err := Decompress(f.lengths)
+	lengths, err := scanChild(f.lengths, opts)
 	if err != nil {
 		return fmt.Errorf("codec: decompress fsst lengths: %w", err)
 	}
+	maxDecodedBytes := f.maxDecodedBytes()
 	codesLen := uint64(len(f.codes))
-	var decodedBytes uint64
+	var decodedBytes, maxSpan uint64
 	var decodeBuffer []byte
 	var decodedOffsets []int
 	var sourceOffsets [2]int
@@ -85,6 +101,7 @@ func (f *fsstArray[I, J]) validatePayload(maxDecodedBytes uint64) error {
 		if span > maxDecodedBytes/8 {
 			return fmt.Errorf("codec: fsst code span %d at position %d exceeds decoded-byte limit %d", span, i, maxDecodedBytes)
 		}
+		maxSpan = max(maxSpan, span)
 		length := uint64(lengthValue)
 		if length > 8*span {
 			return fmt.Errorf("codec: fsst length %d at position %d exceeds decodable span %d", length, i, 8*span)
@@ -104,26 +121,39 @@ func (f *fsstArray[I, J]) validatePayload(maxDecodedBytes uint64) error {
 		}
 		decodedBytes += length
 	}
+	f.decodedPayload = decodedBytes
+	f.decodeScratch = fsstDecodeScratch(maxSpan)
 	return nil
 }
+
+// fsstDecodeScratch is the byte size of the reusable decode buffer one fill
+// needs for code spans of up to maxSpan bytes. FSST expands at most 8x, and
+// fsst.Table.Decode reallocates unless the buffer also covers its own 4n+8
+// estimate, so covering both means the buffer is allocated exactly once per
+// fill — which is what lets DecodedBytes report it as a fixed cost.
+func fsstDecodeScratch(maxSpan uint64) uint64 { return 8*maxSpan + 8 }
 
 // DecompressInto decodes FSST-compressed strings into dst. It uses per-string
 // Decode into a single pre-sized output buffer rather than DecodeAll, which
 // allocates per string. Each dst[i] aliases that shared buffer via unsafe.String.
+// The reusable decode buffer is sized once, to the widest span's 8x worst case,
+// so peak memory equals the decodeScratch DecodedBytes reports rather than
+// whatever the row order happens to demand.
 func (f *fsstArray[I, J]) DecompressInto(dst []string) error {
 	if err := checkDstLen(dst, f.Length()); err != nil {
 		return err
 	}
-	lengths, err := Decompress(f.lengths)
+	lengths, err := decompress(f.lengths, f.maxDecodedBytes())
 	if err != nil {
 		return err
 	}
-	offsets, err := Decompress(f.offsets)
+	offsets, err := decompress(f.offsets, f.maxDecodedBytes())
 	if err != nil {
 		return err
 	}
 
 	totalLen := uint64(0)
+	maxSpan := uint64(0)
 	codesLen := uint64(len(f.codes))
 	for i, l := range lengths {
 		length := uint64(l)
@@ -140,9 +170,10 @@ func (f *fsstArray[I, J]) DecompressInto(dst []string) error {
 			return fmt.Errorf("codec: fsst length %d at position %d exceeds decodable span %d", length, i, 8*(codeEnd-codeStart))
 		}
 		totalLen += length
+		maxSpan = max(maxSpan, codeEnd-codeStart)
 	}
 	outBuf := make([]byte, totalLen)
-	var decodeBuffer []byte
+	decodeBuffer := make([]byte, fsstDecodeScratch(maxSpan))
 
 	pos := uint64(0)
 	for i := range f.Length() {
@@ -152,11 +183,6 @@ func (f *fsstArray[I, J]) DecompressInto(dst []string) error {
 		} else {
 			codeStart := uint64(offsets[i])
 			codeEnd := uint64(offsets[i+1])
-			// Decode panics when dst is too small, so size it to the 8x
-			// worst case rather than the untrusted stored length.
-			if need := 8 * (codeEnd - codeStart); uint64(len(decodeBuffer)) < need {
-				decodeBuffer = make([]byte, need)
-			}
 			decoded := f.table.DecodeInto(decodeBuffer[:0], f.codes[codeStart:codeEnd])
 			n := len(decoded)
 			decodeBuffer = decoded[:cap(decoded)]
@@ -173,7 +199,7 @@ func (f *fsstArray[I, J]) DecompressInto(dst []string) error {
 }
 
 func (f *fsstArray[I, J]) Slice(start, end uint64) (EncodedArray[string], error) {
-	return sliceStringToRawArray(f, start, end)
+	return sliceByDecoding[string](f, f.decodeLimit, start, end, sliceStringToRawArray)
 }
 
 func (f *fsstArray[I, J]) WriteTo(w io.Writer) (int64, error) {
@@ -222,7 +248,7 @@ func (f *fsstArray[I, J]) WriteTo(w io.Writer) (int64, error) {
 }
 
 // readFSSTWithOffsets reads offsets, then dispatches on lengths ElemType.
-func readFSSTWithOffsets[I UnsignedInteger](h codecHeader, tableRaw, codes []byte, table *fsst.Table, offsetsHeader codecHeader, br *array.BufReader, opts ReadOptions) (EncodedArray[string], error) {
+func readFSSTWithOffsets[I UnsignedInteger](h codecHeader, tableRaw, codes []byte, table *fsst.Table, offsetsHeader codecHeader, br *array.BufReader, opts *readOptions) (EncodedArray[string], error) {
 	offsets, err := readUnsignedEncodedArrayWithHeader[I](br, offsetsHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: fsst offsets: %w", err)
@@ -251,7 +277,7 @@ func readFSSTWithOffsets[I UnsignedInteger](h codecHeader, tableRaw, codes []byt
 	}
 }
 
-func readFSSTWithLengthsTyped[I, J UnsignedInteger](h codecHeader, tableRaw, codes []byte, table *fsst.Table, offsets EncodedArray[I], br *array.BufReader, lengthsHeader codecHeader, opts ReadOptions) (EncodedArray[string], error) {
+func readFSSTWithLengthsTyped[I, J UnsignedInteger](h codecHeader, tableRaw, codes []byte, table *fsst.Table, offsets EncodedArray[I], br *array.BufReader, lengthsHeader codecHeader, opts *readOptions) (EncodedArray[string], error) {
 	lengths, err := readUnsignedEncodedArrayWithHeader[J](br, lengthsHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: fsst lengths: %w", err)
@@ -263,20 +289,21 @@ func readFSSTWithLengthsTyped[I, J UnsignedInteger](h codecHeader, tableRaw, cod
 		return nil, fmt.Errorf("codec: fsst lengths length = %d, want %d", lengths.Length(), h.Length)
 	}
 	f := &fsstArray[I, J]{
-		denseRows: denseRows(h.Length),
-		tableRaw:  tableRaw,
-		codes:     codes,
-		offsets:   offsets,
-		lengths:   lengths,
-		table:     table,
+		denseRows:   denseRows(h.Length),
+		decodeLimit: opts.decodeLimit(),
+		tableRaw:    tableRaw,
+		codes:       codes,
+		offsets:     offsets,
+		lengths:     lengths,
+		table:       table,
 	}
-	if err := f.validatePayload(opts.DecodedByteLimit()); err != nil {
+	if err := f.validatePayload(opts); err != nil {
 		return nil, err
 	}
 	return f, nil
 }
 
-func readFSSTArray(br *array.BufReader, h codecHeader, opts ReadOptions) (EncodedArray[string], error) {
+func readFSSTArray(br *array.BufReader, h codecHeader, opts *readOptions) (EncodedArray[string], error) {
 	// Body must hold at least two 4-byte length prefixes.
 	if h.NumBytes < 8 {
 		return nil, fmt.Errorf("codec: fsst body size %d too small", h.NumBytes)
@@ -342,7 +369,7 @@ func readFSSTArray(br *array.BufReader, h codecHeader, opts ReadOptions) (Encode
 
 // encodeFSST trains and applies FSST while leaving offsets and
 // lengths child selection to the caller.
-func encodeFSST(arr array.ArrayCore[string], offsetsChildren, lengthsChildren unsignedChildBuilder, budget buildBudget) (EncodedArray[string], error) {
+func encodeFSST(arr array.ArrayCore[string], offsetsChildren, lengthsChildren UnsignedChildBuilder, budget buildBudget) (EncodedArray[string], error) {
 	n := arr.Length()
 	if n == 0 {
 		return nil, errDataEmpty
@@ -443,7 +470,7 @@ func encodeFSST(arr array.ArrayCore[string], offsetsChildren, lengthsChildren un
 
 // buildFSSTWithOffsets narrows offsets to type I, then dispatches on maxLen to
 // pick the narrowest length type J independently.
-func buildFSSTWithOffsets[I UnsignedInteger](n uint64, tableRaw, allCodes []byte, table *fsst.Table, offsets []uint64, inputs [][]byte, maxLen uint64, buildOffsets childBuilder[I], lengthsChildren unsignedChildBuilder, budget buildBudget) (EncodedArray[string], error) {
+func buildFSSTWithOffsets[I UnsignedInteger](n uint64, tableRaw, allCodes []byte, table *fsst.Table, offsets []uint64, inputs [][]byte, maxLen uint64, buildOffsets ChildBuilder[I], lengthsChildren UnsignedChildBuilder, budget buildBudget) (EncodedArray[string], error) {
 	narrowOff, err := makeBuildSlice[I](budget, uint64(len(offsets)), uint64(len(offsets)), "FSST narrowed offsets")
 	if err != nil {
 		return nil, err
@@ -452,40 +479,51 @@ func buildFSSTWithOffsets[I UnsignedInteger](n uint64, tableRaw, allCodes []byte
 		narrowOff[i] = I(v)
 	}
 	offsetsCodec, err := buildOffsets(array.NewPrimitivesUnsafe(narrowOff))
+	offsetsCodec, err = adoptChild(uint64(len(narrowOff)), offsetsCodec, err)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("codec: compress FSST offsets: %w", err)
 	}
+	var maxSpan uint64
+	for i := 1; i < len(offsets); i++ {
+		maxSpan = max(maxSpan, offsets[i]-offsets[i-1])
+	}
+	scratch := fsstDecodeScratch(maxSpan)
 	switch {
 	case maxLen <= uint64(^uint8(0)):
-		return buildFSSTWithLengths(n, tableRaw, allCodes, table, offsetsCodec, inputs, lengthsChildren.BuildUint8, budget)
+		return buildFSSTWithLengths(n, tableRaw, allCodes, table, offsetsCodec, inputs, scratch, lengthsChildren.BuildUint8, budget)
 	case maxLen <= uint64(^uint16(0)):
-		return buildFSSTWithLengths(n, tableRaw, allCodes, table, offsetsCodec, inputs, lengthsChildren.BuildUint16, budget)
+		return buildFSSTWithLengths(n, tableRaw, allCodes, table, offsetsCodec, inputs, scratch, lengthsChildren.BuildUint16, budget)
 	case maxLen <= uint64(^uint32(0)):
-		return buildFSSTWithLengths(n, tableRaw, allCodes, table, offsetsCodec, inputs, lengthsChildren.BuildUint32, budget)
+		return buildFSSTWithLengths(n, tableRaw, allCodes, table, offsetsCodec, inputs, scratch, lengthsChildren.BuildUint32, budget)
 	default:
-		return buildFSSTWithLengths(n, tableRaw, allCodes, table, offsetsCodec, inputs, lengthsChildren.BuildUint64, budget)
+		return buildFSSTWithLengths(n, tableRaw, allCodes, table, offsetsCodec, inputs, scratch, lengthsChildren.BuildUint64, budget)
 	}
 }
 
 // buildFSSTWithLengths narrows lengths to type J and assembles the final fsstArray.
-func buildFSSTWithLengths[I, J UnsignedInteger](n uint64, tableRaw, allCodes []byte, table *fsst.Table, offsetsCodec EncodedArray[I], inputs [][]byte, buildLengths childBuilder[J], budget buildBudget) (EncodedArray[string], error) {
+func buildFSSTWithLengths[I, J UnsignedInteger](n uint64, tableRaw, allCodes []byte, table *fsst.Table, offsetsCodec EncodedArray[I], inputs [][]byte, decodeScratch uint64, buildLengths ChildBuilder[J], budget buildBudget) (EncodedArray[string], error) {
 	narrowLen, err := makeBuildSlice[J](budget, n, n, "FSST lengths")
 	if err != nil {
 		return nil, err
 	}
+	var decodedPayload uint64
 	for i := range n {
 		narrowLen[i] = J(len(inputs[i]))
+		decodedPayload += uint64(len(inputs[i]))
 	}
 	lengthsCodec, err := buildLengths(array.NewPrimitivesUnsafe(narrowLen))
+	lengthsCodec, err = adoptChild(n, lengthsCodec, err)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("codec: compress FSST lengths: %w", err)
 	}
 	return &fsstArray[I, J]{
-		denseRows: denseRows(n),
-		tableRaw:  tableRaw,
-		codes:     allCodes,
-		offsets:   offsetsCodec,
-		lengths:   lengthsCodec,
-		table:     table,
+		denseRows:      denseRows(n),
+		tableRaw:       tableRaw,
+		codes:          allCodes,
+		offsets:        offsetsCodec,
+		lengths:        lengthsCodec,
+		table:          table,
+		decodedPayload: decodedPayload,
+		decodeScratch:  decodeScratch,
 	}, nil
 }

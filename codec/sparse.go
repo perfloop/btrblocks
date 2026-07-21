@@ -15,7 +15,9 @@ const flagSparseBitmap uint32 = 1 << 0
 // most frequent value once and the positions and values that differ from it.
 // Nullability is not represented here; callers own logical validity.
 type sparseArray[V Integer | Float | String, I UnsignedInteger] struct {
+	encodedNode
 	denseRows
+	decodeLimit
 	fill    EncodedArray[V]
 	indices EncodedArray[I]
 	values  EncodedArray[V]
@@ -27,7 +29,12 @@ func (s *sparseArray[V, I]) CodecType() CodecType {
 }
 func (s *sparseArray[V, I]) PType() PType { return s.fill.PType() }
 func (s *sparseArray[V, I]) DecodedBytes() (uint64, error) {
-	return decodedBytesFor(s.Length(), s.PType())
+	// DecompressInto decodes both patch children before scattering them.
+	var f decodeFootprint
+	f.add(decodedBytesFor(s.Length(), s.PType()))
+	f.add(s.indices.DecodedBytes())
+	f.add(s.values.DecodedBytes())
+	return f.result()
 }
 
 func (s *sparseArray[V, I]) NumSparseValues() uint64 { return s.values.Length() }
@@ -75,11 +82,11 @@ func (s *sparseArray[V, I]) DecompressInto(dst []V) error {
 	for i := range s.Length() {
 		dst[i] = fill
 	}
-	indices, err := Decompress(s.indices)
+	indices, err := decompress(s.indices, s.maxDecodedBytes())
 	if err != nil {
 		return fmt.Errorf("codec: decompress sparse indices: %w", err)
 	}
-	values, err := Decompress(s.values)
+	values, err := decompress(s.values, s.maxDecodedBytes())
 	if err != nil {
 		return fmt.Errorf("codec: decompress sparse values: %w", err)
 	}
@@ -90,7 +97,7 @@ func (s *sparseArray[V, I]) DecompressInto(dst []V) error {
 }
 
 func (s *sparseArray[V, I]) Slice(start, end uint64) (EncodedArray[V], error) {
-	return s.slice(s, start, end)
+	return sliceByDecoding(s, s.decodeLimit, start, end, s.slice)
 }
 
 func (s *sparseArray[V, I]) WriteTo(w io.Writer) (int64, error) {
@@ -112,7 +119,7 @@ func (s *sparseArray[V, I]) WriteTo(w io.Writer) (int64, error) {
 	return sum.n, nil
 }
 
-func readSparseArray[V Integer | Float | String](br *array.BufReader, h codecHeader, opts ReadOptions, readValues encodedReader[V], slice sliceBuilder[V]) (EncodedArray[V], error) {
+func readSparseArray[V Integer | Float | String](br *array.BufReader, h codecHeader, opts *readOptions, readValues encodedReader[V], slice sliceBuilder[V]) (EncodedArray[V], error) {
 	if h.Flags&^flagSparseBitmap != 0 {
 		return nil, fmt.Errorf("codec: unsupported sparse flags = 0x%x", h.Flags)
 	}
@@ -142,7 +149,7 @@ func readSparseArray[V Integer | Float | String](br *array.BufReader, h codecHea
 		if err := requireNonNullable(values, "sparse values"); err != nil {
 			return nil, err
 		}
-		sparse := &bitmapSparseArray[V]{denseRows: denseRows(h.Length), fill: fill, bitmap: bitmap, values: values, slice: slice}
+		sparse := &bitmapSparseArray[V]{denseRows: denseRows(h.Length), decodeLimit: opts.decodeLimit(), fill: fill, bitmap: bitmap, values: values, slice: slice}
 		if err := sparse.validate(); err != nil {
 			return nil, err
 		}
@@ -181,7 +188,7 @@ func readSparseArray[V Integer | Float | String](br *array.BufReader, h codecHea
 	return result, err
 }
 
-func readSparseChildren[V Integer | Float | String, I UnsignedInteger](br *array.BufReader, h, indexHeader codecHeader, opts ReadOptions, fill EncodedArray[V], readValues encodedReader[V], slice sliceBuilder[V]) (EncodedArray[V], error) {
+func readSparseChildren[V Integer | Float | String, I UnsignedInteger](br *array.BufReader, h, indexHeader codecHeader, opts *readOptions, fill EncodedArray[V], readValues encodedReader[V], slice sliceBuilder[V]) (EncodedArray[V], error) {
 	indices, err := readUnsignedEncodedArrayWithHeader[I](br, indexHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: sparse indices: %w", err)
@@ -199,20 +206,24 @@ func readSparseChildren[V Integer | Float | String, I UnsignedInteger](br *array
 	if indices.Length() != values.Length() {
 		return nil, fmt.Errorf("codec: sparse indices length = %d, values length = %d", indices.Length(), values.Length())
 	}
-	s := &sparseArray[V, I]{denseRows: denseRows(h.Length), fill: fill, indices: indices, values: values, slice: slice}
-	if err := s.validate(h.Length); err != nil {
+	s := &sparseArray[V, I]{denseRows: denseRows(h.Length), decodeLimit: opts.decodeLimit(), fill: fill, indices: indices, values: values, slice: slice}
+	if err := s.validate(h.Length, opts); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
-func (s *sparseArray[V, I]) validate(length uint64) error {
+func (s *sparseArray[V, I]) validate(length uint64, opts *readOptions) error {
 	if s.fill.Length() != 1 || s.Length() != length {
 		return fmt.Errorf("codec: sparse length = %d, want %d", s.Length(), length)
 	}
+	decoded, err := scanChild(s.indices, opts)
+	if err != nil {
+		return fmt.Errorf("codec: sparse index scan: %w", err)
+	}
 	var previous uint64
-	for i := range s.indices.Length() {
-		index := uint64(s.indices.ValueAt(i))
+	for i, rawIndex := range decoded {
+		index := uint64(rawIndex)
 		if index >= length {
 			return fmt.Errorf("codec: sparse index %d at position %d >= length %d", index, i, length)
 		}
@@ -228,7 +239,9 @@ func (s *sparseArray[V, I]) validate(length uint64) error {
 // exception bitmap, and densely packed exception values. The bitmap marks
 // physical exceptions, not logical nulls.
 type bitmapSparseArray[V Integer | Float | String] struct {
+	encodedNode
 	denseRows
+	decodeLimit
 	fill   EncodedArray[V]
 	bitmap []byte
 	values EncodedArray[V]
@@ -240,15 +253,30 @@ func (s *bitmapSparseArray[V]) CodecType() CodecType {
 	return CodecTypeSparse
 }
 func (s *bitmapSparseArray[V]) PType() PType { return s.fill.PType() }
+
+// DecodedBytes counts dst plus the patch values child, which
+// VisitSparseValues materializes.
 func (s *bitmapSparseArray[V]) DecodedBytes() (uint64, error) {
-	return decodedBytesFor(s.Length(), s.PType())
+	var f decodeFootprint
+	f.add(decodedBytesFor(s.Length(), s.PType()))
+	f.add(s.values.DecodedBytes())
+	return f.result()
 }
 
 func (s *bitmapSparseArray[V]) NumSparseValues() uint64 { return s.values.Length() }
 func (s *bitmapSparseArray[V]) FillValue() V            { return s.fill.ValueAt(0) }
 
+// VisitSparseValues decodes the patch values once, sequentially, rather than
+// reaching into the child per patch: a child's ValueAt costs O(offset) in the
+// delta and run-end codecs, which makes a per-patch walk O(k^2) in the patch
+// count. validate pins len(values) to the bitmap's population count, so the
+// running patch index stays in range.
 func (s *bitmapSparseArray[V]) VisitSparseValues(visit func(index uint64, value V) error) error {
-	patch := uint64(0)
+	values, err := decompress(s.values, s.maxDecodedBytes())
+	if err != nil {
+		return fmt.Errorf("codec: decompress sparse values: %w", err)
+	}
+	patch := 0
 	for byteIndex, valueBits := range s.bitmap {
 		for valueBits != 0 {
 			bit := bits.TrailingZeros8(valueBits)
@@ -256,7 +284,7 @@ func (s *bitmapSparseArray[V]) VisitSparseValues(visit func(index uint64, value 
 			if index >= s.Length() {
 				break
 			}
-			if err := visit(index, s.values.ValueAt(patch)); err != nil {
+			if err := visit(index, values[patch]); err != nil {
 				return err
 			}
 			patch++
@@ -298,7 +326,7 @@ func (s *bitmapSparseArray[V]) DecompressInto(dst []V) error {
 }
 
 func (s *bitmapSparseArray[V]) Slice(start, end uint64) (EncodedArray[V], error) {
-	return s.slice(s, start, end)
+	return sliceByDecoding(s, s.decodeLimit, start, end, s.slice)
 }
 
 func (s *bitmapSparseArray[V]) WriteTo(w io.Writer) (int64, error) {
@@ -374,26 +402,15 @@ func buildBitmapSparse[T Integer | Float | String](length uint64, fill, values E
 	return sparse, nil
 }
 
-// sparseChildBuilder compresses the fill, patch values, and each supported
-// patch-index width.
-type sparseChildBuilder[T Integer | Float | String] interface {
-	BuildFill(array.ArrayCore[T]) (EncodedArray[T], error)
-	BuildValues(array.ArrayCore[T]) (EncodedArray[T], error)
-	BuildUint8(array.ArrayCore[uint8]) (EncodedArray[uint8], error)
-	BuildUint16(array.ArrayCore[uint16]) (EncodedArray[uint16], error)
-	BuildUint32(array.ArrayCore[uint32]) (EncodedArray[uint32], error)
-	BuildUint64(array.ArrayCore[uint64]) (EncodedArray[uint64], error)
-}
-
 // encodeIntegerSparse extracts an integer fill and patches and
 // leaves child compression to the caller.
-func encodeIntegerSparse[T Integer](arr array.ArrayCore[T], children sparseChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
+func encodeIntegerSparse[T Integer](arr array.ArrayCore[T], children SparseChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
 	return buildSparseWithKey(arr, func(value T) T { return value }, children, slicePrimitiveToRawArray[T], primitiveSparseConstBody[T], budget)
 }
 
 // encodeIntegerSparseWithFill pins the zero value as the fill, sized for the
 // non-null values of a null-dominated array.
-func encodeIntegerSparseWithFill[T Integer](arr array.ArrayCore[T], nullCount uint64, children sparseChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
+func encodeIntegerSparseWithFill[T Integer](arr array.ArrayCore[T], nullCount uint64, children SparseChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
 	var fill T
 	return buildSparseWithFill(arr, func(value T) T { return value }, fill, arr.Length()-min(nullCount, arr.Length()), children, slicePrimitiveToRawArray[T], primitiveSparseConstBody[T], budget)
 }
@@ -401,27 +418,27 @@ func encodeIntegerSparseWithFill[T Integer](arr array.ArrayCore[T], nullCount ui
 // encodeFloatSparse extracts a bitwise float fill and patches and
 // leaves child compression to the caller. Bitwise equality preserves signed
 // zero and distinct NaN payloads.
-func encodeFloatSparse[T Float](arr array.ArrayCore[T], children sparseChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
+func encodeFloatSparse[T Float](arr array.ArrayCore[T], children SparseChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
 	return buildSparseWithKey(arr, array.FloatBits[T], children, slicePrimitiveToRawArray[T], primitiveSparseConstBody[T], budget)
 }
 
 // encodeFloatSparseWithFill pins positive zero as the fill, sized for the
 // non-null values of a null-dominated array. Bitwise equality preserves signed
 // zero and distinct NaN payloads.
-func encodeFloatSparseWithFill[T Float](arr array.ArrayCore[T], nullCount uint64, children sparseChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
+func encodeFloatSparseWithFill[T Float](arr array.ArrayCore[T], nullCount uint64, children SparseChildBuilder[T], budget buildBudget) (EncodedArray[T], error) {
 	var fill T
 	return buildSparseWithFill(arr, array.FloatBits[T], fill, arr.Length()-min(nullCount, arr.Length()), children, slicePrimitiveToRawArray[T], primitiveSparseConstBody[T], budget)
 }
 
 // encodeStringSparse extracts a string fill and patches and leaves
 // child compression to the caller.
-func encodeStringSparse(arr array.ArrayCore[string], children sparseChildBuilder[string], budget buildBudget) (EncodedArray[string], error) {
+func encodeStringSparse(arr array.ArrayCore[string], children SparseChildBuilder[string], budget buildBudget) (EncodedArray[string], error) {
 	return buildSparseWithKey(arr, func(value string) string { return value }, children, sliceStringToRawArray, stringSparseConstBody, budget)
 }
 
 // encodeStringSparseWithFill pins the empty string as the fill, sized for the
 // non-null values of a null-dominated array.
-func encodeStringSparseWithFill(arr array.ArrayCore[string], nullCount uint64, children sparseChildBuilder[string], budget buildBudget) (EncodedArray[string], error) {
+func encodeStringSparseWithFill(arr array.ArrayCore[string], nullCount uint64, children SparseChildBuilder[string], budget buildBudget) (EncodedArray[string], error) {
 	return buildSparseWithFill(arr, func(value string) string { return value }, "", arr.Length()-min(nullCount, arr.Length()), children, sliceStringToRawArray, stringSparseConstBody, budget)
 }
 
@@ -433,13 +450,17 @@ func stringSparseConstBody(value string) (array.Array[string], error) {
 	return array.NewStrings([]string{value})
 }
 
-func buildSparseWithKey[T Integer | Float | String, K comparable](arr array.ArrayCore[T], key func(T) K, children sparseChildBuilder[T], slice sliceBuilder[T], buildConstBody constBodyBuilder[T], budget buildBudget) (EncodedArray[T], error) {
+func buildSparseWithKey[T Integer | Float | String, K comparable](arr array.ArrayCore[T], key func(T) K, children SparseChildBuilder[T], slice sliceBuilder[T], buildConstBody constBodyBuilder[T], budget buildBudget) (EncodedArray[T], error) {
 	if children == nil {
 		return nil, ErrBuilderRequired
 	}
 	n := arr.Length()
 	if n == 0 {
-		return children.BuildValues(sliceArrayCore[T](nil))
+		empty, err := children.BuildValues(sliceArrayCore[T](nil))
+		if empty, err = adoptChild(0, empty, err); err != nil {
+			return nil, fmt.Errorf("codec: compress sparse values: %w", err)
+		}
+		return empty, nil
 	}
 	fill, mostFrequent, err := sparseMostFrequent(arr, key, budget)
 	if err != nil {
@@ -462,7 +483,7 @@ func buildRepeatedSparseValue[T Integer | Float | String](length uint64, value T
 	return NewConstArray(length, body)
 }
 
-func buildSparseWithFill[T Integer | Float | String, K comparable](arr array.ArrayCore[T], key func(T) K, fill T, patchCapacity uint64, children sparseChildBuilder[T], slice sliceBuilder[T], buildConstBody constBodyBuilder[T], budget buildBudget) (EncodedArray[T], error) {
+func buildSparseWithFill[T Integer | Float | String, K comparable](arr array.ArrayCore[T], key func(T) K, fill T, patchCapacity uint64, children SparseChildBuilder[T], slice sliceBuilder[T], buildConstBody constBodyBuilder[T], budget buildBudget) (EncodedArray[T], error) {
 	n := arr.Length()
 	capacity := min(patchCapacity, n)
 	patchIndices, err := makeBuildSlice[uint64](budget, 0, capacity, "sparse patch indices")
@@ -490,10 +511,12 @@ func buildSparseWithFill[T Integer | Float | String, K comparable](arr array.Arr
 		return buildRepeatedSparseValue(n, fill, slice, buildConstBody)
 	}
 	fillCodec, err := children.BuildFill(sliceArrayCore[T]([]T{fill}))
+	fillCodec, err = adoptChild(1, fillCodec, err)
 	if err != nil {
 		return nil, fmt.Errorf("codec: compress sparse fill: %w", err)
 	}
 	valueCodec, err := children.BuildValues(sliceArrayCore[T](patchValues))
+	valueCodec, err = adoptChild(uint64(len(patchValues)), valueCodec, err)
 	if err != nil {
 		return nil, fmt.Errorf("codec: compress sparse values: %w", err)
 	}
@@ -541,7 +564,7 @@ func sparseMostFrequent[T Integer | Float | String, K comparable](arr array.Arra
 	return fill, mostFrequent, nil
 }
 
-func buildSparsePatches[T Integer | Float | String](length uint64, fill EncodedArray[T], indices []uint64, values EncodedArray[T], children sparseChildBuilder[T], slice sliceBuilder[T], budget buildBudget) (EncodedArray[T], error) {
+func buildSparsePatches[T Integer | Float | String](length uint64, fill EncodedArray[T], indices []uint64, values EncodedArray[T], children SparseChildBuilder[T], slice sliceBuilder[T], budget buildBudget) (EncodedArray[T], error) {
 	switch {
 	case length <= 1<<8:
 		return buildSparsePatchesTyped(length, fill, indices, values, children.BuildUint8, slice, budget)
@@ -554,7 +577,7 @@ func buildSparsePatches[T Integer | Float | String](length uint64, fill EncodedA
 	}
 }
 
-func buildSparsePatchesTyped[T Integer | Float | String, I UnsignedInteger](length uint64, fill EncodedArray[T], indices []uint64, values EncodedArray[T], buildIndices childBuilder[I], slice sliceBuilder[T], budget buildBudget) (EncodedArray[T], error) {
+func buildSparsePatchesTyped[T Integer | Float | String, I UnsignedInteger](length uint64, fill EncodedArray[T], indices []uint64, values EncodedArray[T], buildIndices ChildBuilder[I], slice sliceBuilder[T], budget buildBudget) (EncodedArray[T], error) {
 	indexValues, err := makeBuildSlice[I](budget, uint64(len(indices)), uint64(len(indices)), "sparse narrowed indices")
 	if err != nil {
 		return nil, err
@@ -563,8 +586,9 @@ func buildSparsePatchesTyped[T Integer | Float | String, I UnsignedInteger](leng
 		indexValues[i] = I(index)
 	}
 	indexCodec, err := buildIndices(array.NewPrimitivesUnsafe(indexValues))
+	indexCodec, err = adoptChild(uint64(len(indexValues)), indexCodec, err)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("codec: compress sparse indices: %w", err)
 	}
 	return &sparseArray[T, I]{denseRows: denseRows(length), fill: fill, indices: indexCodec, values: values, slice: slice}, nil
 }

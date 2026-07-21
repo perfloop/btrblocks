@@ -2,6 +2,7 @@ package compress
 
 import (
 	"github.com/axiomhq/btrblocks/array"
+	"github.com/axiomhq/btrblocks/codec"
 )
 
 // stringCompressor owns the string schemes and stats policy.
@@ -20,22 +21,22 @@ func stringSchemes() schemeSet[string, stringStats] {
 		count: 5,
 		values: [maxSchemeCount]scheme[string, stringStats]{
 			{
-				kind:  CodecTypeConst,
+				kind:  codec.CodecTypeConst,
 				build: buildStringConst,
 				estimate: func(stats stringStats, ctx planContext) schemeEstimate {
 					return estimateConst(stats.Source(), ctx, stats.isConst)
 				},
 			},
 			{
-				kind:  CodecTypeDict,
+				kind:  codec.CodecTypeDict,
 				build: buildStringDict,
 				estimate: func(stats stringStats, ctx planContext) schemeEstimate {
 					return estimateStringDict(stats, ctx, stats.estimatedDistinctCount)
 				},
 			},
 			{
-				kind: CodecTypeRunEnd,
-				build: func(arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
+				kind: codec.CodecTypeRunEnd,
+				build: func(arr array.ArrayCore[string], ctx planContext) (codec.EncodedArray[string], error) {
 					return buildStringRunEnd(arr, ctx)
 				},
 				estimate: func(stats stringStats, ctx planContext) schemeEstimate {
@@ -43,13 +44,13 @@ func stringSchemes() schemeSet[string, stringStats] {
 				},
 			},
 			{
-				kind:     CodecTypeFSST,
+				kind:     codec.CodecTypeFSST,
 				build:    buildFSST,
 				estimate: estimateFSST,
 			},
 			{
-				kind: CodecTypeSparse,
-				build: func(arr array.ArrayCore[string], ctx planContext) (EncodedArray[string], error) {
+				kind: codec.CodecTypeSparse,
+				build: func(arr array.ArrayCore[string], ctx planContext) (codec.EncodedArray[string], error) {
 					return buildStringSparse(arr, ctx)
 				},
 				estimate: func(stats stringStats, ctx planContext) schemeEstimate {
@@ -60,7 +61,7 @@ func stringSchemes() schemeSet[string, stringStats] {
 	}
 }
 
-func (stringCompressor) IsExcluded(ctx planContext, kind CodecType) bool {
+func (stringCompressor) IsExcluded(ctx planContext, kind codec.CodecType) bool {
 	return ctx.excludesString(kind)
 }
 

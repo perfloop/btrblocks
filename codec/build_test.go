@@ -27,13 +27,31 @@ func TestExportedBuildersRejectInvalidInputs(t *testing.T) {
 		}
 	})
 
-	t.Run("changed child value", func(t *testing.T) {
-		source := array.NewPrimitivesUnsafe([]uint64{1, 2})
+	t.Run("resized child", func(t *testing.T) {
+		source := array.NewPrimitivesUnsafe([]uint64{1, 2, 3})
 		_, err := EncodeDelta(source, func(array.ArrayCore[uint64]) (EncodedArray[uint64], error) {
 			return newRawArray(array.NewPrimitivesUnsafe([]uint64{99})), nil
 		})
-		if err == nil || !strings.Contains(err.Error(), "value differs") {
-			t.Fatalf("EncodeDelta error = %v, want changed-value error", err)
+		if err == nil || !strings.Contains(err.Error(), "child length = 1, want 2") {
+			t.Fatalf("EncodeDelta error = %v, want child-length error", err)
+		}
+	})
+
+	t.Run("nullable child", func(t *testing.T) {
+		source := array.NewPrimitivesUnsafe([]uint64{1, 2})
+		_, err := EncodeDelta(source, func(array.ArrayCore[uint64]) (EncodedArray[uint64], error) {
+			validity, err := array.NewValidityUnsafe(1, []byte{0})
+			if err != nil {
+				return nil, err
+			}
+			values, err := array.NewPrimitivesWithValidityUnsafe([]uint64{1}, validity)
+			if err != nil {
+				return nil, err
+			}
+			return newRawArray(values), nil
+		})
+		if err == nil || !strings.Contains(err.Error(), "contains nulls") {
+			t.Fatalf("EncodeDelta error = %v, want nullable-child error", err)
 		}
 	})
 
@@ -145,6 +163,16 @@ func TestExportedBuildersRejectInvalidInputs(t *testing.T) {
 		}
 	})
 
+	t.Run("unset child closure", func(t *testing.T) {
+		source, err := array.NewStrings([]string{"abc"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := EncodeFSST(source, UnsignedChildFuncs{}, UnsignedChildFuncs{}); !errors.Is(err, ErrBuilderRequired) {
+			t.Fatalf("EncodeFSST error = %v, want %v", err, ErrBuilderRequired)
+		}
+	})
+
 	t.Run("nullable source", func(t *testing.T) {
 		validity, err := array.NewValidityUnsafe(2, []byte{1})
 		if err != nil {
@@ -157,5 +185,150 @@ func TestExportedBuildersRejectInvalidInputs(t *testing.T) {
 		if _, err := EncodeBitpack(source); err == nil || !strings.Contains(err.Error(), "nulls") {
 			t.Fatalf("EncodeBitpack error = %v, want nullable-source error", err)
 		}
+	})
+}
+
+// TestNewNullableScansValiditySequentially pins the bitmap check to a single
+// sequential decode. The validity argument is an arbitrary codec tree, and
+// deltaArray.ValueAt costs O(offset), so walking the bitmap with ValueAt made
+// building one nullable column O((n/8)^2): a 1M-row bitmap is 128 KiB of bytes,
+// each of which the walk reached by summing every byte before it.
+func TestNewNullableScansValiditySequentially(t *testing.T) {
+	const length = 1 << 20
+	bitmap := make([]uint8, length/8)
+	for i := range bitmap {
+		bitmap[i] = 0xff
+	}
+	bitmap[0] = 0xfe // row 0 is the single null
+
+	validity, err := EncodeDelta(array.NewPrimitivesUnsafe(bitmap), testRawChild[uint8])
+	if err != nil {
+		t.Fatalf("EncodeDelta error = %v", err)
+	}
+	values, err := NewConstArray(length, array.NewPrimitivesUnsafe([]uint64{7}))
+	if err != nil {
+		t.Fatalf("NewConstArray error = %v", err)
+	}
+
+	var nullable EncodedArray[uint64]
+	err = assertAnsweredWithin(t, func() error {
+		var err error
+		nullable, err = NewNullable(values, validity, 1)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("NewNullable error = %v", err)
+	}
+	if got := nullable.NullCount(); got != 1 {
+		t.Fatalf("NullCount = %d, want 1", got)
+	}
+	if nullable.IsValid(0) {
+		t.Fatal("IsValid(0) = true, want false")
+	}
+}
+
+// assertBitExact decompresses encoded and compares every element with want
+// under a bit-exact comparator. Encode* enforces only the O(1) half of the
+// ChildBuilder contract, so the value half is verified here.
+func assertBitExact[T Integer | Float | String](t *testing.T, encoded EncodedArray[T], want []T, equal cmpFn[T]) {
+	t.Helper()
+	if encoded.Length() != uint64(len(want)) {
+		t.Fatalf("length = %d, want %d", encoded.Length(), len(want))
+	}
+	got := make([]T, len(want))
+	if err := encoded.DecompressInto(got); err != nil {
+		t.Fatalf("decompress: %v", err)
+	}
+	for i := range want {
+		if !equal(want[i], got[i]) {
+			t.Fatalf("value %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestExportedBuildersAreBitExact(t *testing.T) {
+	negZero := math.Copysign(0, -1)
+
+	t.Run("delta", func(t *testing.T) {
+		values := []uint64{1, 2, 4, 8, 16}
+		encoded, err := EncodeDelta(array.NewPrimitivesUnsafe(values), testRawChild[uint64])
+		if err != nil {
+			t.Fatalf("EncodeDelta error = %v", err)
+		}
+		assertBitExact(t, encoded, values, array.CmpIntegers[uint64])
+	})
+
+	t.Run("integer dictionary", func(t *testing.T) {
+		values := []uint64{7, 3, 7, 3, 9}
+		encoded, err := EncodeIntegerDict(array.NewPrimitivesUnsafe(values), testDictionaryChildren[uint64]{})
+		if err != nil {
+			t.Fatalf("EncodeIntegerDict error = %v", err)
+		}
+		assertBitExact(t, encoded, values, array.CmpIntegers[uint64])
+	})
+
+	t.Run("float dictionary keeps signed zero", func(t *testing.T) {
+		values := []float64{0, negZero, 0, negZero}
+		encoded, err := EncodeFloat64Dict(array.NewPrimitivesUnsafe(values), 0, testDictionaryChildren[float64]{})
+		if err != nil {
+			t.Fatalf("EncodeFloat64Dict error = %v", err)
+		}
+		assertBitExact(t, encoded, values, array.CmpFloatBits[float64])
+	})
+
+	t.Run("float sparse keeps signed zero", func(t *testing.T) {
+		values := []float64{0, 0, negZero, 0}
+		encoded, err := EncodeFloatSparse(array.NewPrimitivesUnsafe(values), testSparseChildren[float64]{})
+		if err != nil {
+			t.Fatalf("EncodeFloatSparse error = %v", err)
+		}
+		assertBitExact(t, encoded, values, array.CmpFloatBits[float64])
+	})
+
+	t.Run("float run-end keeps signed zero", func(t *testing.T) {
+		values := []float64{0, negZero, negZero, 0}
+		encoded, err := EncodePrimitiveRunEndAs(array.NewPrimitivesUnsafe(values), testRawChild[float64], testRawChild[uint8])
+		if err != nil {
+			t.Fatalf("EncodePrimitiveRunEndAs error = %v", err)
+		}
+		assertBitExact(t, encoded, values, array.CmpFloatBits[float64])
+	})
+
+	// array.Float is ~float32|~float64, so a defined type is as much a member
+	// of the constraint as float64 itself and must get the same bit-exact
+	// comparator. Dispatching on the predeclared name silently merged these
+	// four values into one run of +0.0.
+	t.Run("defined float type run-end keeps signed zero", func(t *testing.T) {
+		type celsius float64
+		values := []celsius{0, celsius(negZero), celsius(negZero), 0}
+		encoded, err := EncodePrimitiveRunEndAs(array.NewPrimitivesUnsafe(values), testRawChild[celsius], testRawChild[uint8])
+		if err != nil {
+			t.Fatalf("EncodePrimitiveRunEndAs error = %v", err)
+		}
+		assertBitExact(t, encoded, values, array.CmpFloatBits[celsius])
+	})
+
+	t.Run("string dictionary", func(t *testing.T) {
+		values := []string{"alpha", "beta", "alpha", "gamma"}
+		encoded, err := EncodeStringDict(mustStrings(t, values), testStringDictionaryChildren{})
+		if err != nil {
+			t.Fatalf("EncodeStringDict error = %v", err)
+		}
+		assertBitExact(t, encoded, values, array.CmpStrings[string])
+	})
+
+	t.Run("fsst through child closures", func(t *testing.T) {
+		values := []string{"aaaaabbbbb", "aaaaabbbbb", "cccccddddd"}
+		children := UnsignedChildFuncs{
+			Uint8:  testRawChild[uint8],
+			Uint16: testRawChild[uint16],
+			Uint32: testRawChild[uint32],
+			Uint64: testRawChild[uint64],
+		}
+		encoded, err := EncodeFSST(mustStrings(t, values), children, children)
+		if err != nil {
+			t.Fatalf("EncodeFSST error = %v", err)
+		}
+		assertBitExact(t, encoded, values, array.CmpStrings[string])
 	})
 }
