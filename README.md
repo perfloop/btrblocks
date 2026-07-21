@@ -65,6 +65,14 @@ All headers carry format version 1. The format is not yet frozen — treat it
 as unstable until a v1.0.0 tag exists. Do not store bytes you cannot afford
 to rewrite.
 
+## Related projects
+
+- [btrblocks](https://github.com/maxi-k/btrblocks) — the reference C++
+  implementation from TUM.
+- [Vortex](https://github.com/vortex-data/vortex) — an extensible columnar
+  format in Rust building on the same line of work; its `vortex-btrblocks`
+  crate is an independent BtrBlocks-style compressor.
+
 ## References
 
 This is an independent Go implementation of techniques from:
