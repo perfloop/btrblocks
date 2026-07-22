@@ -956,6 +956,64 @@ func TestLoadRejectsNestedDictOverOversizedValues(t *testing.T) {
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(16<<20), "rejected, but only after materializing the nest")
 }
 
+// TestLoadRejectsRunEndOversizedEndsChild bounds a child's declared length
+// against the node's own row count before the child is scanned. Ends are
+// strictly increasing and each lies in (0, length), so a 2-row node can hold at
+// most one end; an ends child declaring 8M of them is refutable from the two
+// headers alone, but discovering it by decoding cost a full 64 MiB from ~100
+// bytes on the wire.
+func TestLoadRejectsRunEndOversizedEndsChild(t *testing.T) {
+	const ends = 8 << 20
+	stream := codecNode(t, codecHeader{
+		Version:  versionNumber,
+		Type:     CodecTypeRunEnd,
+		ElemType: PTypeUint64,
+		Length:   2,
+	},
+		sequenceNode[uint64](t, ends+1, 0, 1),
+		sequenceNode[uint64](t, ends, 1, 1),
+	)
+	require.Less(t, len(stream), 200)
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	err := assertRejectsWithin(t, func() error {
+		_, err := LoadUnsigned[uint64](stream)
+		return err
+	})
+	runtime.ReadMemStats(&after)
+	require.ErrorContains(t, err, "runend ends length")
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(16<<20), "rejected, but only after decoding the ends child")
+}
+
+// TestLoadRejectsSparseOversizedIndexChild is the same bound on the sparse
+// node: indices are strictly increasing and each is < length, so a 1-row node
+// can hold at most one index.
+func TestLoadRejectsSparseOversizedIndexChild(t *testing.T) {
+	const indices = 8 << 20
+	stream := codecNode(t, codecHeader{
+		Version:  versionNumber,
+		Type:     CodecTypeSparse,
+		ElemType: PTypeUint64,
+		Length:   1,
+	},
+		sequenceNode[uint64](t, 1, 7, 0),
+		sequenceNode[uint64](t, indices, 0, 1),
+		sequenceNode[uint64](t, indices, 0, 1),
+	)
+	require.Less(t, len(stream), 200)
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	err := assertRejectsWithin(t, func() error {
+		_, err := LoadUnsigned[uint64](stream)
+		return err
+	})
+	runtime.ReadMemStats(&after)
+	require.ErrorContains(t, err, "sparse indices length")
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(16<<20), "rejected, but only after decoding the index child")
+}
+
 func TestLoadRejectsNullableWithDeltaSequenceValidity(t *testing.T) {
 	// A 1M-row bitmap is 128 KiB of validity bytes, every one of which the old
 	// loop reached through the whole prefix sum before it.

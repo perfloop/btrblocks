@@ -217,6 +217,13 @@ func (s *sparseArray[V, I]) validate(length uint64, opts *readOptions) error {
 	if s.fill.Length() != 1 || s.Length() != length {
 		return fmt.Errorf("codec: sparse length = %d, want %d", s.Length(), length)
 	}
+	// Indices are strictly increasing and each is < length, so there can be at
+	// most length of them. Bound the child against this node's own row count
+	// before scanning: otherwise a header declaring a huge index child buys a
+	// full decode from a handful of bytes.
+	if s.indices.Length() > length {
+		return fmt.Errorf("codec: sparse indices length = %d, want <= %d", s.indices.Length(), length)
+	}
 	decoded, err := scanChild(s.indices, opts)
 	if err != nil {
 		return fmt.Errorf("codec: sparse index scan: %w", err)

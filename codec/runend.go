@@ -24,6 +24,13 @@ func validateRunEndChildren[V Integer | Float | String, I UnsignedInteger](lengt
 	if ends.Length() == 0 {
 		return nil
 	}
+	// Ends are strictly increasing and each lies in (0, length), so there can be
+	// at most length-1 of them. Bound the child against this node's own row count
+	// before scanning: otherwise a header declaring a huge ends child buys a full
+	// decode from a handful of bytes.
+	if ends.Length() >= length {
+		return fmt.Errorf("codec: runend ends length = %d, want < %d", ends.Length(), length)
+	}
 	decoded, err := scanChild(ends, opts)
 	if err != nil {
 		return fmt.Errorf("codec: runend end scan: %w", err)
