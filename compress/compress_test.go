@@ -55,6 +55,35 @@ func TestPlannerSelectsSparseForDominantInteger(t *testing.T) {
 	require.Equal(t, values, decoded)
 }
 
+// TestStringStatsFrequencyCapPlannerSelection exercises the default planner's
+// returned choice at the retention-cap boundary. At the cap this input selects
+// Dict, while the next new key uses the conservative overflow result and falls
+// back to Raw. This does not claim the input beyond the cap is inherently
+// dictionary-ineligible.
+func TestStringStatsFrequencyCapPlannerSelection(t *testing.T) {
+	const rows = 3 * maxRetainedStringDistinctValues
+	cases := []struct {
+		name     string
+		distinct int
+		want     codec.CodecType
+	}{
+		{name: "at-4096", distinct: maxRetainedStringDistinctValues, want: codec.CodecTypeDict},
+		{name: "at-4097", distinct: maxRetainedStringDistinctValues + 1, want: codec.CodecTypeRaw},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			values := stringStatsCapValues(rows, tc.distinct)
+			encoded, err := StringArray(mustStrings(t, values), Options{})
+			require.NoError(t, err)
+			require.Equal(t, tc.want, encoded.CodecType())
+			decoded, err := codec.Decompress(encoded)
+			require.NoError(t, err)
+			require.Equal(t, values, decoded)
+		})
+	}
+}
+
 func TestPlannerBuildsOnlyWinner(t *testing.T) {
 	values := make([]uint32, 512)
 	for i := range values {
