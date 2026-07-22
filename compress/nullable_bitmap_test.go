@@ -18,6 +18,16 @@ func (a *overridingPrimitiveUint64Array) IsValid(offset uint64) bool {
 
 func (a *overridingPrimitiveUint64Array) NullCount() uint64 { return a.nullCount }
 
+type countedValueUint64Array struct {
+	array.Array[uint64]
+	valueAtCalls uint64
+}
+
+func (a *countedValueUint64Array) ValueAt(offset uint64) uint64 {
+	a.valueAtCalls++
+	return a.Array.ValueAt(offset)
+}
+
 func TestMaskedPrimitiveBorrowsNativeValidity(t *testing.T) {
 	validity, err := array.ValidityFromNulls(3, []bool{false, true, false})
 	if err != nil {
@@ -47,6 +57,28 @@ func TestMaskedPrimitiveBorrowsNativeValidity(t *testing.T) {
 		}
 	}()
 	masked.ValueAt(masked.Length())
+}
+
+func TestMaskedBitmapReadsNullPhysicalValue(t *testing.T) {
+	validity, err := array.ValidityFromNulls(3, []bool{false, true, false})
+	if err != nil {
+		t.Fatalf("ValidityFromNulls: %v", err)
+	}
+	base, err := array.NewPrimitivesWithValidityUnsafe([]uint64{10, 999, 20}, validity)
+	if err != nil {
+		t.Fatalf("NewPrimitivesWithValidityUnsafe: %v", err)
+	}
+	source := &countedValueUint64Array{Array: base}
+	masked := maskPrimitiveArray[uint64](source)
+	bitmap := validity.Bytes()
+	masked.validity = &bitmap[0]
+
+	if got := masked.ValueAt(1); got != 0 {
+		t.Fatalf("ValueAt(1) = %d, want zero", got)
+	}
+	if got := source.valueAtCalls; got != 1 {
+		t.Fatalf("source ValueAt calls = %d, want 1", got)
+	}
 }
 
 func TestMaskedPrimitiveUsesIsValidForWrapper(t *testing.T) {

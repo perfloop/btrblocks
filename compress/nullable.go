@@ -44,14 +44,16 @@ func checkMaskedAllocation[T array.Integer | array.Float | array.String](length,
 
 func (a *maskedArray[T]) ValueAt(offset uint64) T {
 	if a.validity != nil {
-		if offset >= a.source.Length() {
-			panic(errOffsetOutOfRange)
-		}
+		// ValueAt provides the required bounds check before the bitmap pointer is
+		// dereferenced. ArrayCore permits reading a null slot's physical value.
+		value := a.source.ValueAt(offset)
 		if *(*byte)(unsafe.Add(unsafe.Pointer(a.validity), uintptr(offset>>3)))&(1<<(offset&7)) == 0 {
 			var zero T
 			return zero
 		}
-	} else if !a.source.IsValid(offset) {
+		return value
+	}
+	if !a.source.IsValid(offset) {
 		var zero T
 		return zero
 	}
