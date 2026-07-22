@@ -26,6 +26,7 @@ func TestMaskedMaterializationHonorsBuildBudget(t *testing.T) {
 var (
 	benchmarkNullableEncoded codec.EncodedArray[uint64]
 	benchmarkNullableValid   bool
+	benchmarkNullableValueAt uint64
 )
 
 func mustWriteEncodedArray(t testing.TB, encoded io.WriterTo) []byte {
@@ -409,6 +410,59 @@ func TestNullableStringRawChildMaterializesOnce(t *testing.T) {
 	if got := loaded.NullCount(); got != 3 {
 		t.Fatalf("NullCount = %d, want 3", got)
 	}
+}
+
+// BenchmarkNullableMaskedValueAt isolates the repeated nullable read body at
+// the same row count and null distribution as the end-to-end benchmark. Its
+// bitmap case is the candidate body: direct bitmap validity plus the unchanged
+// source value read.
+func BenchmarkNullableMaskedValueAt(b *testing.B) {
+	const length = 1 << 16
+	values := make([]uint64, length)
+	nulls := make([]bool, length)
+	for i := range values {
+		values[i] = uint64(i*2654435761) % 10_003
+		nulls[i] = i&1 == 0
+	}
+	validity, err := array.ValidityFromNulls(length, nulls)
+	if err != nil {
+		b.Fatal(err)
+	}
+	source, err := array.NewPrimitivesWithValidityUnsafe(values, validity)
+	if err != nil {
+		b.Fatal(err)
+	}
+	masked := maskPrimitiveArray[uint64](source)
+	bitmap, nullCount, err := array.ValidityBitmap(source, 0, length)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if nullCount != length/2 {
+		b.Fatalf("null count = %d, want %d", nullCount, length/2)
+	}
+	var valueSource array.Array[uint64] = source
+
+	b.Run("validity=source", func(b *testing.B) {
+		b.ReportAllocs()
+		var offset uint64
+		for b.Loop() {
+			benchmarkNullableValueAt = masked.ValueAt(offset & (length - 1))
+			offset++
+		}
+	})
+	b.Run("validity=bitmap", func(b *testing.B) {
+		b.ReportAllocs()
+		var offset uint64
+		for b.Loop() {
+			index := offset & (length - 1)
+			if bitmap[index>>3]&(1<<(index&7)) == 0 {
+				benchmarkNullableValueAt = 0
+			} else {
+				benchmarkNullableValueAt = valueSource.ValueAt(index)
+			}
+			offset++
+		}
+	})
 }
 
 func BenchmarkNullableUint64(b *testing.B) {
