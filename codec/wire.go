@@ -253,6 +253,19 @@ func readHeader(br *array.BufReader) (codecHeader, error) {
 	}, nil
 }
 
+// peekChildRows reads the next child's declared row count without consuming the
+// child: br is left positioned to read the child in full afterwards. It lets a
+// caller reject a value child that declares more rows than the enclosing node
+// can hold before that child's subtree is decoded — otherwise a few header
+// bytes naming a large child buy a full decode that a later structural check
+// then discards.
+func peekChildRows(br *array.BufReader) (uint64, error) {
+	mark := br.Off
+	h, err := readHeader(br)
+	br.Off = mark
+	return h.Length, err
+}
+
 func (h codecHeader) WriteTo(w io.Writer) (int64, error) {
 	var buf [headerSize]byte
 	buf[0] = h.Version

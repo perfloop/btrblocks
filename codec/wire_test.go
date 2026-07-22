@@ -956,6 +956,22 @@ func TestLoadRejectsNestedDictOverOversizedValues(t *testing.T) {
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(16<<20), "rejected, but only after materializing the nest")
 }
 
+// assertRejectedWithoutDecoding runs load and requires that the stream was
+// rejected before any large child was decoded: the allocation delta stays small
+// and the error names the guard. Allocation is asserted first so a regression to
+// a post-decode check reports the megabytes rather than a string mismatch, and
+// the load runs synchronously so no worker goroutine's late allocation can
+// misattribute to another test under -shuffle.
+func assertRejectedWithoutDecoding(t *testing.T, load func() error, wantErr string) {
+	t.Helper()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	err := load()
+	runtime.ReadMemStats(&after)
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(1<<20), "rejected only after decoding a child")
+	require.ErrorContains(t, err, wantErr)
+}
+
 // TestLoadRejectsOversizedOrdinalChild verifies that a run-end or sparse node
 // whose ordinal/index child declares more elements than the node's row count
 // AND its index type could ever hold is rejected from the two headers alone,
@@ -971,18 +987,10 @@ func TestLoadRejectsOversizedOrdinalChild(t *testing.T) {
 		wantErr string
 	}{
 		{
-			// Child longer than the parent's row count.
-			name: "runend child exceeds parent",
-			stream: codecNode(t, codecHeader{Version: versionNumber, Type: CodecTypeRunEnd, ElemType: PTypeUint64, Length: 2},
-				sequenceNode[uint64](t, big+1, 0, 1),
-				sequenceNode[uint64](t, big, 1, 1)),
-			wantErr: "runend ordinal count",
-		},
-		{
 			// Narrow ordinal type over a large parent: 8M uint8 ends declared for a
 			// 1<<26-row node. 8M < 1<<26, so a parent-only bound would pass, but a
-			// uint8 sequence in (0, length) holds at most 255 values. This is the
-			// case the earlier parent-relative guard let through at a full decode.
+			// uint8 sequence in (0, length) holds at most 255 values — the case the
+			// earlier parent-relative guard let through at a full decode.
 			name: "runend narrow ordinal type",
 			stream: codecNode(t, codecHeader{Version: versionNumber, Type: CodecTypeRunEnd, ElemType: PTypeUint64, Length: 1 << 26},
 				sequenceNode[uint64](t, big+1, 0, 1),
@@ -1009,18 +1017,63 @@ func TestLoadRejectsOversizedOrdinalChild(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Less(t, len(tc.stream), 300)
-			// Rejection is a header-only check, so it must not decode the child.
-			// Measure synchronously — no worker goroutine whose late allocation
-			// could misattribute to another test under -shuffle — and assert the
-			// allocation ceiling BEFORE the message: if the bound ever regresses to
-			// a post-scan check, this fails first, naming the 64 MiB regression
-			// instead of a string mismatch.
-			var before, after runtime.MemStats
-			runtime.ReadMemStats(&before)
-			_, err := LoadUnsigned[uint64](tc.stream)
-			runtime.ReadMemStats(&after)
-			require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(1<<20), "rejected only after decoding the child")
-			require.ErrorContains(t, err, tc.wantErr)
+			assertRejectedWithoutDecoding(t, func() error {
+				_, err := LoadUnsigned[uint64](tc.stream)
+				return err
+			}, tc.wantErr)
+		})
+	}
+}
+
+// TestLoadRejectsOversizedSiblingChild covers the node's *value* children
+// (run-end runs, sparse fill and values), read through the generic value reader
+// rather than a typed header. Each is a dictionary declaring 8M rows — a codec
+// whose construction decodes its ordinal child — so without the header peek each
+// would allocate ~64 MiB before a later structural check discarded it. A run
+// covers >=1 row, a fill is a single value, and exceptions pair with indices, so
+// all three are refutable from the headers.
+func TestLoadRejectsOversizedSiblingChild(t *testing.T) {
+	const big = 8 << 20
+	// A dictionary of `big` rows over a 256-entry table; loading it decodes the
+	// full ordinal child.
+	bigDict := func() []byte {
+		return dictNode(t, PTypeUint64, big, sequenceNode[uint64](t, 256, 0, 1), sequenceNode[uint64](t, big, 0, 0))
+	}
+	cases := []struct {
+		name    string
+		stream  []byte
+		wantErr string
+	}{
+		{
+			name: "runend oversized runs",
+			stream: codecNode(t, codecHeader{Version: versionNumber, Type: CodecTypeRunEnd, ElemType: PTypeUint64, Length: 2},
+				bigDict(),
+				sequenceNode[uint64](t, 1, 1, 1)),
+			wantErr: "runend run count",
+		},
+		{
+			name: "sparse oversized fill",
+			stream: codecNode(t, codecHeader{Version: versionNumber, Type: CodecTypeSparse, ElemType: PTypeUint64, Length: 4},
+				bigDict(),
+				sequenceNode[uint8](t, 2, 0, 1),
+				sequenceNode[uint64](t, 2, 0, 1)),
+			wantErr: "sparse fill length",
+		},
+		{
+			name: "sparse oversized values",
+			stream: codecNode(t, codecHeader{Version: versionNumber, Type: CodecTypeSparse, ElemType: PTypeUint64, Length: 4},
+				sequenceNode[uint64](t, 1, 7, 0),
+				sequenceNode[uint8](t, 2, 0, 1),
+				bigDict()),
+			wantErr: "sparse values length",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertRejectedWithoutDecoding(t, func() error {
+				_, err := LoadUnsigned[uint64](tc.stream)
+				return err
+			}, tc.wantErr)
 		})
 	}
 }

@@ -155,6 +155,13 @@ func readRunEndArray[V Integer | Float | String](br *array.BufReader, h codecHea
 	if h.Length == 0 {
 		return nil, fmt.Errorf("codec: runend length = 0")
 	}
+	// A run covers at least one row, so a valid stream has at most h.Length runs.
+	// Reject an over-declared runs child from its header, before it is decoded.
+	if runRows, err := peekChildRows(br); err != nil {
+		return nil, fmt.Errorf("codec: reading runend runs header: %w", err)
+	} else if runRows > h.Length {
+		return nil, fmt.Errorf("codec: runend run count %d exceeds rows %d", runRows, h.Length)
+	}
 	runs, err := readValues(br, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: reading runend runs: %w", err)

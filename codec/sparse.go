@@ -135,12 +135,27 @@ func readSparseArray[V Integer | Float | String](br *array.BufReader, h codecHea
 		if err != nil {
 			return nil, fmt.Errorf("codec: reading sparse bitmap: %w", err)
 		}
+		// The fill is a single value; reject a multi-element fill child from its
+		// header, before it is decoded.
+		if fillRows, err := peekChildRows(br); err != nil {
+			return nil, fmt.Errorf("codec: reading sparse fill header: %w", err)
+		} else if fillRows != 1 {
+			return nil, fmt.Errorf("codec: sparse fill length = %d, want 1", fillRows)
+		}
 		fill, err := readValues(br, opts)
 		if err != nil {
 			return nil, fmt.Errorf("codec: sparse fill: %w", err)
 		}
 		if err := requireNonNullable(fill, "sparse fill"); err != nil {
 			return nil, err
+		}
+		// Exceptions cannot outnumber the rows the bitmap covers; reject an
+		// over-declared values child from its header, before it is decoded. The
+		// exact popcount equality is enforced in validate.
+		if valRows, err := peekChildRows(br); err != nil {
+			return nil, fmt.Errorf("codec: reading sparse values header: %w", err)
+		} else if valRows > h.Length {
+			return nil, fmt.Errorf("codec: sparse values length = %d exceeds rows %d", valRows, h.Length)
 		}
 		values, err := readValues(br, opts)
 		if err != nil {
@@ -158,12 +173,16 @@ func readSparseArray[V Integer | Float | String](br *array.BufReader, h codecHea
 	if h.NumBytes != 0 {
 		return nil, fmt.Errorf("codec: sparse body size = %d, want 0", h.NumBytes)
 	}
+	// The fill is a single value; reject a multi-element fill child from its
+	// header, before it is decoded.
+	if fillRows, err := peekChildRows(br); err != nil {
+		return nil, fmt.Errorf("codec: reading sparse fill header: %w", err)
+	} else if fillRows != 1 {
+		return nil, fmt.Errorf("codec: sparse fill length = %d, want 1", fillRows)
+	}
 	fill, err := readValues(br, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: sparse fill: %w", err)
-	}
-	if fill.Length() != 1 {
-		return nil, fmt.Errorf("codec: sparse fill length = %d, want 1", fill.Length())
 	}
 	if err := requireNonNullable(fill, "sparse fill"); err != nil {
 		return nil, err
@@ -210,6 +229,13 @@ func readSparseChildren[V Integer | Float | String, I UnsignedInteger](br *array
 	}
 	if err := requireNonNullable(indices, "sparse indices"); err != nil {
 		return nil, err
+	}
+	// values pairs one-to-one with indices; reject an over-declared values child
+	// from its header, before it is decoded.
+	if valRows, err := peekChildRows(br); err != nil {
+		return nil, fmt.Errorf("codec: reading sparse values header: %w", err)
+	} else if valRows != indices.Length() {
+		return nil, fmt.Errorf("codec: sparse values length = %d, want %d", valRows, indices.Length())
 	}
 	values, err := readValues(br, opts)
 	if err != nil {
