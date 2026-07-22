@@ -19,6 +19,9 @@ callers should upgrade the library to receive decoder and dependency fixes.
 ## Untrusted data
 
 Use explicit `ReadOptions` for persisted or network-provided data. Keep
-`MaxLength`, `MaxBytes`, `MaxDecodedBytes`, and `MaxDepth` within the owning
-service's memory and latency budgets. The zero value applies conservative
-defaults, but application-specific limits are preferred.
+`MaxLength`, `MaxBytes`, `MaxDecodedBytes`, `MaxDepth`, and `MaxWork` within the
+owning service's memory and latency budgets. `MaxWork` bounds the total
+validation work one decode may perform (`MaxDecodedBytes` bounds a single scan,
+`MaxWork` their sum), which is what limits the CPU a small crafted stream can
+demand. The zero value applies conservative defaults, but application-specific
+limits are preferred.
