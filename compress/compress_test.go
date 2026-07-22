@@ -55,25 +55,29 @@ func TestPlannerSelectsSparseForDominantInteger(t *testing.T) {
 	require.Equal(t, values, decoded)
 }
 
-// TestStringStatsFrequencyCapPlannerSelection exercises the default planner's
-// returned choice at the retention-cap boundary. At the cap this input selects
-// Dict, while the next new key uses the conservative overflow result and falls
-// back to Raw. This does not claim the input beyond the cap is inherently
-// dictionary-ineligible.
-func TestStringStatsFrequencyCapPlannerSelection(t *testing.T) {
+func TestStringStatsFrequencyCapPolicy(t *testing.T) {
 	const rows = 3 * maxRetainedStringDistinctValues
 	cases := []struct {
-		name     string
-		distinct int
-		want     codec.CodecType
+		name              string
+		distinct          int
+		want              codec.CodecType
+		wantDistinctCount uint64
+		wantMostFrequent  uint64
 	}{
-		{name: "at-4096", distinct: maxRetainedStringDistinctValues, want: codec.CodecTypeDict},
-		{name: "at-4097", distinct: maxRetainedStringDistinctValues + 1, want: codec.CodecTypeRaw},
+		{name: "at-4096", distinct: maxRetainedStringDistinctValues, want: codec.CodecTypeDict, wantDistinctCount: maxRetainedStringDistinctValues, wantMostFrequent: 3},
+		{name: "at-4097", distinct: maxRetainedStringDistinctValues + 1, want: codec.CodecTypeRaw, wantDistinctCount: rows, wantMostFrequent: 0},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			values := stringStatsCapValues(rows, tc.distinct)
+			stats := computeStringStatsForPlanner(mustStrings(t, values), true)
+			require.Equal(t, tc.wantDistinctCount, stats.estimatedDistinctCount)
+			require.Equal(t, tc.wantMostFrequent, stats.MostFrequentCount())
+			require.False(t, stats.isConst)
+			require.Equal(t, uint64(rows*len(values[0])), stats.totalBytes)
+			require.Equal(t, 1.0, stats.avgRunLength)
+
 			encoded, err := StringArray(mustStrings(t, values), Options{})
 			require.NoError(t, err)
 			require.Equal(t, tc.want, encoded.CodecType())
@@ -82,6 +86,14 @@ func TestStringStatsFrequencyCapPlannerSelection(t *testing.T) {
 			require.Equal(t, values, decoded)
 		})
 	}
+}
+
+func stringStatsCapValues(rows, distinct int) []string {
+	values := make([]string, rows)
+	for i := range values {
+		values[i] = fmt.Sprintf("stats-cap-%05d", i%distinct)
+	}
+	return values
 }
 
 func TestPlannerBuildsOnlyWinner(t *testing.T) {

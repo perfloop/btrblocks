@@ -1,6 +1,7 @@
 package compress
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -12,6 +13,30 @@ func TestComputeStringStatsDistinguishesCommonPrefixes(t *testing.T) {
 
 	stats := computeStringStatsForPlanner(mustStrings(t, values), true)
 	require.Equal(t, uint64(2), stats.estimatedDistinctCount)
+}
+
+func TestStringStatsFrequencyOddHalfCutoff(t *testing.T) {
+	const rows = 4095
+	const prefixDistinct = rows/2 + 1
+
+	values := make([]string, rows)
+	values[0] = "dominant"
+	for i := 1; i < prefixDistinct; i++ {
+		values[i] = fmt.Sprintf("odd-prefix-%04d", i)
+	}
+	for i := prefixDistinct; i < len(values); i++ {
+		values[i] = values[0]
+	}
+
+	stats := computeStringStatsForPlanner(mustStrings(t, values), true)
+	require.Equal(t, uint64(rows), stats.estimatedDistinctCount)
+	require.Zero(t, stats.MostFrequentCount())
+	require.False(t, countDominates(uint64(rows), uint64(prefixDistinct)))
+
+	ctx := newPlanContext(Options{})
+	require.Equal(t, estimateSkip, estimateStringDict(stats, ctx, stats.estimatedDistinctCount).kind)
+	require.True(t, stringCanSample(stats.Source(), ctx))
+	require.Equal(t, estimateSkip, estimateSparseGeneric(stats, ctx, true).kind)
 }
 
 // TestStringStatsComputesBaseStats verifies that computeStringStatsForPlanner
