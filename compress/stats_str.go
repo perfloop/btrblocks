@@ -46,7 +46,9 @@ func computeStringStatsForPlanner(arr array.Array[string], collectFrequencies bo
 				distinct[v] = count
 				mostFrequent = max(mostFrequent, count)
 			} else if len(distinct) >= maxRetainedStringDistinctValues || uint64(len(distinct)) >= n/2 {
-				// A new key would make Dict ineligible and preclude Sparse dominance.
+				// At half cardinality, a new key makes Dict ineligible and precludes
+				// Sparse dominance. The fixed cap is a separate conservative retention
+				// limit; it does not establish either planner result by itself.
 				// Keep the overflow sentinel while continuing the other full-row stats.
 				distinct = nil
 				distinctOverflow = true
