@@ -24,7 +24,7 @@ func allValidAt(length, offset uint64) bool {
 
 type maskedArray[T array.Integer | array.Float | array.String] struct {
 	source      array.Array[T]
-	binarySize  uint64
+	validity    *byte // read-only bitmap borrowed only from a native primitive array
 	size        func() uint64
 	materialize func([]T) (array.Array[T], error)
 	checkExtra  func(uint64) error
@@ -43,7 +43,15 @@ func checkMaskedAllocation[T array.Integer | array.Float | array.String](length,
 }
 
 func (a *maskedArray[T]) ValueAt(offset uint64) T {
-	if !a.source.IsValid(offset) {
+	if a.validity != nil {
+		if offset >= a.source.Length() {
+			panic(errOffsetOutOfRange)
+		}
+		if *(*byte)(unsafe.Add(unsafe.Pointer(a.validity), uintptr(offset>>3)))&(1<<(offset&7)) == 0 {
+			var zero T
+			return zero
+		}
+	} else if !a.source.IsValid(offset) {
 		var zero T
 		return zero
 	}
@@ -57,14 +65,9 @@ func (a *maskedArray[T]) IsValid(offset uint64) bool {
 func (a *maskedArray[T]) NullCount() uint64  { return 0 }
 func (a *maskedArray[T]) PType() array.PType { return a.source.PType() }
 
-// BinarySize memoizes size so the O(n) string measurement is paid once, and
-// only on plan paths that actually consult it.
-func (a *maskedArray[T]) BinarySize() uint64 {
-	if a.binarySize == 0 {
-		a.binarySize = a.size()
-	}
-	return a.binarySize
-}
+// BinarySize delegates caching to the family-specific size closure so the
+// native validity bitmap can reuse this view's fixed storage.
+func (a *maskedArray[T]) BinarySize() uint64 { return a.size() }
 
 func (a *maskedArray[T]) CopyTo(dst []T) {
 	for i := range min(uint64(len(dst)), a.Length()) {
@@ -113,7 +116,7 @@ func (a *maskedArray[T]) materialized(limits ...uint64) (array.Array[T], error) 
 }
 
 func maskPrimitiveArray[T array.PrimitiveType](source array.Array[T]) *maskedArray[T] {
-	return &maskedArray[T]{
+	masked := &maskedArray[T]{
 		source: source,
 		size: func() uint64 {
 			return array.HeaderSize + source.Length()*uint64(source.PType().ByteWidth())
@@ -122,6 +125,10 @@ func maskPrimitiveArray[T array.PrimitiveType](source array.Array[T]) *maskedArr
 			return array.NewPrimitivesUnsafe(values), nil
 		},
 	}
+	if bitmap := array.PrimitiveValidityBytes(source); len(bitmap) != 0 {
+		masked.validity = &bitmap[0]
+	}
+	return masked
 }
 
 func maskStringArray(source array.Array[string]) *maskedArray[string] {
@@ -157,7 +164,13 @@ func maskStringArray(source array.Array[string]) *maskedArray[string] {
 	}
 	// The masked view's raw size counts null slots as empty payloads, which is
 	// what the raw-fallback comparison against candidate encodings needs.
-	masked.size = func() uint64 { return computeStringRawBinarySize(masked) }
+	var binarySize uint64
+	masked.size = func() uint64 {
+		if binarySize == 0 {
+			binarySize = computeStringRawBinarySize(masked)
+		}
+		return binarySize
+	}
 	return masked
 }
 

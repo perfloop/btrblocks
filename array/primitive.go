@@ -86,6 +86,18 @@ func (c *Primitives[T]) IsValid(offset uint64) bool {
 func (c *Primitives[T]) Validity() Validity { return c.validity }
 func (c *Primitives[T]) NullCount() uint64  { return c.validity.NullCount() }
 
+// PrimitiveValidityBytes returns the immutable validity bytes only when source
+// is exactly a native Primitives array. It deliberately returns nil for
+// wrappers, which may promote Validity while defining their own IsValid
+// authority. Callers must not modify a non-nil result.
+func PrimitiveValidityBytes[T PrimitiveType](source Array[T]) []byte {
+	primitive, ok := source.(*Primitives[T])
+	if !ok {
+		return nil
+	}
+	return primitive.validity.Bytes()
+}
+
 // ValuesUnsafe returns the backing values without copying. Callers must not
 // modify the returned slice.
 func (c *Primitives[T]) ValuesUnsafe() []T { return c.data }
