@@ -38,6 +38,8 @@ func (d *deltaArray[T]) BinarySize() uint64 {
 	return uint64(headerSize) + uint64(unsafe.Sizeof(d.base)) + d.child.BinarySize()
 }
 
+func (d *deltaArray[T]) MarshalBinary() ([]byte, error) { return marshalBinary(d) }
+
 func (d *deltaArray[T]) ValueAt(offset uint64) T {
 	if offset >= d.Length() {
 		panic(errOffsetOutOfRange)

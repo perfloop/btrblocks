@@ -22,13 +22,14 @@ func encodeRaw[T Integer | Float | String](arr array.Array[T]) EncodedArray[T] {
 	return newRawArray(arr)
 }
 
-func (r *rawArray[T]) CodecType() CodecType          { return CodecTypeRaw }
-func (r *rawArray[T]) Length() uint64                { return r.arr.Length() }
-func (r *rawArray[T]) IsValid(offset uint64) bool    { return r.arr.IsValid(offset) }
-func (r *rawArray[T]) NullCount() uint64             { return r.arr.NullCount() }
-func (r *rawArray[T]) PType() PType                  { return r.arr.PType() }
-func (r *rawArray[T]) BinarySize() uint64            { return uint64(headerSize) + r.arr.BinarySize() }
-func (r *rawArray[T]) DecodedBytes() (uint64, error) { return decodedBytesFor(r.Length(), r.PType()) }
+func (r *rawArray[T]) CodecType() CodecType           { return CodecTypeRaw }
+func (r *rawArray[T]) Length() uint64                 { return r.arr.Length() }
+func (r *rawArray[T]) IsValid(offset uint64) bool     { return r.arr.IsValid(offset) }
+func (r *rawArray[T]) NullCount() uint64              { return r.arr.NullCount() }
+func (r *rawArray[T]) PType() PType                   { return r.arr.PType() }
+func (r *rawArray[T]) BinarySize() uint64             { return uint64(headerSize) + r.arr.BinarySize() }
+func (r *rawArray[T]) MarshalBinary() ([]byte, error) { return marshalBinary(r) }
+func (r *rawArray[T]) DecodedBytes() (uint64, error)  { return decodedBytesFor(r.Length(), r.PType()) }
 
 func (r *rawArray[T]) ValueAt(offset uint64) T {
 	if offset >= r.arr.Length() {

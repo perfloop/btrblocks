@@ -2,6 +2,7 @@ package codec
 
 import (
 	"bytes"
+	"encoding"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -22,6 +23,15 @@ func mustWriteEncodedArray(t testing.TB, encoded io.WriterTo) []byte {
 	_, err := encoded.WriteTo(&buf)
 	if err != nil {
 		t.Fatalf("write encoded array: %v", err)
+	}
+	if marshaler, ok := encoded.(encoding.BinaryMarshaler); ok {
+		marshaled, err := marshaler.MarshalBinary()
+		if err != nil {
+			t.Fatalf("marshal encoded array: %v", err)
+		}
+		if !bytes.Equal(marshaled, buf.Bytes()) {
+			t.Fatalf("MarshalBinary differs from WriteTo: got %x want %x", marshaled, buf.Bytes())
+		}
 	}
 	return buf.Bytes()
 }

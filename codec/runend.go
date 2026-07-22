@@ -66,6 +66,8 @@ func (r *runEndArray[V, I]) BinarySize() uint64 {
 	return uint64(headerSize) + r.runs.BinarySize() + r.ends.BinarySize()
 }
 
+func (r *runEndArray[V, I]) MarshalBinary() ([]byte, error) { return marshalBinary(r) }
+
 func (r *runEndArray[V, I]) ValueAt(offset uint64) V {
 	if offset >= r.Length() {
 		panic(errOffsetOutOfRange)

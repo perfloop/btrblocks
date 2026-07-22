@@ -16,10 +16,11 @@ type constArray[T Integer | Float | String] struct {
 	body array.Array[T]
 }
 
-func (c *constArray[T]) CodecType() CodecType          { return CodecTypeConst }
-func (c *constArray[T]) PType() PType                  { return c.body.PType() }
-func (c *constArray[T]) BinarySize() uint64            { return uint64(headerSize) + c.body.BinarySize() }
-func (c *constArray[T]) DecodedBytes() (uint64, error) { return decodedBytesFor(c.Length(), c.PType()) }
+func (c *constArray[T]) CodecType() CodecType           { return CodecTypeConst }
+func (c *constArray[T]) PType() PType                   { return c.body.PType() }
+func (c *constArray[T]) BinarySize() uint64             { return uint64(headerSize) + c.body.BinarySize() }
+func (c *constArray[T]) MarshalBinary() ([]byte, error) { return marshalBinary(c) }
+func (c *constArray[T]) DecodedBytes() (uint64, error)  { return decodedBytesFor(c.Length(), c.PType()) }
 
 func (c *constArray[T]) ValueAt(offset uint64) T {
 	if offset >= c.Length() {

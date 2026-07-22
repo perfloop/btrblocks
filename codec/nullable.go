@@ -31,6 +31,8 @@ func (a *nullableArray[T]) BinarySize() uint64 {
 	return headerSize + nullableBodySize + a.values.BinarySize() + a.validity.BinarySize()
 }
 
+func (a *nullableArray[T]) MarshalBinary() ([]byte, error) { return marshalBinary(a) }
+
 // DecodedBytes is the value child's: DecompressInto delegates to it and never
 // materializes the validity bitmap.
 func (a *nullableArray[T]) DecodedBytes() (uint64, error) {

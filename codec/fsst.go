@@ -37,6 +37,8 @@ func (f *fsstArray[I, J]) BinarySize() uint64 {
 	return uint64(headerSize) + 4 + uint64(len(f.tableRaw)) + 4 + uint64(len(f.codes)) + f.offsets.BinarySize() + f.lengths.BinarySize()
 }
 
+func (f *fsstArray[I, J]) MarshalBinary() ([]byte, error) { return marshalBinary(f) }
+
 // DecodedBytes reports the string header per element, the payload buffer they
 // point into, the decode buffer the fill reuses across spans, and the offsets
 // and lengths children DecompressInto decodes first. Counting only the payload

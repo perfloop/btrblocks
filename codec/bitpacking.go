@@ -177,6 +177,8 @@ func (c *bitPackedArray[T, I]) BinarySize() uint64 {
 	return size
 }
 
+func (c *bitPackedArray[T, I]) MarshalBinary() ([]byte, error) { return marshalBinary(c) }
+
 func (c *bitPackedArray[T, I]) ValueAt(offset uint64) T {
 	if offset >= c.Length() {
 		panic(errOffsetOutOfRange)

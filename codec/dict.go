@@ -279,6 +279,8 @@ func (d *dictArray[V, I]) BinarySize() uint64 {
 	return uint64(headerSize) + d.values.BinarySize() + d.indices.BinarySize()
 }
 
+func (d *dictArray[V, I]) MarshalBinary() ([]byte, error) { return marshalBinary(d) }
+
 func (d *dictArray[V, I]) ValueAt(offset uint64) V {
 	// A corrupt ordinal panics via the values child's bounds check, matching this
 	// layer's ValueAt contract (panics on out-of-range access) and Arrow's

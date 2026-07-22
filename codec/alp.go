@@ -163,6 +163,8 @@ func (a *alpArray[T, I, J]) BinarySize() uint64 {
 	return size
 }
 
+func (a *alpArray[T, I, J]) MarshalBinary() ([]byte, error) { return marshalBinary(a) }
+
 func (a *alpArray[T, I, J]) ValueAt(offset uint64) T {
 	if offset >= a.Length() {
 		panic(errOffsetOutOfRange)

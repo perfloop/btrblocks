@@ -25,28 +25,29 @@ arrays pay zero bytes for it.
 
 ```go
 import (
-    "bytes"
-
-    "github.com/axiomhq/btrblocks"
-    "github.com/axiomhq/btrblocks/array"
+	"github.com/axiomhq/btrblocks"
+	"github.com/axiomhq/btrblocks/array"
 )
 
 // Build an array and compress it.
 values := array.NewPrimitives([]int64{10, 12, 14, 16, 18})
 encoded, err := btrblocks.SignedArray(values, btrblocks.Options{})
 
-// Serialize.
-var buf bytes.Buffer
-_, err = encoded.WriteTo(&buf)
+// Serialize into caller-owned bytes without decompressing.
+data, err := encoded.MarshalBinary()
 
 // Load without decompressing.
-decoded, err := btrblocks.LoadSigned[int64](buf.Bytes())
+decoded, err := btrblocks.LoadSigned[int64](data)
 
 // Random access, or bulk decompression.
 v := decoded.ValueAt(2)
 out := make([]int64, decoded.Length())
 err = decoded.DecompressInto(out)
 ```
+
+`MarshalBinary` allocates `BinarySize()` contiguous bytes. For large outputs,
+use `WriteTo` to stream the same wire representation to an `io.Writer` without
+that allocation.
 
 Nulls are passed alongside values; `true` marks a null row and an empty mask
 means that every row is valid:

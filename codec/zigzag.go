@@ -46,6 +46,9 @@ func (z *zigzagArray[T, U]) DecodedBytes() (uint64, error) {
 	return f.result()
 }
 func (z *zigzagArray[T, U]) BinarySize() uint64 { return uint64(headerSize) + z.child.BinarySize() }
+func (z *zigzagArray[T, U]) MarshalBinary() ([]byte, error) {
+	return marshalBinary(z)
+}
 
 func (z *zigzagArray[T, U]) ValueAt(offset uint64) T {
 	value := uint64(z.child.ValueAt(offset))

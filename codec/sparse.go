@@ -53,6 +53,8 @@ func (s *sparseArray[V, I]) BinarySize() uint64 {
 	return uint64(headerSize) + s.fill.BinarySize() + s.indices.BinarySize() + s.values.BinarySize()
 }
 
+func (s *sparseArray[V, I]) MarshalBinary() ([]byte, error) { return marshalBinary(s) }
+
 func (s *sparseArray[V, I]) ValueAt(offset uint64) V {
 	if offset >= s.Length() {
 		panic(errOffsetOutOfRange)
@@ -341,6 +343,8 @@ func (s *bitmapSparseArray[V]) VisitSparseValues(visit func(index uint64, value 
 func (s *bitmapSparseArray[V]) BinarySize() uint64 {
 	return uint64(headerSize) + uint64(len(s.bitmap)) + s.fill.BinarySize() + s.values.BinarySize()
 }
+
+func (s *bitmapSparseArray[V]) MarshalBinary() ([]byte, error) { return marshalBinary(s) }
 
 func (s *bitmapSparseArray[V]) ValueAt(offset uint64) V {
 	if offset >= s.Length() {

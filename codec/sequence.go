@@ -59,6 +59,8 @@ func (s *sequenceArray[T]) BinarySize() uint64 {
 	return uint64(headerSize) + 2*uint64(unsafe.Sizeof(s.base))
 }
 
+func (s *sequenceArray[T]) MarshalBinary() ([]byte, error) { return marshalBinary(s) }
+
 func (s *sequenceArray[T]) ValueAt(offset uint64) T {
 	if offset >= s.Length() {
 		panic(errOffsetOutOfRange)

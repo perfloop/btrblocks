@@ -17,6 +17,14 @@ func TestCompressionFacade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SignedArray: %v", err)
 	}
+	data, err := encoded.MarshalBinary()
+	if err != nil {
+		t.Fatalf("MarshalBinary: %v", err)
+	}
+	encoded, err = btrblocks.LoadSigned[int64](data)
+	if err != nil {
+		t.Fatalf("LoadSigned: %v", err)
+	}
 	got, err := btrblocks.Decompress(encoded)
 	if err != nil {
 		t.Fatalf("Decompress: %v", err)

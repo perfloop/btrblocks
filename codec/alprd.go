@@ -202,6 +202,8 @@ func (a *alprdArray[T, J]) BinarySize() uint64 {
 	return size
 }
 
+func (a *alprdArray[T, J]) MarshalBinary() ([]byte, error) { return marshalBinary(a) }
+
 func (a *alprdArray[T, J]) decode(offset uint64) T {
 	code := unpackUnsigned(a.leftParts, offset*uint64(a.leftBitWidth), uint(a.leftBitWidth))
 	left := uint64(a.dict[code])

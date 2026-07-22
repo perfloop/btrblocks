@@ -29,6 +29,8 @@ func (f *forArray[T]) BinarySize() uint64 {
 	return uint64(headerSize) + uint64(unsafe.Sizeof(f.min)) + f.child.BinarySize()
 }
 
+func (f *forArray[T]) MarshalBinary() ([]byte, error) { return marshalBinary(f) }
+
 func (f *forArray[T]) ValueAt(offset uint64) T {
 	return f.child.ValueAt(offset) + f.min
 }

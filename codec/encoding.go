@@ -1,6 +1,7 @@
 package codec
 
 import (
+	"encoding"
 	"errors"
 	"fmt"
 	"io"
@@ -187,10 +188,58 @@ type encodedNode struct{}
 
 func (encodedNode) sealedEncodedArray() {}
 
+type binaryWritable interface {
+	io.WriterTo
+	BinarySize() uint64
+}
+
+// fixedWriter serializes into one allocation sized from BinarySize. It never
+// grows: a writer that emits more than it declared fails with io.ErrShortWrite
+// instead of turning an incorrect size into a second, unbounded allocation.
+type fixedWriter struct {
+	buf []byte
+	off int
+}
+
+func (w *fixedWriter) Write(p []byte) (int, error) {
+	n := copy(w.buf[w.off:], p)
+	w.off += n
+	if n != len(p) {
+		return n, io.ErrShortWrite
+	}
+	return n, nil
+}
+
+func marshalBinary(encoded binaryWritable) ([]byte, error) {
+	size := encoded.BinarySize()
+	if size > uint64(^uint(0)>>1) {
+		return nil, fmt.Errorf("codec: marshal binary size %d overflows int", size)
+	}
+
+	data := make([]byte, int(size))
+	w := fixedWriter{buf: data}
+	n, err := encoded.WriteTo(&w)
+	if err != nil {
+		return nil, fmt.Errorf("codec: marshal binary: %w", err)
+	}
+	if n != int64(size) {
+		return nil, fmt.Errorf("codec: marshal binary wrote %d bytes, want %d", n, size)
+	}
+	if w.off != len(data) {
+		return nil, fmt.Errorf("codec: marshal binary buffered %d bytes, want %d", w.off, size)
+	}
+	return data, nil
+}
+
 // EncodedArray is a typed node in the primitive/string compression tree.
 // Implementations live in this package: the interface is sealed, so it is safe
 // to type-switch on it and safe for it to grow.
 type EncodedArray[T Integer | Float | String] interface {
+	// MarshalBinary returns a newly allocated complete wire-format encoding.
+	// It serializes the codec tree without decompressing it and does not retain
+	// the returned bytes. For large outputs, prefer WriteTo to avoid allocating
+	// BinarySize bytes contiguously.
+	encoding.BinaryMarshaler
 	io.WriterTo
 	sealedEncodedArray()
 	CodecType() CodecType
