@@ -7,9 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestStringStatsFrequencyRetentionCap checks only the retained-frequency
-// state at the exact cap boundary. Unlike the half-cardinality cutoff, cap
-// overflow is conservative and does not establish planner eligibility itself.
+// TestStringStatsFrequencyRetentionCap checks retained-frequency and other
+// full-row state at the exact cap boundary. Unlike the half-cardinality cutoff,
+// cap overflow is conservative and does not establish planner eligibility itself.
 func TestStringStatsFrequencyRetentionCap(t *testing.T) {
 	// Keep n/2 above the cap so the cases exercise the retention policy alone.
 	const rows = 3 * maxRetainedStringDistinctValues
@@ -25,9 +25,13 @@ func TestStringStatsFrequencyRetentionCap(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			stats := computeStringStatsForPlanner(mustStrings(t, stringStatsCapValues(rows, tc.distinct)), true)
+			values := stringStatsCapValues(rows, tc.distinct)
+			stats := computeStringStatsForPlanner(mustStrings(t, values), true)
 			require.Equal(t, tc.wantDistinctCount, stats.estimatedDistinctCount)
 			require.Equal(t, tc.wantMostFrequent, stats.MostFrequentCount())
+			require.False(t, stats.isConst)
+			require.Equal(t, uint64(rows*len(values[0])), stats.totalBytes)
+			require.Equal(t, 1.0, stats.avgRunLength)
 		})
 	}
 }
