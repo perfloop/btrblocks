@@ -37,6 +37,83 @@ func mustWriteEncodedArray(t testing.TB, encoded io.WriterTo) []byte {
 	return buf.Bytes()
 }
 
+// nonProviderUint64Array deliberately exposes only array.Array. It models callers
+// whose validity is available only through IsValid rather than the optional
+// whole-bitmap provider interface used by array.ValidityBitmap.
+type nonProviderUint64Array struct {
+	array.Array[uint64]
+}
+
+type mismatchedNullCountUint64Array struct {
+	array.Array[uint64]
+	nullCount uint64
+}
+
+func (a *mismatchedNullCountUint64Array) NullCount() uint64 { return a.nullCount }
+
+func TestNullableNonProviderRoundTrip(t *testing.T) {
+	const length = 4096
+	values := make([]uint64, length)
+	nulls := make([]bool, length)
+	for i := range values {
+		values[i] = uint64(i + 1000)
+		nulls[i] = true
+	}
+	for _, i := range []int{5, 101, 2048, 4000} {
+		nulls[i] = false
+	}
+	validity, err := array.ValidityFromNulls(length, nulls)
+	if err != nil {
+		t.Fatalf("ValidityFromNulls: %v", err)
+	}
+	base, err := array.NewPrimitivesWithValidityUnsafe(values, validity)
+	if err != nil {
+		t.Fatalf("NewPrimitivesWithValidityUnsafe: %v", err)
+	}
+	source := &nonProviderUint64Array{Array: base}
+	if _, ok := any(source).(interface{ Validity() array.Validity }); ok {
+		t.Fatal("non-provider wrapper unexpectedly exposes Validity")
+	}
+
+	encoded, err := UnsignedArray(source, Options{})
+	if err != nil {
+		t.Fatalf("UnsignedArray: %v", err)
+	}
+	nullable, ok := codec.AsNullable(encoded)
+	if !ok {
+		t.Fatalf("encoded type = %T, want nullable", encoded)
+	}
+	if got := nullable.Values().CodecType(); got != codec.CodecTypeSparse {
+		t.Fatalf("values codec.CodecType = %v, want %v", got, codec.CodecTypeSparse)
+	}
+
+	loaded, err := codec.LoadUnsigned[uint64](mustWriteEncodedArray(t, encoded))
+	if err != nil {
+		t.Fatalf("LoadUnsigned: %v", err)
+	}
+	if got, want := loaded.NullCount(), source.NullCount(); got != want {
+		t.Fatalf("loaded NullCount = %d, want %d", got, want)
+	}
+	for i := range source.Length() {
+		if got, want := loaded.IsValid(i), source.IsValid(i); got != want {
+			t.Fatalf("loaded IsValid(%d) = %t, want %t", i, got, want)
+		}
+		if loaded.IsValid(i) && loaded.ValueAt(i) != source.ValueAt(i) {
+			t.Fatalf("loaded ValueAt(%d) = %d, want %d", i, loaded.ValueAt(i), source.ValueAt(i))
+		}
+	}
+}
+
+func TestNullableRejectsMismatchedNonProviderNullCount(t *testing.T) {
+	source := &mismatchedNullCountUint64Array{
+		Array:     array.NewPrimitivesUnsafe([]uint64{10, 20, 30, 40}),
+		nullCount: 1,
+	}
+	if _, err := UnsignedArray(source, Options{}); err == nil || !strings.Contains(err.Error(), "metadata says") {
+		t.Fatalf("UnsignedArray error = %v, want validity metadata mismatch", err)
+	}
+}
+
 func TestNullableRawFallbackPreservesValidity(t *testing.T) {
 	validity, err := array.ValidityFromNulls(3, []bool{false, true, false})
 	if err != nil {
