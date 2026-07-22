@@ -46,14 +46,13 @@ func computeStringStatsForPlanner(arr array.Array[string], collectFrequencies bo
 				distinct[v] = count
 				mostFrequent = max(mostFrequent, count)
 			} else if len(distinct) >= maxRetainedStringDistinctValues {
-				// The fixed cap is only a conservative retained-frequency limit; it
-				// establishes neither planner result. Keep full-row stats scanning.
+				// The fixed cap is a conservative retained-frequency limit, not evidence
+				// that either planner is ineligible. Keep scanning full-row statistics.
 				distinct = nil
 				distinctOverflow = true
 			} else if uint64(len(distinct)) >= n/2 {
-				// At the n/2 cutoff, a new key makes Dict ineligible and prevents any
-				// value from meeting Sparse's dominance threshold. Keep full-row stats
-				// scanning after recording the overflow sentinel.
+				// A new key after floor(n/2) retained keys makes Dict ineligible and leaves
+				// at most ceil(n/2) occurrences for any key, below Sparse's 90% threshold.
 				distinct = nil
 				distinctOverflow = true
 			} else {
