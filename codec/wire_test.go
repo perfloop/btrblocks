@@ -956,62 +956,124 @@ func TestLoadRejectsNestedDictOverOversizedValues(t *testing.T) {
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(16<<20), "rejected, but only after materializing the nest")
 }
 
-// TestLoadRejectsRunEndOversizedEndsChild bounds a child's declared length
-// against the node's own row count before the child is scanned. Ends are
-// strictly increasing and each lies in (0, length), so a 2-row node can hold at
-// most one end; an ends child declaring 8M of them is refutable from the two
-// headers alone, but discovering it by decoding cost a full 64 MiB from ~100
-// bytes on the wire.
-func TestLoadRejectsRunEndOversizedEndsChild(t *testing.T) {
-	const ends = 8 << 20
-	stream := codecNode(t, codecHeader{
-		Version:  versionNumber,
-		Type:     CodecTypeRunEnd,
-		ElemType: PTypeUint64,
-		Length:   2,
-	},
-		sequenceNode[uint64](t, ends+1, 0, 1),
-		sequenceNode[uint64](t, ends, 1, 1),
-	)
-	require.Less(t, len(stream), 200)
-
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	err := assertRejectsWithin(t, func() error {
-		_, err := LoadUnsigned[uint64](stream)
-		return err
-	})
-	runtime.ReadMemStats(&after)
-	require.ErrorContains(t, err, "runend ends length")
-	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(16<<20), "rejected, but only after decoding the ends child")
+// TestLoadRejectsOversizedOrdinalChild verifies that a run-end or sparse node
+// whose ordinal/index child declares more elements than the node's row count
+// AND its index type could ever hold is rejected from the two headers alone,
+// before the child subtree is decoded. A strictly increasing child of type I
+// within [0, length) has at most min(length, maxValue(I)+1) elements; the type
+// term is the load-bearing half, since a uint8 child holds at most 256 values
+// no matter how large the declared parent length is.
+func TestLoadRejectsOversizedOrdinalChild(t *testing.T) {
+	const big = 8 << 20
+	cases := []struct {
+		name    string
+		stream  []byte
+		wantErr string
+	}{
+		{
+			// Child longer than the parent's row count.
+			name: "runend child exceeds parent",
+			stream: codecNode(t, codecHeader{Version: versionNumber, Type: CodecTypeRunEnd, ElemType: PTypeUint64, Length: 2},
+				sequenceNode[uint64](t, big+1, 0, 1),
+				sequenceNode[uint64](t, big, 1, 1)),
+			wantErr: "runend ordinal count",
+		},
+		{
+			// Narrow ordinal type over a large parent: 8M uint8 ends declared for a
+			// 1<<26-row node. 8M < 1<<26, so a parent-only bound would pass, but a
+			// uint8 sequence in (0, length) holds at most 255 values. This is the
+			// case the earlier parent-relative guard let through at a full decode.
+			name: "runend narrow ordinal type",
+			stream: codecNode(t, codecHeader{Version: versionNumber, Type: CodecTypeRunEnd, ElemType: PTypeUint64, Length: 1 << 26},
+				sequenceNode[uint64](t, big+1, 0, 1),
+				sequenceNode[uint8](t, big, 1, 1)),
+			wantErr: "runend ordinal count",
+		},
+		{
+			name: "sparse child exceeds parent",
+			stream: codecNode(t, codecHeader{Version: versionNumber, Type: CodecTypeSparse, ElemType: PTypeUint64, Length: 1},
+				sequenceNode[uint64](t, 1, 7, 0),
+				sequenceNode[uint64](t, big, 0, 1),
+				sequenceNode[uint64](t, big, 0, 1)),
+			wantErr: "sparse index count",
+		},
+		{
+			name: "sparse narrow index type",
+			stream: codecNode(t, codecHeader{Version: versionNumber, Type: CodecTypeSparse, ElemType: PTypeUint64, Length: 1 << 26},
+				sequenceNode[uint64](t, 1, 7, 0),
+				sequenceNode[uint8](t, big, 0, 1),
+				sequenceNode[uint64](t, big, 0, 1)),
+			wantErr: "sparse index count",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Less(t, len(tc.stream), 300)
+			// Rejection is a header-only check, so it must not decode the child.
+			// Measure synchronously — no worker goroutine whose late allocation
+			// could misattribute to another test under -shuffle — and assert the
+			// allocation ceiling BEFORE the message: if the bound ever regresses to
+			// a post-scan check, this fails first, naming the 64 MiB regression
+			// instead of a string mismatch.
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			_, err := LoadUnsigned[uint64](tc.stream)
+			runtime.ReadMemStats(&after)
+			require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(1<<20), "rejected only after decoding the child")
+			require.ErrorContains(t, err, tc.wantErr)
+		})
+	}
 }
 
-// TestLoadRejectsSparseOversizedIndexChild is the same bound on the sparse
-// node: indices are strictly increasing and each is < length, so a 1-row node
-// can hold at most one index.
-func TestLoadRejectsSparseOversizedIndexChild(t *testing.T) {
-	const indices = 8 << 20
-	stream := codecNode(t, codecHeader{
-		Version:  versionNumber,
-		Type:     CodecTypeSparse,
-		ElemType: PTypeUint64,
-		Length:   1,
-	},
-		sequenceNode[uint64](t, 1, 7, 0),
-		sequenceNode[uint64](t, indices, 0, 1),
-		sequenceNode[uint64](t, indices, 0, 1),
-	)
-	require.Less(t, len(stream), 200)
-
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	err := assertRejectsWithin(t, func() error {
-		_, err := LoadUnsigned[uint64](stream)
-		return err
+// TestLoadAcceptsBoundaryOrdinalChild pins the other side of the bound: a child
+// exactly at the maximum count a valid stream can produce must load. This is
+// what keeps the header bound from over-rejecting real encoder output, and it
+// guards the operator (`>`, not `>=`) — tightening either check by one would
+// fail here.
+func TestLoadAcceptsBoundaryOrdinalChild(t *testing.T) {
+	t.Run("runend max runs", func(t *testing.T) {
+		// Every value distinct → every row starts a run → ends.Length() == n-1,
+		// the largest an n-row run-end node can hold, with the ends exactly filling
+		// the uint8 range (1..255).
+		const n = 256
+		values := make([]uint32, n)
+		for i := range values {
+			values[i] = uint32(i)
+		}
+		encoded, err := buildPrimitiveRunEndTest(array.NewPrimitivesUnsafe(values), array.CmpIntegers[uint32])
+		require.NoError(t, err)
+		require.Equal(t, CodecTypeRunEnd, encoded.CodecType())
+		loaded, err := LoadUnsigned[uint32](mustWriteEncodedArray(t, encoded))
+		require.NoError(t, err)
+		decoded, err := Decompress(loaded)
+		require.NoError(t, err)
+		require.Equal(t, values, decoded)
 	})
-	runtime.ReadMemStats(&after)
-	require.ErrorContains(t, err, "sparse indices length")
-	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(16<<20), "rejected, but only after decoding the index child")
+
+	t.Run("sparse all exceptions", func(t *testing.T) {
+		// A fill value present in no row makes every row an exception, so
+		// indices.Length() == length — the boundary the sparse bound permits with
+		// `>`. Built directly because the value-based encoder never selects a fill
+		// that appears zero times.
+		const n = 256
+		idx := make([]uint8, n)
+		vals := make([]uint32, n)
+		for i := range idx {
+			idx[i] = uint8(i)
+			vals[i] = uint32(i) + 1000
+		}
+		encoded := &sparseArray[uint32, uint8]{
+			denseRows: n,
+			fill:      newRawArray(array.NewPrimitivesUnsafe([]uint32{7})),
+			indices:   newRawArray(array.NewPrimitivesUnsafe(idx)),
+			values:    newRawArray(array.NewPrimitivesUnsafe(vals)),
+		}
+		loaded, err := LoadUnsigned[uint32](mustWriteEncodedArray(t, encoded))
+		require.NoError(t, err)
+		decoded, err := Decompress(loaded)
+		require.NoError(t, err)
+		require.Equal(t, vals, decoded)
+	})
 }
 
 func TestLoadRejectsNullableWithDeltaSequenceValidity(t *testing.T) {

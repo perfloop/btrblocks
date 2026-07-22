@@ -24,16 +24,12 @@ func validateRunEndChildren[V Integer | Float | String, I UnsignedInteger](lengt
 	if ends.Length() == 0 {
 		return nil
 	}
-	// Ends are strictly increasing and each lies in (0, length), so there can be
-	// at most length-1 of them. Bound the child against this node's own row count
-	// before scanning: otherwise a header declaring a huge ends child buys a full
-	// decode from a handful of bytes.
-	if ends.Length() >= length {
-		return fmt.Errorf("codec: runend ends length = %d, want < %d", ends.Length(), length)
-	}
 	decoded, err := scanChild(ends, opts)
 	if err != nil {
 		return fmt.Errorf("codec: runend end scan: %w", err)
+	}
+	if uint64(len(decoded)) != ends.Length() {
+		return fmt.Errorf("codec: runend end scan has %d values, want %d", len(decoded), ends.Length())
 	}
 	// Validate ALL ends are strictly increasing and in range (0, length).
 	prev := uint64(0)
@@ -185,6 +181,16 @@ func readRunEndArray[V Integer | Float | String](br *array.BufReader, h codecHea
 }
 
 func readRunEndOrdinals[V Integer | Float | String, I UnsignedInteger](br *array.BufReader, h codecHeader, childHeader codecHeader, opts *readOptions, runs EncodedArray[V], slice sliceBuilder[V]) (EncodedArray[V], error) {
+	// Ends are strictly increasing and lie in (0, h.Length), so a valid stream
+	// declares at most min(h.Length-1, maxValue(I)) of them — a bound the two
+	// headers give before the ends subtree is decoded. readRunEndArray already
+	// rejected h.Length == 0, so h.Length-1 does not underflow. The maxValue(I)
+	// term is the load-bearing half: a uint8 ends child holds at most 255
+	// strictly increasing values regardless of the declared parent length, so
+	// this rejects a narrow-typed child that would otherwise buy a full decode.
+	if maxEnds := min(h.Length-1, uint64(^I(0))); childHeader.Length > maxEnds {
+		return nil, fmt.Errorf("codec: runend ordinal count %d exceeds limit %d", childHeader.Length, maxEnds)
+	}
 	ends, err := readUnsignedEncodedArrayWithHeader[I](br, childHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: reading runend ends: %w", err)

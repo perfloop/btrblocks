@@ -189,6 +189,21 @@ func readSparseArray[V Integer | Float | String](br *array.BufReader, h codecHea
 }
 
 func readSparseChildren[V Integer | Float | String, I UnsignedInteger](br *array.BufReader, h, indexHeader codecHeader, opts *readOptions, fill EncodedArray[V], readValues encodedReader[V], slice sliceBuilder[V]) (EncodedArray[V], error) {
+	// Indices are strictly increasing and lie in [0, h.Length), so a valid
+	// stream declares at most min(h.Length, maxValue(I)+1) of them — known from
+	// the two headers before the index subtree is decoded. maxValue(uint64)+1
+	// would overflow, but a uint64 index type can never be the binding term (its
+	// range dwarfs any h.Length), so the +1 is applied only for narrow types,
+	// where it cannot overflow. A uint8 index child holds at most 256 values
+	// regardless of the declared parent length, so this rejects a narrow-typed
+	// child that would otherwise buy a full decode.
+	maxIndices := h.Length
+	if typeMax := uint64(^I(0)); typeMax < h.Length {
+		maxIndices = typeMax + 1
+	}
+	if indexHeader.Length > maxIndices {
+		return nil, fmt.Errorf("codec: sparse index count %d exceeds limit %d", indexHeader.Length, maxIndices)
+	}
 	indices, err := readUnsignedEncodedArrayWithHeader[I](br, indexHeader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("codec: sparse indices: %w", err)
@@ -217,16 +232,12 @@ func (s *sparseArray[V, I]) validate(length uint64, opts *readOptions) error {
 	if s.fill.Length() != 1 || s.Length() != length {
 		return fmt.Errorf("codec: sparse length = %d, want %d", s.Length(), length)
 	}
-	// Indices are strictly increasing and each is < length, so there can be at
-	// most length of them. Bound the child against this node's own row count
-	// before scanning: otherwise a header declaring a huge index child buys a
-	// full decode from a handful of bytes.
-	if s.indices.Length() > length {
-		return fmt.Errorf("codec: sparse indices length = %d, want <= %d", s.indices.Length(), length)
-	}
 	decoded, err := scanChild(s.indices, opts)
 	if err != nil {
 		return fmt.Errorf("codec: sparse index scan: %w", err)
+	}
+	if uint64(len(decoded)) != s.indices.Length() {
+		return fmt.Errorf("codec: sparse index scan has %d values, want %d", len(decoded), s.indices.Length())
 	}
 	var previous uint64
 	for i, rawIndex := range decoded {
