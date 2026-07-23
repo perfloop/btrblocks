@@ -20,6 +20,7 @@ func computeStringStatsForPlanner(arr array.Array[string], collectFrequencies bo
 	if n == 0 {
 		return stringStats{baseStats: baseStats[string]{src: arr}}
 	}
+	frequencyCutoff := n/2 + n%2
 
 	var distinct map[string]uint64
 	if collectFrequencies {
@@ -45,9 +46,9 @@ func computeStringStatsForPlanner(arr array.Array[string], collectFrequencies bo
 				count++
 				distinct[v] = count
 				mostFrequent = max(mostFrequent, count)
-			} else if uint64(len(distinct)) >= n/2 {
-				// A new key after floor(n/2) retained keys makes Dict ineligible and leaves
-				// at most ceil(n/2) occurrences for any key, below Sparse's 90% threshold.
+			} else if uint64(len(distinct)) >= frequencyCutoff {
+				// A new key after ceil(n/2) retained keys makes Dict ineligible and leaves
+				// at most floor(n/2) occurrences for any key, below Sparse's 90% threshold.
 				distinct = nil
 				distinctOverflow = true
 			} else {

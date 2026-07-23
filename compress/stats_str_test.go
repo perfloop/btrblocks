@@ -5,6 +5,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/axiomhq/btrblocks/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,7 +18,7 @@ func TestComputeStringStatsDistinguishesCommonPrefixes(t *testing.T) {
 
 func TestStringStatsFrequencyOddHalfCutoff(t *testing.T) {
 	const rows = 4095
-	const prefixDistinct = rows/2 + 1
+	const prefixDistinct = rows/2 + rows%2
 
 	values := make([]string, rows)
 	values[0] = "dominant"
@@ -29,14 +30,18 @@ func TestStringStatsFrequencyOddHalfCutoff(t *testing.T) {
 	}
 
 	stats := computeStringStatsForPlanner(mustStrings(t, values), true)
-	require.Equal(t, uint64(rows), stats.estimatedDistinctCount)
-	require.Zero(t, stats.MostFrequentCount())
+	require.Equal(t, uint64(prefixDistinct), stats.estimatedDistinctCount)
+	require.Equal(t, uint64(prefixDistinct), stats.MostFrequentCount())
 	require.False(t, countDominates(uint64(rows), uint64(prefixDistinct)))
 
 	ctx := newPlanContext(Options{})
 	require.Equal(t, estimateSkip, estimateStringDict(stats, ctx, stats.estimatedDistinctCount).kind)
 	require.True(t, stringCanSample(stats.Source(), ctx))
 	require.Equal(t, estimateSkip, estimateSparseGeneric(stats, ctx, true).kind)
+
+	encoded, err := StringArray(mustStrings(t, values), Options{})
+	require.NoError(t, err)
+	require.Equal(t, codec.CodecTypeRaw, encoded.CodecType())
 }
 
 // TestStringStatsComputesBaseStats verifies that computeStringStatsForPlanner
