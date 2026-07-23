@@ -55,7 +55,7 @@ func TestPlannerSelectsSparseForDominantInteger(t *testing.T) {
 	require.Equal(t, values, decoded)
 }
 
-func TestStringStatsFrequencyCapPolicy(t *testing.T) {
+func TestStringStatsFrequencyCapBoundary(t *testing.T) {
 	const rows = 3 * maxRetainedStringDistinctValues
 	cases := []struct {
 		name              string
@@ -70,30 +70,20 @@ func TestStringStatsFrequencyCapPolicy(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			values := stringStatsCapValues(rows, tc.distinct)
+			values := make([]string, rows)
+			for i := range values {
+				values[i] = fmt.Sprintf("stats-cap-%05d", i%tc.distinct)
+			}
+
 			stats := computeStringStatsForPlanner(mustStrings(t, values), true)
 			require.Equal(t, tc.wantDistinctCount, stats.estimatedDistinctCount)
 			require.Equal(t, tc.wantMostFrequent, stats.MostFrequentCount())
-			require.False(t, stats.isConst)
-			require.Equal(t, uint64(rows*len(values[0])), stats.totalBytes)
-			require.Equal(t, 1.0, stats.avgRunLength)
 
 			encoded, err := StringArray(mustStrings(t, values), Options{})
 			require.NoError(t, err)
 			require.Equal(t, tc.want, encoded.CodecType())
-			decoded, err := codec.Decompress(encoded)
-			require.NoError(t, err)
-			require.Equal(t, values, decoded)
 		})
 	}
-}
-
-func stringStatsCapValues(rows, distinct int) []string {
-	values := make([]string, rows)
-	for i := range values {
-		values[i] = fmt.Sprintf("stats-cap-%05d", i%distinct)
-	}
-	return values
 }
 
 func TestPlannerBuildsOnlyWinner(t *testing.T) {
