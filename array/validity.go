@@ -206,21 +206,15 @@ func (v Validity) Slice(start, end uint64) (Validity, error) {
 	}
 
 	firstValid := v.IsValid(start)
-	nullCount := uint64(0)
-	if !firstValid {
-		nullCount++
-	}
 	for i := uint64(1); i < length; i++ {
-		valid := v.IsValid(start + i)
-		if valid == firstValid {
-			if !valid {
-				nullCount++
-			}
+		if v.IsValid(start+i) == firstValid {
 			continue
 		}
 
 		bitmap := make([]byte, validityByteLength(length))
+		nullCount := i
 		if firstValid {
+			nullCount = 1
 			fullBytes := i / 8
 			for j := range fullBytes {
 				bitmap[j] = 0xff
@@ -228,11 +222,8 @@ func (v Validity) Slice(start, end uint64) (Validity, error) {
 			if remainder := i & 7; remainder != 0 {
 				bitmap[fullBytes] = byte((1 << remainder) - 1)
 			}
-		}
-		if valid {
-			bitmap[i>>3] |= byte(1 << (i & 7))
 		} else {
-			nullCount++
+			bitmap[i>>3] |= byte(1 << (i & 7))
 		}
 		for i++; i < length; i++ {
 			if v.IsValid(start + i) {
