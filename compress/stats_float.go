@@ -26,45 +26,52 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 	if n == 0 {
 		return floatStats[T]{baseStats: baseStats[T]{src: arr}}
 	}
-	// Avoid reserving a full page-sized dictionary for small metadata arrays.
-	var distinct map[uint64]uint64
-	if collectFrequencies {
-		distinct = make(map[uint64]uint64, distinctInitialCapacity(n))
-	}
-	var distinctBits [256]uint64
+
 	runs := uint64(1)
 	prev := arr.ValueAt(0)
-	if collectFrequencies {
-		distinct[array.FloatBits(prev)] = 1
-	}
-	mostFrequent := uint64(1)
-
-	for i := range n {
-		v := arr.ValueAt(i)
-		if collectFrequencies {
-			hash := mixFloatBits(array.FloatBits(v))
-			bucket := hash & (floatDistinctSketchBuckets - 1)
-			distinctBits[bucket/64] |= uint64(1) << (bucket & 63)
-		}
-		if i == 0 {
-			continue
-		}
-		if distinct != nil {
-			key := array.FloatBits(v)
-			if count, exists := distinct[key]; exists {
-				count++
-				distinct[key] = count
-				mostFrequent = max(mostFrequent, count)
-			} else {
-				if len(distinct) >= maxRetainedDistinctValues || uint64(len(distinct)) >= n/2 {
-					// Stop paying hash-table costs during generic stats collection.
-					// The planner samples larger dictionaries and rebuilds the exact
-					// map only when dictionary encoding wins.
-					distinct = nil
-				} else {
-					distinct[key] = 1
-				}
+	if !collectFrequencies {
+		for i := uint64(1); i < n; i++ {
+			v := arr.ValueAt(i)
+			if !array.CmpFloatBits(v, prev) {
+				runs++
+				prev = v
 			}
+		}
+		return floatStats[T]{
+			baseStats: baseStats[T]{
+				src:           arr,
+				isConst:       runs == 1,
+				distinctCount: n,
+				avgRunLength:  float64(n) / float64(runs),
+			},
+			distinctEstimate: n,
+		}
+	}
+
+	// Avoid reserving a full page-sized dictionary for small metadata arrays.
+	distinct := make(map[uint64]uint64, distinctInitialCapacity(n))
+	distinct[array.FloatBits(prev)] = 1
+	mostFrequent := uint64(1)
+	for i := uint64(1); i < n; i++ {
+		v := arr.ValueAt(i)
+		key := array.FloatBits(v)
+		if count, exists := distinct[key]; exists {
+			count++
+			distinct[key] = count
+			mostFrequent = max(mostFrequent, count)
+		} else if len(distinct) >= maxRetainedDistinctValues || uint64(len(distinct)) >= n/2 {
+			dc, runs := collectFloatStatsOverflow(arr, i, prev, runs, distinct)
+			return floatStats[T]{
+				baseStats: baseStats[T]{
+					src:           arr,
+					isConst:       runs == 1,
+					distinctCount: dc,
+					avgRunLength:  float64(n) / float64(runs),
+				},
+				distinctEstimate: dc,
+			}
+		} else {
+			distinct[key] = 1
 		}
 		if !array.CmpFloatBits(v, prev) {
 			runs++
@@ -72,17 +79,7 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 		}
 	}
 
-	// When distinct is nil, cardinality exceeded the retained-map budget. Report
-	// n so analytical users reject it; dictionary planning follows the nil map
-	// into the bounded sample estimator instead.
 	dc := uint64(len(distinct))
-	if !collectFrequencies {
-		dc = n
-		mostFrequent = 0
-	} else if distinct == nil {
-		dc = estimateFloatDistinct(distinctBits, n)
-		mostFrequent = 0
-	}
 	return floatStats[T]{
 		baseStats: baseStats[T]{
 			src:           arr,
@@ -94,6 +91,29 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 		distinct:         distinct,
 		distinctEstimate: dc,
 	}
+}
+
+// collectFloatStatsOverflow seeds the sketch from the retained exact keys,
+// then scans the triggering value and remaining suffix without map-mode work.
+func collectFloatStatsOverflow[T array.Float](arr array.Array[T], start uint64, prev T, runs uint64, distinct map[uint64]uint64) (uint64, uint64) {
+	n := arr.Length()
+	var distinctBits [256]uint64
+	for key := range distinct {
+		hash := mixFloatBits(key)
+		bucket := hash & (floatDistinctSketchBuckets - 1)
+		distinctBits[bucket/64] |= uint64(1) << (bucket & 63)
+	}
+	for i := start; i < n; i++ {
+		v := arr.ValueAt(i)
+		hash := mixFloatBits(array.FloatBits(v))
+		bucket := hash & (floatDistinctSketchBuckets - 1)
+		distinctBits[bucket/64] |= uint64(1) << (bucket & 63)
+		if !array.CmpFloatBits(v, prev) {
+			runs++
+			prev = v
+		}
+	}
+	return estimateFloatDistinct(distinctBits, n), runs
 }
 
 func mixFloatBits(value uint64) uint64 {
