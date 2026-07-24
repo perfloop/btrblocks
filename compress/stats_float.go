@@ -62,7 +62,7 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 			count++
 			distinct[key] = count
 			mostFrequent = max(mostFrequent, count)
-		} else if len(distinct) >= maxRetainedDistinctValues || uint64(len(distinct)) >= n/2 {
+		} else if len(distinct) >= maxRetainedDistinctValues {
 			dc, runs := collectFloatStatsOverflow(arr, i, prev, runs, distinct)
 			return floatStats[T]{
 				baseStats: baseStats[T]{
