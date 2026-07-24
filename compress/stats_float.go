@@ -67,7 +67,7 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 					count++
 					distinct[key] = count
 					mostFrequent = max(mostFrequent, count)
-				} else if len(distinct) >= maxRetainedDistinctValues || uint64(len(distinct)) >= n/2 {
+				} else if uint64(len(distinct)) >= n/2 {
 					distinct = nil
 				} else {
 					distinct[key] = 1
