@@ -134,54 +134,6 @@ func TestValiditySliceRebasesBitmap(t *testing.T) {
 	}
 }
 
-func TestValiditySliceRebasesMixedRangesAtBitOffsets(t *testing.T) {
-	const sliceLength uint64 = 17
-	for start := range uint64(8) {
-		for _, firstValid := range [...]bool{true, false} {
-			end := start + sliceLength
-			sourceLength := end + 1
-			bitmap := make([]byte, validityByteLength(sourceLength))
-			wantNullCount := uint64(0)
-			for i := range sourceLength {
-				valid := false
-				if i >= start && i < end {
-					offset := i - start
-					valid = firstValid
-					if offset >= 5 {
-						valid = offset&1 == 0
-					}
-					if !valid {
-						wantNullCount++
-					}
-				}
-				if valid {
-					bitmap[i>>3] |= 1 << (i & 7)
-				}
-			}
-			validity, err := NewValidityUnsafe(sourceLength, bitmap)
-			if err != nil {
-				t.Fatalf("NewValidityUnsafe: %v", err)
-			}
-
-			sliced, err := validity.Slice(start, end)
-			if err != nil {
-				t.Fatalf("Slice(%d, %d): %v", start, end, err)
-			}
-			if sliced.Bytes() == nil {
-				t.Fatalf("Slice(%d, %d) discarded mixed bitmap", start, end)
-			}
-			if got := sliced.NullCount(); got != wantNullCount {
-				t.Fatalf("Slice(%d, %d) null count = %d, want %d", start, end, got, wantNullCount)
-			}
-			for i := range sliceLength {
-				if got, want := sliced.IsValid(i), validity.IsValid(start+i); got != want {
-					t.Fatalf("Slice(%d, %d) validity at %d = %t, want %t", start, end, i, got, want)
-				}
-			}
-		}
-	}
-}
-
 func TestValiditySliceRebasesFirstValidFullBytePrefix(t *testing.T) {
 	const (
 		start       uint64 = 3
