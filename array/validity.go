@@ -190,7 +190,7 @@ func (v Validity) IsValid(i uint64) bool {
 }
 
 // Slice returns validity for [start, end), materializing a rebased bitmap
-// during the null-count scan.
+// only when the range contains both valid and null rows.
 func (v Validity) Slice(start, end uint64) (Validity, error) {
 	if err := ValidateSliceBounds(v.length, start, end); err != nil {
 		return Validity{}, err
@@ -202,26 +202,44 @@ func (v Validity) Slice(start, end uint64) (Validity, error) {
 	if v.nullCount == v.length {
 		return AllNull(length), nil
 	}
-	bitmap := make([]byte, validityByteLength(length))
-	nullCount := uint64(0)
-	for i := range length {
-		if v.IsValid(start + i) {
-			bitmap[i>>3] |= byte(1 << (i & 7))
-		} else {
-			nullCount++
+
+	firstValid := v.IsValid(start)
+	for i := uint64(1); i < length; i++ {
+		if v.IsValid(start+i) == firstValid {
+			continue
 		}
+
+		bitmap := make([]byte, validityByteLength(length))
+		nullCount := i
+		if firstValid {
+			nullCount = 1
+			fullBytes := i / 8
+			for j := range fullBytes {
+				bitmap[j] = 0xff
+			}
+			if remainder := i & 7; remainder != 0 {
+				bitmap[fullBytes] = byte((1 << remainder) - 1)
+			}
+		} else {
+			bitmap[i>>3] |= byte(1 << (i & 7))
+		}
+		for i++; i < length; i++ {
+			if v.IsValid(start + i) {
+				bitmap[i>>3] |= byte(1 << (i & 7))
+			} else {
+				nullCount++
+			}
+		}
+		return Validity{
+			bits:      bitmap,
+			length:    length,
+			nullCount: nullCount,
+		}, nil
 	}
-	switch nullCount {
-	case 0:
+	if firstValid {
 		return AllValid(length), nil
-	case length:
-		return AllNull(length), nil
 	}
-	return Validity{
-		bits:      bitmap,
-		length:    length,
-		nullCount: nullCount,
-	}, nil
+	return AllNull(length), nil
 }
 
 func validityByteLength(length uint64) uint64 {
