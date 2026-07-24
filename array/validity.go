@@ -215,12 +215,8 @@ func (v Validity) Slice(start, end uint64) (Validity, error) {
 		nullCount := i
 		if firstValid {
 			nullCount = 1
-			fullBytes := i / 8
-			for j := range fullBytes {
-				bitmap[j] = 0xff
-			}
-			if remainder := i & 7; remainder != 0 {
-				bitmap[fullBytes] = byte((1 << remainder) - 1)
+			for j := range i {
+				bitmap[j>>3] |= byte(1 << (j & 7))
 			}
 		} else {
 			bitmap[i>>3] |= byte(1 << (i & 7))
