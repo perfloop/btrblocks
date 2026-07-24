@@ -137,7 +137,7 @@ func TestValiditySliceRebasesBitmap(t *testing.T) {
 func TestValiditySliceRebasesFirstValidFullBytePrefix(t *testing.T) {
 	const (
 		start       uint64 = 3
-		sliceLength uint64 = 25
+		sliceLength uint64 = 19
 	)
 	for _, transition := range [...]uint64{8, 9, 16} {
 		end := start + sliceLength
