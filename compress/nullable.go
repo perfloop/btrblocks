@@ -44,16 +44,14 @@ func checkMaskedAllocation[T array.Integer | array.Float | array.String](length,
 
 func (a *maskedArray[T]) ValueAt(offset uint64) T {
 	if a.validity != nil {
-		// ValueAt provides the required bounds check before the bitmap pointer is
-		// dereferenced. ArrayCore permits reading a null slot's physical value.
-		value := a.source.ValueAt(offset)
+		if offset >= a.source.Length() {
+			panic(errOffsetOutOfRange)
+		}
 		if *(*byte)(unsafe.Add(unsafe.Pointer(a.validity), uintptr(offset>>3)))&(1<<(offset&7)) == 0 {
 			var zero T
 			return zero
 		}
-		return value
-	}
-	if !a.source.IsValid(offset) {
+	} else if !a.source.IsValid(offset) {
 		var zero T
 		return zero
 	}
@@ -67,8 +65,8 @@ func (a *maskedArray[T]) IsValid(offset uint64) bool {
 func (a *maskedArray[T]) NullCount() uint64  { return 0 }
 func (a *maskedArray[T]) PType() array.PType { return a.source.PType() }
 
-// BinarySize delegates caching to the family-specific size closure so the
-// native validity bitmap can reuse this view's fixed storage.
+// BinarySize delegates caching to the family-specific size closure. Primitive
+// sizes are constant-time, while string views retain their existing memoization.
 func (a *maskedArray[T]) BinarySize() uint64 { return a.size() }
 
 func (a *maskedArray[T]) CopyTo(dst []T) {
@@ -127,8 +125,10 @@ func maskPrimitiveArray[T array.PrimitiveType](source array.Array[T]) *maskedArr
 			return array.NewPrimitivesUnsafe(values), nil
 		},
 	}
-	if bitmap := array.PrimitiveValidityBytes(source); len(bitmap) != 0 {
-		masked.validity = &bitmap[0]
+	if primitive, ok := source.(*array.Primitives[T]); ok {
+		if bitmap := primitive.Validity().Bytes(); len(bitmap) != 0 {
+			masked.validity = &bitmap[0]
+		}
 	}
 	return masked
 }
