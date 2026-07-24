@@ -182,6 +182,70 @@ func TestValiditySliceRebasesMixedRangesAtBitOffsets(t *testing.T) {
 	}
 }
 
+func TestValiditySliceRebasesFirstValidFullBytePrefix(t *testing.T) {
+	const (
+		start       uint64 = 3
+		sliceLength uint64 = 25
+	)
+	for _, transition := range [...]uint64{8, 9, 16} {
+		end := start + sliceLength
+		sourceLength := end + 1
+		bitmap := make([]byte, validityByteLength(sourceLength))
+		want := make([]bool, sliceLength)
+		wantNullCount := uint64(0)
+		for i := range sourceLength {
+			valid := false
+			if i >= start && i < end {
+				offset := i - start
+				switch {
+				case offset < transition:
+					valid = true
+				case offset > transition:
+					valid = offset&1 == 0
+				}
+				want[offset] = valid
+				if !valid {
+					wantNullCount++
+				}
+			}
+			if valid {
+				bitmap[i>>3] |= 1 << (i & 7)
+			}
+		}
+		validity, err := NewValidityUnsafe(sourceLength, bitmap)
+		if err != nil {
+			t.Fatalf("NewValidityUnsafe: %v", err)
+		}
+		if validity.NullCount() == 0 || validity.NullCount() == validity.Length() {
+			t.Fatal("test fixture must be globally mixed")
+		}
+
+		sliced, err := validity.Slice(start, end)
+		if err != nil {
+			t.Fatalf("Slice(%d, %d): %v", start, end, err)
+		}
+		if sliced.Bytes() == nil {
+			t.Fatalf("Slice(%d, %d) discarded mixed bitmap", start, end)
+		}
+		if got := sliced.NullCount(); got != wantNullCount {
+			t.Fatalf("Slice(%d, %d) null count = %d, want %d", start, end, got, wantNullCount)
+		}
+		for i, wantValid := range want {
+			if got := sliced.IsValid(uint64(i)); got != wantValid {
+				t.Fatalf("Slice(%d, %d) validity at %d = %t, want %t", start, end, i, got, wantValid)
+			}
+			if got := sliced.Bytes()[i>>3]&(1<<(uint(i)&7)) != 0; got != wantValid {
+				t.Fatalf("Slice(%d, %d) bitmap bit %d = %t, want %t", start, end, i, got, wantValid)
+			}
+		}
+		if remainder := sliceLength & 7; remainder != 0 {
+			if unused := sliced.Bytes()[len(sliced.Bytes())-1] &^ byte((1<<remainder)-1); unused != 0 {
+				t.Fatalf("Slice(%d, %d) bitmap has non-zero unused bits %#x", start, end, unused)
+			}
+		}
+	}
+}
+
 func TestNewValidityRejectsInvalidBitmap(t *testing.T) {
 	if _, err := NewValidity(9, []byte{0xff}); err == nil || !strings.Contains(err.Error(), "length") {
 		t.Fatalf("error = %v, want containing %q", err, "length")
