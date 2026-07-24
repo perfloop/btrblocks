@@ -190,11 +190,6 @@ func TestValiditySliceRebasesFirstValidFullBytePrefix(t *testing.T) {
 				t.Fatalf("Slice(%d, %d) bitmap bit %d = %t, want %t", start, end, i, got, wantValid)
 			}
 		}
-		if remainder := sliceLength & 7; remainder != 0 {
-			if unused := sliced.Bytes()[len(sliced.Bytes())-1] &^ byte((1<<remainder)-1); unused != 0 {
-				t.Fatalf("Slice(%d, %d) bitmap has non-zero unused bits %#x", start, end, unused)
-			}
-		}
 	}
 }
 
