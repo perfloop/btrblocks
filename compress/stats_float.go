@@ -98,7 +98,9 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 
 	// Avoid reserving a full page-sized dictionary for small metadata arrays.
 	distinct := make(map[uint64]uint64, distinctInitialCapacity(n))
+	var distinctBits [256]uint64
 	distinct[prevBits] = 1
+	setFloatDistinctBit(&distinctBits, prevBits)
 	mostFrequent := uint64(1)
 	for i := uint64(1); i < n; i++ {
 		key := array.FloatBits(arr.ValueAt(i))
@@ -107,7 +109,7 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 			distinct[key] = count
 			mostFrequent = max(mostFrequent, count)
 		} else if len(distinct) >= maxRetainedDistinctValues {
-			dc, runs := collectFloatStatsOverflow(arr, i, prevBits, runs, distinct)
+			dc, runs := collectFloatStatsOverflow(arr, i, prevBits, runs, &distinctBits)
 			return floatStats[T]{
 				baseStats: baseStats[T]{
 					src:           arr,
@@ -119,6 +121,7 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 			}
 		} else {
 			distinct[key] = 1
+			setFloatDistinctBit(&distinctBits, key)
 		}
 		if key != prevBits {
 			runs++
@@ -140,27 +143,19 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 	}
 }
 
-// collectFloatStatsOverflow seeds the sketch from the retained exact keys,
-// then scans the triggering value and remaining suffix without map-mode work.
-func collectFloatStatsOverflow[T array.Float](arr array.Array[T], start, prevBits, runs uint64, distinct map[uint64]uint64) (uint64, uint64) {
+// collectFloatStatsOverflow scans the triggering value and remaining suffix
+// after the staged collector has marked each retained exact key.
+func collectFloatStatsOverflow[T array.Float](arr array.Array[T], start, prevBits, runs uint64, distinctBits *[256]uint64) (uint64, uint64) {
 	n := arr.Length()
-	var distinctBits [256]uint64
-	for key := range distinct {
-		hash := mixFloatBits(key)
-		bucket := hash & (floatDistinctSketchBuckets - 1)
-		distinctBits[bucket/64] |= uint64(1) << (bucket & 63)
-	}
 	for i := start; i < n; i++ {
 		key := array.FloatBits(arr.ValueAt(i))
-		hash := mixFloatBits(key)
-		bucket := hash & (floatDistinctSketchBuckets - 1)
-		distinctBits[bucket/64] |= uint64(1) << (bucket & 63)
+		setFloatDistinctBit(distinctBits, key)
 		if key != prevBits {
 			runs++
 			prevBits = key
 		}
 	}
-	return estimateFloatDistinct(distinctBits, n), runs
+	return estimateFloatDistinct(*distinctBits, n), runs
 }
 
 func mixFloatBits(value uint64) uint64 {
@@ -168,6 +163,12 @@ func mixFloatBits(value uint64) uint64 {
 	value = (value ^ value>>30) * 0xbf58476d1ce4e5b9
 	value = (value ^ value>>27) * 0x94d049bb133111eb
 	return value ^ value>>31
+}
+
+func setFloatDistinctBit(bitmap *[256]uint64, key uint64) {
+	hash := mixFloatBits(key)
+	bucket := hash & (floatDistinctSketchBuckets - 1)
+	bitmap[bucket/64] |= uint64(1) << (bucket & 63)
 }
 
 func estimateFloatDistinct(bitmap [256]uint64, n uint64) uint64 {
