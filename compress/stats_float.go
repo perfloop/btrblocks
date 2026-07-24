@@ -47,6 +47,9 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 			distinctEstimate: n,
 		}
 	}
+	if n/2 <= maxRetainedDistinctValues {
+		return computeFloatStatsWithEagerSketch(arr)
+	}
 
 	// Avoid reserving a full page-sized dictionary for small metadata arrays.
 	distinct := make(map[uint64]uint64, distinctInitialCapacity(n))
@@ -80,6 +83,61 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 	}
 
 	dc := uint64(len(distinct))
+	return floatStats[T]{
+		baseStats: baseStats[T]{
+			src:           arr,
+			isConst:       runs == 1,
+			distinctCount: dc,
+			avgRunLength:  float64(n) / float64(runs),
+			mostFrequent:  mostFrequent,
+		},
+		distinct:         distinct,
+		distinctEstimate: dc,
+	}
+}
+
+// computeFloatStatsWithEagerSketch avoids map seeding when the half-length
+// retention boundary can be reached before the fixed retained-map capacity.
+func computeFloatStatsWithEagerSketch[T array.Float](arr array.Array[T]) floatStats[T] {
+	n := arr.Length()
+	distinct := make(map[uint64]uint64, distinctInitialCapacity(n))
+	var distinctBits [256]uint64
+	runs := uint64(1)
+	prev := arr.ValueAt(0)
+	distinct[array.FloatBits(prev)] = 1
+	mostFrequent := uint64(1)
+
+	for i := range n {
+		v := arr.ValueAt(i)
+		hash := mixFloatBits(array.FloatBits(v))
+		bucket := hash & (floatDistinctSketchBuckets - 1)
+		distinctBits[bucket/64] |= uint64(1) << (bucket & 63)
+		if i == 0 {
+			continue
+		}
+		if distinct != nil {
+			key := array.FloatBits(v)
+			if count, exists := distinct[key]; exists {
+				count++
+				distinct[key] = count
+				mostFrequent = max(mostFrequent, count)
+			} else if len(distinct) >= maxRetainedDistinctValues || uint64(len(distinct)) >= n/2 {
+				distinct = nil
+			} else {
+				distinct[key] = 1
+			}
+		}
+		if !array.CmpFloatBits(v, prev) {
+			runs++
+			prev = v
+		}
+	}
+
+	dc := uint64(len(distinct))
+	if distinct == nil {
+		dc = estimateFloatDistinct(distinctBits, n)
+		mostFrequent = 0
+	}
 	return floatStats[T]{
 		baseStats: baseStats[T]{
 			src:           arr,
