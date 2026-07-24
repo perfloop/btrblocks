@@ -28,13 +28,13 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 	}
 
 	runs := uint64(1)
-	prev := arr.ValueAt(0)
+	prevBits := array.FloatBits(arr.ValueAt(0))
 	if !collectFrequencies {
 		for i := uint64(1); i < n; i++ {
-			v := arr.ValueAt(i)
-			if !array.CmpFloatBits(v, prev) {
+			key := array.FloatBits(arr.ValueAt(i))
+			if key != prevBits {
 				runs++
-				prev = v
+				prevBits = key
 			}
 		}
 		return floatStats[T]{
@@ -52,18 +52,17 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 		// Keep the one-pass sketch here instead of reconstructing it from map keys.
 		distinct := make(map[uint64]uint64, distinctInitialCapacity(n))
 		var distinctBits [256]uint64
-		distinct[array.FloatBits(prev)] = 1
+		distinct[prevBits] = 1
 		mostFrequent := uint64(1)
 		for i := range n {
-			v := arr.ValueAt(i)
-			hash := mixFloatBits(array.FloatBits(v))
+			key := array.FloatBits(arr.ValueAt(i))
+			hash := mixFloatBits(key)
 			bucket := hash & (floatDistinctSketchBuckets - 1)
 			distinctBits[bucket/64] |= uint64(1) << (bucket & 63)
 			if i == 0 {
 				continue
 			}
 			if distinct != nil {
-				key := array.FloatBits(v)
 				if count, exists := distinct[key]; exists {
 					count++
 					distinct[key] = count
@@ -74,9 +73,9 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 					distinct[key] = 1
 				}
 			}
-			if !array.CmpFloatBits(v, prev) {
+			if key != prevBits {
 				runs++
-				prev = v
+				prevBits = key
 			}
 		}
 		dc := uint64(len(distinct))
@@ -99,17 +98,16 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 
 	// Avoid reserving a full page-sized dictionary for small metadata arrays.
 	distinct := make(map[uint64]uint64, distinctInitialCapacity(n))
-	distinct[array.FloatBits(prev)] = 1
+	distinct[prevBits] = 1
 	mostFrequent := uint64(1)
 	for i := uint64(1); i < n; i++ {
-		v := arr.ValueAt(i)
-		key := array.FloatBits(v)
+		key := array.FloatBits(arr.ValueAt(i))
 		if count, exists := distinct[key]; exists {
 			count++
 			distinct[key] = count
 			mostFrequent = max(mostFrequent, count)
 		} else if len(distinct) >= maxRetainedDistinctValues {
-			dc, runs := collectFloatStatsOverflow(arr, i, prev, runs, distinct)
+			dc, runs := collectFloatStatsOverflow(arr, i, prevBits, runs, distinct)
 			return floatStats[T]{
 				baseStats: baseStats[T]{
 					src:           arr,
@@ -122,9 +120,9 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 		} else {
 			distinct[key] = 1
 		}
-		if !array.CmpFloatBits(v, prev) {
+		if key != prevBits {
 			runs++
-			prev = v
+			prevBits = key
 		}
 	}
 
@@ -144,7 +142,7 @@ func computeFloatStatsForPlanner[T array.Float](arr array.Array[T], collectFrequ
 
 // collectFloatStatsOverflow seeds the sketch from the retained exact keys,
 // then scans the triggering value and remaining suffix without map-mode work.
-func collectFloatStatsOverflow[T array.Float](arr array.Array[T], start uint64, prev T, runs uint64, distinct map[uint64]uint64) (uint64, uint64) {
+func collectFloatStatsOverflow[T array.Float](arr array.Array[T], start, prevBits, runs uint64, distinct map[uint64]uint64) (uint64, uint64) {
 	n := arr.Length()
 	var distinctBits [256]uint64
 	for key := range distinct {
@@ -153,13 +151,13 @@ func collectFloatStatsOverflow[T array.Float](arr array.Array[T], start uint64, 
 		distinctBits[bucket/64] |= uint64(1) << (bucket & 63)
 	}
 	for i := start; i < n; i++ {
-		v := arr.ValueAt(i)
-		hash := mixFloatBits(array.FloatBits(v))
+		key := array.FloatBits(arr.ValueAt(i))
+		hash := mixFloatBits(key)
 		bucket := hash & (floatDistinctSketchBuckets - 1)
 		distinctBits[bucket/64] |= uint64(1) << (bucket & 63)
-		if !array.CmpFloatBits(v, prev) {
+		if key != prevBits {
 			runs++
-			prev = v
+			prevBits = key
 		}
 	}
 	return estimateFloatDistinct(distinctBits, n), runs
