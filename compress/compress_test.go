@@ -56,16 +56,18 @@ func TestPlannerSelectsSparseForDominantInteger(t *testing.T) {
 }
 
 func TestStringStatsFrequencyCapBoundary(t *testing.T) {
+	// Three repetitions make the retained 4,096-key case prove that existing
+	// keys continue accumulating counts without crossing the cap.
 	const rows = 3 * maxRetainedStringDistinctValues
 	cases := []struct {
 		name              string
 		distinct          int
-		want              codec.CodecType
+		wantPlanner       codec.CodecType
 		wantDistinctCount uint64
 		wantMostFrequent  uint64
 	}{
-		{name: "at-4096", distinct: maxRetainedStringDistinctValues, want: codec.CodecTypeDict, wantDistinctCount: maxRetainedStringDistinctValues, wantMostFrequent: 3},
-		{name: "at-4097", distinct: maxRetainedStringDistinctValues + 1, want: codec.CodecTypeRaw, wantDistinctCount: rows, wantMostFrequent: 0},
+		{name: "retain-4096-and-count-existing-keys", distinct: maxRetainedStringDistinctValues, wantPlanner: codec.CodecTypeDict, wantDistinctCount: maxRetainedStringDistinctValues, wantMostFrequent: 3},
+		{name: "overflow-at-4097-and-return-raw", distinct: maxRetainedStringDistinctValues + 1, wantPlanner: codec.CodecTypeRaw, wantDistinctCount: rows, wantMostFrequent: 0},
 	}
 
 	for _, tc := range cases {
@@ -81,7 +83,7 @@ func TestStringStatsFrequencyCapBoundary(t *testing.T) {
 
 			encoded, err := StringArray(mustStrings(t, values), Options{})
 			require.NoError(t, err)
-			require.Equal(t, tc.want, encoded.CodecType())
+			require.Equal(t, tc.wantPlanner, encoded.CodecType())
 		})
 	}
 }

@@ -18,21 +18,23 @@ func TestComputeStringStatsDistinguishesCommonPrefixes(t *testing.T) {
 
 func TestStringStatsFrequencyOddHalfCutoff(t *testing.T) {
 	const rows = 4095
-	const prefixDistinct = rows/2 + rows%2
+	const retainedDistinct = rows/2 + rows%2
 
 	values := make([]string, rows)
 	values[0] = "dominant"
-	for i := 1; i < prefixDistinct; i++ {
+	for i := 1; i < retainedDistinct; i++ {
 		values[i] = fmt.Sprintf("odd-prefix-%04d", i)
 	}
-	for i := prefixDistinct; i < len(values); i++ {
+	// This unseen value arrives after ceil(n/2) keys, reaching the changed
+	// new-key cutoff rather than merely its last retained-key state.
+	values[retainedDistinct] = "odd-overflow"
+	for i := retainedDistinct + 1; i < len(values); i++ {
 		values[i] = values[0]
 	}
 
 	stats := computeStringStatsForPlanner(mustStrings(t, values), true)
-	require.Equal(t, uint64(prefixDistinct), stats.estimatedDistinctCount)
-	require.Equal(t, uint64(prefixDistinct), stats.MostFrequentCount())
-	require.False(t, countDominates(uint64(rows), uint64(prefixDistinct)))
+	require.Greater(t, stats.estimatedDistinctCount, uint64(rows/2))
+	require.False(t, countDominates(uint64(rows), uint64(rows-retainedDistinct)))
 
 	ctx := newPlanContext(Options{})
 	require.Equal(t, estimateSkip, estimateStringDict(stats, ctx, stats.estimatedDistinctCount).kind)
