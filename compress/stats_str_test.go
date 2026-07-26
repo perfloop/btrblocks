@@ -20,30 +20,57 @@ func TestStringStatsFrequencyOddHalfCutoff(t *testing.T) {
 	const rows = 4095
 	const retainedDistinct = rows/2 + rows%2
 
-	values := make([]string, rows)
-	values[0] = "dominant"
-	for i := 1; i < retainedDistinct; i++ {
-		values[i] = fmt.Sprintf("odd-prefix-%04d", i)
-	}
-	// This unseen value arrives after ceil(n/2) keys, reaching the changed
-	// new-key cutoff rather than merely its last retained-key state.
-	values[retainedDistinct] = "odd-overflow"
-	for i := retainedDistinct + 1; i < len(values); i++ {
-		values[i] = values[0]
-	}
+	t.Run("retains-ceiling-half", func(t *testing.T) {
+		values := make([]string, rows)
+		values[0] = "dominant"
+		for i := 1; i < retainedDistinct; i++ {
+			values[i] = fmt.Sprintf("odd-prefix-%04d", i)
+		}
+		for i := retainedDistinct; i < len(values); i++ {
+			values[i] = values[0]
+		}
 
-	stats := computeStringStatsForPlanner(mustStrings(t, values), true)
-	require.Greater(t, stats.estimatedDistinctCount, uint64(rows/2))
-	require.False(t, countDominates(uint64(rows), uint64(rows-retainedDistinct)))
+		stats := computeStringStatsForPlanner(mustStrings(t, values), true)
+		require.Equal(t, uint64(retainedDistinct), stats.estimatedDistinctCount)
+		require.Equal(t, uint64(retainedDistinct), stats.MostFrequentCount())
+		require.False(t, countDominates(uint64(rows), uint64(retainedDistinct)))
 
-	ctx := newPlanContext(Options{})
-	require.Equal(t, estimateSkip, estimateStringDict(stats, ctx, stats.estimatedDistinctCount).kind)
-	require.True(t, stringCanSample(stats.Source(), ctx))
-	require.Equal(t, estimateSkip, estimateSparseGeneric(stats, ctx, true).kind)
+		ctx := newPlanContext(Options{})
+		require.Equal(t, estimateSkip, estimateStringDict(stats, ctx, stats.estimatedDistinctCount).kind)
+		require.True(t, stringCanSample(stats.Source(), ctx))
+		require.Equal(t, estimateSkip, estimateSparseGeneric(stats, ctx, true).kind)
 
-	encoded, err := StringArray(mustStrings(t, values), Options{})
-	require.NoError(t, err)
-	require.Equal(t, codec.CodecTypeRaw, encoded.CodecType())
+		encoded, err := StringArray(mustStrings(t, values), Options{})
+		require.NoError(t, err)
+		require.Equal(t, codec.CodecTypeRaw, encoded.CodecType())
+	})
+
+	t.Run("overflows-after-ceiling-half", func(t *testing.T) {
+		values := make([]string, rows)
+		values[0] = "dominant"
+		for i := 1; i < retainedDistinct; i++ {
+			values[i] = fmt.Sprintf("odd-prefix-%04d", i)
+		}
+		// This unseen value reaches the changed new-key cutoff after the legal
+		// ceiling-half state has already been retained.
+		values[retainedDistinct] = "odd-overflow"
+		for i := retainedDistinct + 1; i < len(values); i++ {
+			values[i] = values[0]
+		}
+
+		stats := computeStringStatsForPlanner(mustStrings(t, values), true)
+		require.Greater(t, stats.estimatedDistinctCount, uint64(rows/2))
+		require.False(t, countDominates(uint64(rows), uint64(rows-retainedDistinct)))
+
+		ctx := newPlanContext(Options{})
+		require.Equal(t, estimateSkip, estimateStringDict(stats, ctx, stats.estimatedDistinctCount).kind)
+		require.True(t, stringCanSample(stats.Source(), ctx))
+		require.Equal(t, estimateSkip, estimateSparseGeneric(stats, ctx, true).kind)
+
+		encoded, err := StringArray(mustStrings(t, values), Options{})
+		require.NoError(t, err)
+		require.Equal(t, codec.CodecTypeRaw, encoded.CodecType())
+	})
 }
 
 // TestStringStatsComputesBaseStats verifies that computeStringStatsForPlanner
